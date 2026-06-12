@@ -4,9 +4,9 @@
 // executeRead. Projects 1–7 are the canonical V6 set deployed across the testnets.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, getWalletClient, switchChain } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, getWalletClient, switchChain, onWalletChange } from './component-base.js';
 import { CHAINS, getCustomRpc, getChainTokens } from './chain.js';
-import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
+import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub, shortHex } from './pay-preview.js';
 import { bendystrawQuery } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 
@@ -919,7 +919,13 @@ var borrowableAbi = [{
     { name: 'decimals', type: 'uint256' },
     { name: 'currency', type: 'uint256' },
   ],
-  outputs: [{ name: 'borrowable', type: 'uint256' }, { name: 'fee', type: 'uint256' }],
+  // borrowableNow = min(capacity, live treasury surplus); 0 while the revnet's cash-out delay is active.
+  outputs: [{ name: 'borrowableNow', type: 'uint256' }, { name: 'borrowableCapacity', type: 'uint256' }],
+}];
+// REVOwner (a revnet's data hook): when loans/cash-outs unlock. 0 = no delay; future = locked until then.
+var cashOutDelayAbi = [{
+  type: 'function', name: 'cashOutDelayOf', stateMutability: 'view',
+  inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ name: '', type: 'uint256' }],
 }];
 
 // -- Helpers --
@@ -1547,7 +1553,9 @@ function showProjectGrid(fromRoute) {
 // -- Detail Page --
 
 function renderProjectDetail(project, initialTab) {
-  var wrap = el('div', 'project-detail');
+  // `detail-spacious`: juicy-vision-style low-border layout — drop the boxed cards in favor of whitespace,
+  // a single column divider, and thin section separators.
+  var wrap = el('div', 'project-detail detail-spacious');
   var nftCart = makeNftCart(); // shared between the Pay-card strip and the Shop tab
 
   var back = document.createElement('button');
@@ -1602,7 +1610,8 @@ function renderProjectDetail(project, initialTab) {
   if (project.isRevnet) {
     // Revnets express rules through stages (Terms) and holders through Owners (splits + auto-issuance).
     builders.Terms = function () { return renderStagesSection(project); };
-    tabs = ['About', 'Terms', 'Owners', 'Ops'];
+    // Revnets carry the wallet actions in the Owners → "You" card, so no separate Ops tab.
+    tabs = ['About', 'Terms', 'Owners'];
   } else {
     // Owned projects get a combined Rulesets & Funds view (rules timeline + balance/payouts).
     builders['Rulesets & Funds'] = function () { return renderRulesetsFundsSection(project); };
@@ -1900,16 +1909,16 @@ function renderPayCard(project, cart) {
   amountRow.appendChild(payBtn);
   card.appendChild(amountRow);
 
-  // Feedback block — "You get" / routing tag / AMM subtext / "Splits get".
-  var feedback = el('div', 'paybox-feedback');
-  card.appendChild(feedback);
-
-  // Memo — subtle, optional, at the bottom.
+  // Memo — subtle, optional, directly under the amount/Pay row.
   var memo = el('input', 'paybox-memo');
   memo.type = 'text';
   memo.placeholder = 'Add a note (optional)';
   memo.addEventListener('input', function () { state.memo = memo.value; });
   card.appendChild(memo);
+
+  // Feedback block — "You get" / routing tag / AMM subtext / "Splits get".
+  var feedback = el('div', 'paybox-feedback');
+  card.appendChild(feedback);
 
   var status = el('div', 'paybox-status');
   card.appendChild(status);
@@ -1952,8 +1961,7 @@ function renderPayCard(project, cart) {
       return;
     }
     if (state.phase === 'previewing') val.textContent = '…';
-    // Issuance shows the exact quote; AMM shows the slippage-adjusted minimum as "≈".
-    else if (p && p.received != null) val.textContent = (isAmm ? '≈ ' : '') + formatTokenCount(payMinTokens(p, state.slippageBps)) + ' ' + sym;
+    else if (p && p.received != null) val.textContent = formatTokenCount(payMinTokens(p, state.slippageBps)) + ' ' + sym;
     else val.textContent = '0.00 ' + sym;
     valRow.appendChild(val);
     if (p && p.routing) valRow.appendChild(renderRoutingTag(p.routing));
@@ -1961,15 +1969,41 @@ function renderPayCard(project, cart) {
 
     var nb = nftBlock(); if (nb) feedback.appendChild(nb);
 
-    if (isAmm) {
-      var amm = renderAmmSub(p.amm);
-      if (amm) feedback.appendChild(amm);
-      feedback.appendChild(renderSlippageRow());
-    }
-
     var splits = el('div', 'paybox-splits');
     splits.textContent = 'Splits get ' + (p && p.reserved != null ? formatTokenCount(p.reserved) : '0') + ' ' + sym;
     feedback.appendChild(splits);
+
+    // AMM route: where it filled + how the AMM quote compares to plain issuance (why this route won).
+    if (isAmm && p.amm) {
+      var fill = el('div', 'paybox-amm-fill');
+      fill.appendChild(document.createTextNode('Filled via Uniswap pool '));
+      // A Uniswap V4 poolId is a hash, not a contract — link to the chain's V4 PoolManager (where the pool
+      // lives) on the block explorer.
+      var pmAddr = POOL_MANAGER_BY_CHAIN[state.chainId];
+      var explorer = CHAINS[state.chainId] && CHAINS[state.chainId].blockExplorers && CHAINS[state.chainId].blockExplorers.default && CHAINS[state.chainId].blockExplorers.default.url;
+      if (pmAddr && explorer) {
+        var a = document.createElement('a');
+        a.href = explorer.replace(/\/$/, '') + '/address/' + pmAddr;
+        a.target = '_blank'; a.rel = 'noopener';
+        a.textContent = shortHex(p.amm.poolId);
+        a.title = 'Uniswap V4 PoolManager ' + pmAddr + ' — V4 pools live in the singleton (the poolId is a hash, not an address)';
+        fill.appendChild(a);
+      } else {
+        fill.appendChild(document.createTextNode(shortHex(p.amm.poolId)));
+      }
+      feedback.appendChild(fill);
+      if (p.amm.wouldMintByIssuance != null) {
+        // Both sides as the BENEFICIARY's "You get" (excludes splits). The AMM side already is
+        // (p.received = minimumBeneficiaryTokenCount); `wouldMintByIssuance` is GROSS issuance (incl.
+        // reserved), so scale it by the same beneficiary fraction the swap split exposes.
+        var benef = p.received || 0n, reserved = p.reserved || 0n, swapTotal = benef + reserved;
+        var issuanceBenef = swapTotal > 0n ? (p.amm.wouldMintByIssuance * benef / swapTotal) : p.amm.wouldMintByIssuance;
+        var cmp = el('div', 'paybox-amm-cmp');
+        cmp.textContent = 'AMM: ' + formatTokenCount(payMinTokens(p, state.slippageBps)) + ' ' + sym
+          + ' vs. Issuance: ' + formatTokenCount(issuanceBenef) + ' ' + sym;
+        feedback.appendChild(cmp);
+      }
+    }
   }
 
   // AMM-only: let the payer pick how much slippage they'll tolerate below the quote.
@@ -3527,7 +3561,8 @@ function timeAgo(timestamp) {
 function formatActivityAmount(raw, symbol) {
   var value = toBigInt(raw);
   if (value === 0n) return '0 ' + (symbol || 'ETH');
-  return formatAmount(value, 18) + ' ' + (symbol || 'ETH');
+  // Adaptive truncation (same as project Balance via formatEth), not full 18-dp precision.
+  return formatTokenCount(value) + ' ' + (symbol || 'ETH');
 }
 
 function renderExplorerTxLink(chainId, txHash, label) {
@@ -3568,7 +3603,7 @@ function renderAutoIssuance(project, stages) {
   var card = el('div');
 
   var desc = el('div', 'detail-card-body');
-  desc.textContent = 'Tokens auto-issued to specific beneficiaries, unlocking per stage across every chain.';
+  desc.textContent = 'Tokens auto-issued to specific accounts, unlocking per stage across every chain.';
   card.appendChild(desc);
 
   var pid = BigInt(project.id);
@@ -3743,14 +3778,16 @@ function renderOwnersSection(project) {
   // "Settlement" gets Movement as a bottom activity-feed subsection.
   var acrossWrap = el('div');
   acrossWrap.appendChild(renderAcrossChainsBody(project));
+  acrossWrap.appendChild(renderBridgesSubsection(project));
   acrossWrap.appendChild(renderBridgeTransactions(project));
 
   // "Splits" gets the Reserved-distribution history as a bottom activity-feed subsection.
   var splitsWrap = el('div');
   splitsWrap.appendChild(renderOwnersSplits(project));
-  splitsWrap.appendChild(detailSubSection('Distributions', reservedDistBox));
+  splitsWrap.appendChild(detailSubSection('Latest distributions', reservedDistBox));
 
   [
+    ['You', renderYouCard(project)],
     ['All', renderOwnersAll(project)],
     [null, renderOwnersAmm(project)], // null title: the AMM card supplies its own "AMM <addr>" heading
     ['Settlement', acrossWrap],
@@ -4089,7 +4126,7 @@ function renderAutoIssuanceTable(rows, sym, distribute) {
 
     var stageCell = el('span');
     stageCell.setAttribute('data-label', labels[1]);
-    stageCell.textContent = 'Stage ' + (row.stageIndex + 1);
+    stageCell.textContent = String(row.stageIndex + 1);
     tr.appendChild(stageCell);
 
     var acct = el('span', 'autoissue-account');
@@ -4584,7 +4621,7 @@ function renderOwnersAll(project) {
   var wrap = el('div');
   var sym = project.tokenSymbol || 'token';
   var desc = el('div', 'detail-card-body owners-intro');
-  desc.textContent = sym + ' owners are accounts that paid in, received splits, received auto-issuance, or traded for them on a secondary market.';
+  desc.textContent = sym + ' owners paid in, received splits, received auto-issuance, or got them second-hand.';
   wrap.appendChild(desc);
   var body = el('div', 'owners-load');
   body.textContent = 'Loading owner distribution from Bendystraw…';
@@ -4628,7 +4665,7 @@ function renderOwnersAmm(project) {
   if (ammAddr) { var a = addressNode(ammAddr); a.classList.add('lp-amm-title-addr'); lpTitle.appendChild(a); }
   wrap.appendChild(lpTitle);
   var lpHead = el('div', 'detail-card-body owners-intro');
-  lpHead.textContent = 'Liquidity in the buyback pool — who provides it and the ETH/' + sym + ' split it currently holds.';
+  lpHead.textContent = 'The market is used to fill orders that give payers more REV than issuance would.';
   wrap.appendChild(lpHead);
   var loading = el('div', 'owners-load'); loading.textContent = 'Reading the buyback pool…'; wrap.appendChild(loading);
   readLpPositions(project, project.chainId).then(function (lp) {
@@ -4637,13 +4674,13 @@ function renderOwnersAmm(project) {
     if (!lp) { lpHead.textContent = 'No buyback pool configured on this chain.'; return; }
     if (!lp.owners.length) { lpHead.textContent = 'Liquidity in the buyback pool — no LP positions yet (the pool is seeded but not yet traded).'; return; }
     var rowEl = el('div', 'lp-amm-row');
+    // Left column: pie, then the composition bar stacked directly on top of the liquidity-by-price chart.
     var leftCol = el('div', 'lp-amm-leftcol');
     var pie = renderLpOwnersPie(lp); if (pie) leftCol.appendChild(pie);
-    var bt = el('div', 'lp-amm-bartitle'); bt.textContent = 'Pool composition (ETH / ' + sym + ')'; leftCol.appendChild(bt);
+    var bt = el('div', 'detail-card-title lp-amm-bartitle'); bt.textContent = 'Composition'; leftCol.appendChild(bt);
     var bar = renderLpCompositionBar(lp, sym); if (bar) leftCol.appendChild(bar);
     rowEl.appendChild(leftCol);
-    // Right column: LP table on top, liquidity-by-price depth chart pinned to the bottom (aligned with
-    // the bottom of the composition band in the left column).
+    // Right column: LP table.
     var rightCol = el('div', 'lp-amm-rightcol');
     var tbl = renderLpTable(lp, sym, project.chainId); if (tbl) rightCol.appendChild(tbl);
     rowEl.appendChild(rightCol);
@@ -4652,7 +4689,7 @@ function renderOwnersAmm(project) {
     readCashoutPrice(project, project.chainId).catch(function () { return null; }).then(function (cashout) {
       if (!wrap.isConnected) return;
       var depth = renderLpDepthChart(lp, lp.poolPrice, issuancePrice, cashout, sym);
-      if (depth && !rightCol.querySelector('.lp-depth')) rightCol.appendChild(depth);
+      if (depth && !leftCol.querySelector('.lp-depth')) leftCol.appendChild(depth);
     });
   }).catch(function () { loading.remove(); lpHead.textContent = 'Could not read the buyback pool.'; });
   return wrap;
@@ -4670,25 +4707,22 @@ function renderOwnersPieChart(participants, totalBalance, totalSupply, sym) {
   var cx = 120, cy = 120, outer = 92, inner = 54;
   var angle = -Math.PI / 2;
   var drawable = participants.filter(function (row) { return row.balance > 0n; });
+  // Pink-light fill, borders distinguish slices (see .owners-pie-slice).
   if (drawable.length === 1) {
-    var only = document.createElementNS(svgNS, 'circle');
-    only.setAttribute('cx', String(cx));
-    only.setAttribute('cy', String(cy));
-    only.setAttribute('r', String((outer + inner) / 2));
-    only.setAttribute('fill', 'none');
-    only.setAttribute('class', 'owners-pie-ring');
-    only.setAttribute('stroke', OWNER_PIE_COLORS[0]);
-    only.setAttribute('stroke-width', String(outer - inner));
-    only.appendChild(svgTitle(drawable[0], totalSupply, sym));
-    svg.appendChild(only);
+    // One owner → a full annulus (near-360° so the band fills but the hole stays open).
+    var ring = document.createElementNS(svgNS, 'path');
+    ring.setAttribute('d', donutSlicePath(cx, cy, outer, inner, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 - 0.001));
+    ring.setAttribute('class', 'owners-pie-slice');
+    ring.appendChild(svgTitle(drawable[0], totalSupply, sym));
+    svg.appendChild(ring);
   } else {
-    drawable.forEach(function (row, idx) {
+    drawable.forEach(function (row) {
       var slice = Number(row.balance) / Number(totalBalance);
       if (!isFinite(slice) || slice <= 0) return;
       var next = angle + slice * Math.PI * 2;
       var path = document.createElementNS(svgNS, 'path');
       path.setAttribute('d', donutSlicePath(cx, cy, outer, inner, angle, next));
-      path.setAttribute('fill', OWNER_PIE_COLORS[idx % OWNER_PIE_COLORS.length]);
+      path.setAttribute('class', 'owners-pie-slice');
       path.appendChild(svgTitle(row, totalSupply, sym));
       svg.appendChild(path);
       angle = next;
@@ -4746,7 +4780,7 @@ function renderOwnersTable(participants, totalSupply, sym) {
   var wrap = el('div', 'owners-table-wrap');
   var table = el('div', 'owners-table');
   var head = el('div', 'owners-row owners-head');
-  ['Account', 'Balance', 'Chains', 'Paid'].forEach(function (h) {
+  ['Account', 'Share', 'Chains', 'Paid'].forEach(function (h) {
     var cell = el('span');
     cell.textContent = h;
     head.appendChild(cell);
@@ -4756,11 +4790,9 @@ function renderOwnersTable(participants, totalSupply, sym) {
   participants.forEach(function (row, idx) {
     var tr = el('div', 'owners-row');
     var acct = el('span', 'owners-account');
-    var dot = el('span', 'owners-dot');
-    dot.style.background = OWNER_PIE_COLORS[idx % OWNER_PIE_COLORS.length];
-    acct.appendChild(dot);
     if (isAmmAddress(row.address)) {
-      // The AMM row shows just the tag; the address lives on hover (and beside the AMM section title).
+      // The AMM row reads "Market [AMM]" (matching the Market section); the address lives on hover.
+      acct.appendChild(document.createTextNode('Market '));
       var ammTag = el('span', 'owners-amm-tag'); ammTag.textContent = 'AMM';
       ammTag.title = row.address + ' — Uniswap V4 pool holding pooled LP liquidity';
       acct.appendChild(ammTag);
@@ -4769,9 +4801,9 @@ function renderOwnersTable(participants, totalSupply, sym) {
     }
     tr.appendChild(acct);
 
+    // Share: just the %, with the token balance on hover.
     var bal = el('span', 'owners-balance');
-    bal.appendChild(document.createTextNode(formatCompactTokenAmount(row.balance) + ' ' + sym));
-    var balSep = el('span', 'detail-head-sep'); balSep.textContent = '|'; bal.appendChild(balSep);
+    bal.title = formatCompactTokenAmount(row.balance) + ' ' + sym;
     var pct = el('strong');
     pct.textContent = formatOwnerPortion(row.balance, totalSupply);
     bal.appendChild(pct);
@@ -4794,12 +4826,24 @@ function renderOwnersTable(participants, totalSupply, sym) {
   return wrap;
 }
 
+// Pending reserved tokens accrue per chain (each chain mints its own issuance). Read the pending balance
+// on every chain the project lives on, so the splits table can show the per-chain spread.
+function fetchPendingReservedPerChain(project) {
+  var pid = BigInt(project.id);
+  var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
+  return Promise.all(chains.map(function (chain) {
+    return read(chain.id, 'JBController', pendingReservedAbi, 'pendingReservedTokenBalanceOf', [pid])
+      .then(function (v) { return { id: chain.id, name: chain.name, pending: v }; })
+      .catch(function () { return { id: chain.id, name: chain.name, pending: null }; });
+  }));
+}
+
 function renderOwnersSplits(project) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'splits-wrap');
 
   var intro = el('div', 'splits-intro');
-  intro.textContent = 'Reserved tokens are split between these accounts. The operator can adjust the splits at any time, within each stage’s permanent split limit.';
+  intro.textContent = 'Newly issued and bought back ' + sym + ' are split between these accounts. The operator can adjust the splits at any time within each stage’s permanent split limit.';
   wrap.appendChild(intro);
 
   var stages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
@@ -4814,55 +4858,11 @@ function renderOwnersSplits(project) {
   var limitLine = el('div', 'splits-limit'); wrap.appendChild(limitLine);
   var tableWrap = el('div', 'splits-tablewrap'); wrap.appendChild(tableWrap);
 
-  // Prominent distribute CTA (only relevant for the current stage's pending reserved).
-  var distBtn = document.createElement('button');
-  distBtn.className = 'ops-action-btn splits-cta';
-  distBtn.textContent = 'Distribute';
-  var distStatus = el('div', 'modal-status splits-status');
-  distBtn.addEventListener('click', function () {
-    distStatus.className = 'modal-status splits-status';
-    distStatus.textContent = '';
-    if (!(getAccount && getAccount())) {
-      distBtn.disabled = true;
-      distBtn.textContent = 'Connecting…';
-      distStatus.textContent = 'Connecting wallet…';
-      connect().then(function () {
-        distBtn.disabled = false;
-        distBtn.textContent = 'Distribute';
-        distBtn.click();
-      }).catch(function (err) {
-        distBtn.disabled = false;
-        distBtn.textContent = 'Distribute';
-        distStatus.className = 'modal-status splits-status error';
-        distStatus.textContent = (err && (err.shortMessage || err.message)) || 'Could not connect wallet';
-      });
-      return;
-    }
-    var ctrl = getAddress('JBController', project.chainId);
-    if (!ctrl) return;
-    distBtn.disabled = true; distBtn.textContent = 'Distributing…';
-    executeTransaction({
-      chainId: project.chainId, address: ctrl, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf',
-      args: [BigInt(project.id)],
-      onStatus: function (m, kind) { distStatus.className = 'modal-status splits-status' + (kind === 'pending' ? ' pending' : ''); distStatus.textContent = m || ''; },
-      onSuccess: function () {
-        distBtn.textContent = 'Distributed';
-        distStatus.className = 'modal-status splits-status success';
-        distStatus.textContent = 'Pending splits distributed.';
-      },
-      onError: function (m) {
-        distBtn.disabled = false;
-        distBtn.textContent = 'Distribute';
-        distStatus.className = 'modal-status splits-status error';
-        distStatus.textContent = m;
-      },
-    });
-  });
-  wrap.appendChild(distBtn);
-  wrap.appendChild(distStatus);
-
   var splitsCache = {};
+  var activeIdx = 0;
+  var perChainPending = null;
   function showStage(idx) {
+    activeIdx = idx;
     var s = stages[idx];
     var isCurrent = currentId && String(s.id) === currentId;
     var btns = stageRow.querySelectorAll('.splits-stage-btn');
@@ -4875,8 +4875,36 @@ function renderOwnersSplits(project) {
       : read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), BigInt(s.id), RESERVED_TOKEN_SPLIT_GROUP])
         .then(function (x) { splitsCache[key] = x || []; return splitsCache[key]; })
         .catch(function () { splitsCache[key] = null; return null; });
-    p.then(function (splits) { renderSplitsTable(tableWrap, splits, md, project, sym, isCurrent); });
+    p.then(function (splits) {
+      tableWrap.innerHTML = '';
+      if (!splits || !splits.length) {
+        var body = el('div', 'detail-card-body');
+        body.textContent = splits
+          ? (project.isRevnet
+            ? 'No splits configured for this stage — reserved tokens go to REVOwner.'
+            : 'No splits configured for this stage — reserved tokens go to the project owner.')
+          : 'Could not read splits.';
+        tableWrap.appendChild(body);
+        return;
+      }
+      // A standalone column header on top, then each chain as its own small table (tight gap between).
+      var chains = (perChainPending && perChainPending.length)
+        ? perChainPending
+        : [{ id: project.chainId, name: chainById(project.chainId).name, pending: project.pendingReserved }];
+      var headTable = el('div', 'splits-table splits-headtable');
+      var headRow = el('div', 'splits-row splits-head');
+      ['Account', 'Percentage', 'Pending splits'].forEach(function (h) { var c = el('span'); c.textContent = h; headRow.appendChild(c); });
+      headTable.appendChild(headRow);
+      tableWrap.appendChild(headTable);
+      chains.forEach(function (pc) { appendChainSplitBlock(tableWrap, splits, md, project, sym, isCurrent, pc); });
+    });
   }
+  // Per-chain pending reserved (async) — re-render the open stage once it lands so the spread shows.
+  fetchPendingReservedPerChain(project).then(function (rows) {
+    if (!wrap.isConnected) return;
+    perChainPending = rows.filter(function (r) { return r.pending != null; });
+    showStage(activeIdx);
+  });
 
   stages.forEach(function (s, idx) {
     var isCurrent = currentId && String(s.id) === currentId;
@@ -4894,23 +4922,23 @@ function renderOwnersSplits(project) {
   return wrap;
 }
 
-// Account | Percentage (effective % + % of limit) | Pending splits (current stage only).
-function renderSplitsTable(wrap, splits, md, project, sym, isCurrent) {
-  wrap.innerHTML = '';
-  if (!splits || !splits.length) {
-    var body = el('div', 'detail-card-body');
-    body.textContent = splits
-      ? (project.isRevnet
-        ? 'No splits configured for this stage — reserved tokens go to REVOwner.'
-        : 'No splits configured for this stage — reserved tokens go to the project owner.')
-      : 'Could not read splits.';
-    wrap.appendChild(body); return;
-  }
+// Append one chain block: an unboxed [chain name … Distribute] row sitting atop a bordered table of
+// that chain's split rows. pc = { id, name, pending }. Distribute is active only when this chain has
+// pending reserved to send.
+function appendChainSplitBlock(container, splits, md, project, sym, isCurrent, pc) {
   var limitPct = Number(md.reservedPercent) / 100; // reservedPercent out of 10,000 → percent of issuance
+  var hasPending = isCurrent && pc.pending != null && pc.pending > 0n;
+
+  var block = el('div', 'splits-chain-block');
+  var chainrow = el('div', 'splits-chainrow');
+  var name = el('span', 'splits-chain-head');
+  name.appendChild(chainLogo(pc.id, pc.name));
+  name.appendChild(document.createTextNode(pc.name));
+  chainrow.appendChild(name);
+  chainrow.appendChild(makeChainDistribute(project, pc, hasPending, isCurrent));
+  block.appendChild(chainrow);
+
   var table = el('div', 'splits-table');
-  var head = el('div', 'splits-row splits-head');
-  ['Account', 'Percentage', 'Pending splits'].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
-  table.appendChild(head);
   splits.forEach(function (sp) {
     var frac = Number(sp.percent) / 1e9;          // share of the reserved group (0..1)
     var effective = limitPct * frac;              // share of total issuance
@@ -4926,13 +4954,46 @@ function renderSplitsTable(wrap, splits, md, project, sym, isCurrent) {
     var ofl = el('span', 'splits-muted'); ofl.textContent = ' (' + Math.round(ofLimit) + '% of limit)'; pct.appendChild(ofl);
     row.appendChild(pct);
     var pend = el('span', 'splits-pend');
-    if (isCurrent && project.pendingReserved != null) {
-      pend.textContent = formatAmount(project.pendingReserved * BigInt(sp.percent) / 1000000000n, 18) + ' ' + sym;
-    } else { pend.textContent = '—'; }
+    pend.textContent = hasPending ? (formatAmount(pc.pending * BigInt(sp.percent) / 1000000000n, 18) + ' ' + sym) : '—';
     row.appendChild(pend);
     table.appendChild(row);
   });
-  wrap.appendChild(table);
+  block.appendChild(table);
+  container.appendChild(block);
+}
+
+// Per-chain Distribute button — calls sendReservedTokensToSplitsOf on that chain. Disabled (idle) unless
+// this chain has pending reserved available to send.
+function makeChainDistribute(project, pc, hasPending, isCurrent) {
+  var foot = el('div', 'splits-chain-foot');
+  var status = el('div', 'modal-status splits-status');
+  var btn = document.createElement('button');
+  btn.className = 'ops-action-btn splits-cta';
+  btn.textContent = 'Distribute';
+  if (!hasPending) {
+    btn.disabled = true;
+    btn.title = isCurrent ? ('Nothing pending to distribute on ' + pc.name) : 'Only the current stage has pending splits';
+  }
+  btn.addEventListener('click', function () {
+    status.className = 'modal-status splits-status'; status.textContent = '';
+    if (!(getAccount && getAccount())) {
+      btn.disabled = true; btn.textContent = 'Connecting…'; status.textContent = 'Connecting wallet…';
+      connect().then(function () { btn.disabled = false; btn.textContent = 'Distribute'; btn.click(); })
+        .catch(function (err) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = (err && (err.shortMessage || err.message)) || 'Could not connect wallet'; });
+      return;
+    }
+    var ctrl = getAddress('JBController', pc.id);
+    if (!ctrl) { status.className = 'modal-status splits-status error'; status.textContent = 'No controller on ' + pc.name + '.'; return; }
+    btn.disabled = true; btn.textContent = 'Distributing…';
+    executeTransaction({
+      chainId: pc.id, address: ctrl, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf', args: [BigInt(project.id)],
+      onStatus: function (m, kind) { status.className = 'modal-status splits-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m || ''; },
+      onSuccess: function () { btn.textContent = 'Distributed'; status.className = 'modal-status splits-status success'; status.textContent = 'Pending splits distributed on ' + pc.name + '.'; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
+      onError: function (m) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = m; },
+    });
+  });
+  foot.appendChild(status); foot.appendChild(btn); // status left of button → button stays flush-right
+  return foot;
 }
 
 function renderTokensSection(project) {
@@ -4956,41 +5017,25 @@ function renderTokensSection(project) {
 function renderAcrossChainsBody(project) {
   var body = el('div');
   var desc = el('div', 'detail-card-body');
-  desc.textContent = 'The same project ID lives on every chain (omnichain via suckers). Per-chain supply, native balance, and unit cash-out value, read live from each chain.';
+  desc.textContent = 'A project can settle funds on many chains, and holders can move funds between them.';
   body.appendChild(desc);
-  // Which bridge infra each sucker route uses (native rollup bridge vs Chainlink CCIP), read from the suckers.
-  var infraLine = el('div', 'settlement-infra');
-  body.appendChild(infraLine);
-  fetchProjectSuckerInfra(project).then(function (routes) {
-    if (!body.isConnected || !routes.length) return;
-    var head = el('span', 'settlement-infra-label'); head.textContent = 'Bridges: '; infraLine.appendChild(head);
-    routes.forEach(function (r, i) {
-      if (i) infraLine.appendChild(document.createTextNode(' · '));
-      var span = el('span', 'settlement-infra-route');
-      span.appendChild(document.createTextNode(moveChainName(r.a) + ' ↔ ' + moveChainName(r.b) + ' '));
-      var tag = el('span', 'settlement-infra-tag settlement-infra-tag--' + r.infra.toLowerCase());
-      tag.textContent = r.infra;
-      span.appendChild(tag);
-      infraLine.appendChild(span);
-    });
-  });
   var status = el('div', 'detail-card-body');
   status.textContent = 'Reading across chains…';
   body.appendChild(status);
   fetchOps(project).then(function (rows) {
     status.remove();
+    // Totals first, so each row can show its share of supply / balance (how relevant the chain is).
+    var totSupply = 0n, totBalance = 0n;
+    rows.forEach(function (r) { if (r.supply != null) totSupply += r.supply; if (r.balance != null) totBalance += r.balance; });
     var table = el('div', 'detail-ops-table');
     table.appendChild(opsRow('Chain', 'Supply', 'Balance', 'Unit value', true, false));
-    var totSupply = 0n, totBalance = 0n;
     rows.forEach(function (r) {
       table.appendChild(opsRow(
         r.name,
-        r.supply == null ? '—' : formatTokens(r.supply),
-        r.balance == null ? '—' : formatEth(r.balance),
+        r.supply == null ? '—' : { main: formatTokens(r.supply), sub: pctOf(r.supply, totSupply) },
+        r.balance == null ? '—' : { main: formatEth(r.balance), sub: pctOf(r.balance, totBalance) },
         r.unitValue == null ? '—' : formatEth(r.unitValue),
-        false, false));
-      if (r.supply != null) totSupply += r.supply;
-      if (r.balance != null) totBalance += r.balance;
+        false, false, r.id));
     });
     table.appendChild(opsRow('Total', formatTokens(totSupply), formatEth(totBalance), '', false, true));
     body.appendChild(table);
@@ -4998,6 +5043,44 @@ function renderAcrossChainsBody(project) {
     status.textContent = 'Could not read cross-chain state.';
   });
   return body;
+}
+
+// Which bridge infra each sucker route uses (native rollup bridge vs Chainlink CCIP), read from the
+// suckers. Its own subsection, sits above Movement. Removes itself if the project has no suckers.
+function renderBridgesSubsection(project) {
+  var table = el('div', 'detail-ops-table bridges-table');
+  var head = el('div', 'detail-ops-row detail-ops-head');
+  ['Chains', 'Type'].forEach(function (label) { var c = el('span', 'detail-ops-cell'); c.textContent = label; head.appendChild(c); });
+  table.appendChild(head);
+  var section = detailSubSection('Bridges', table);
+  fetchProjectSuckerInfra(project).then(function (routes) {
+    if (!section.isConnected) return;
+    if (!routes.length) { section.remove(); return; }
+    routes.forEach(function (r) {
+      var row = el('div', 'detail-ops-row');
+      // A sucker bridges both ways — show the pair joined by a bidirectional arrow, not a From→To direction.
+      var chains = el('span', 'detail-ops-cell bridge-pair');
+      chains.appendChild(chainLogo(r.a, moveChainName(r.a)));
+      chains.appendChild(document.createTextNode(moveChainName(r.a)));
+      var arrow = el('span', 'bridge-pair-arrow');
+      arrow.innerHTML = '<svg viewBox="0 0 30 12" width="30" height="12" aria-hidden="true">'
+        + '<line x1="5" y1="6" x2="25" y2="6" stroke="currentColor" stroke-width="1.4"/>'
+        + '<path d="M9 2.5 L4.5 6 L9 9.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+        + '<path d="M21 2.5 L25.5 6 L21 9.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+        + '</svg>';
+      chains.appendChild(arrow);
+      chains.appendChild(chainLogo(r.b, moveChainName(r.b)));
+      chains.appendChild(document.createTextNode(moveChainName(r.b)));
+      row.appendChild(chains);
+      var type = el('span', 'detail-ops-cell');
+      var tag = el('span', 'settlement-infra-tag settlement-infra-tag--' + r.infra.toLowerCase());
+      tag.textContent = r.infra;
+      type.appendChild(tag);
+      row.appendChild(type);
+      table.appendChild(row);
+    });
+  });
+  return section;
 }
 
 function renderOpsSection(project) {
@@ -5009,6 +5092,7 @@ function renderOpsSection(project) {
     title.textContent = 'Settlement';
     card.appendChild(title);
     card.appendChild(renderAcrossChainsBody(project));
+    card.appendChild(renderBridgesSubsection(project));
     section.appendChild(card);
   } else {
     // Revnet bridge-transactions live under Owners → Settlement; Ops keeps just the action buttons.
@@ -5017,12 +5101,8 @@ function renderOpsSection(project) {
   return section;
 }
 
-// "Use your <SYM>" — cash out, borrow, or move tokens across chains, each in a modal.
-function renderOpsActions(project) {
-  var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title');
-  title.textContent = 'Use your ' + (project.tokenSymbol || 'tokens');
-  card.appendChild(title);
+// The row of wallet actions (cash out, borrow, move, add liquidity), each opening a modal.
+function opsActionsRow(project) {
   var row = el('div', 'ops-actions');
   [
     ['Cash out', function () { openModal('Cash out', buildCashOutModal(project)); }],
@@ -5036,8 +5116,144 @@ function renderOpsActions(project) {
     b.addEventListener('click', a[1]);
     row.appendChild(b);
   });
-  card.appendChild(row);
+  return row;
+}
+
+// "Use your <SYM>" — cash out, borrow, or move tokens across chains, each in a modal.
+function renderOpsActions(project) {
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title');
+  title.textContent = 'Use your ' + (project.tokenSymbol || 'tokens');
+  card.appendChild(title);
+  card.appendChild(opsActionsRow(project));
   return card;
+}
+
+// Per chain: the connected wallet's token balance, its cash-out value (reclaimable ETH), and its max
+// loan (borrowable ETH against that balance via REVLoans). Null fields where unavailable on a chain.
+function fetchYouPosition(project) {
+  var pid = BigInt(project.id);
+  var acct = getAccount && getAccount();
+  var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
+  return Promise.all(chains.map(function (chain) {
+    var cid = chain.id;
+    if (!acct) return Promise.resolve({ id: cid, name: chain.name, balance: null, cashout: null, maxLoan: null });
+    var terminal = getAddress('JBMultiTerminal', cid);
+    var revLoans = getAddress('REVLoans', cid);
+    return Promise.all([
+      readUserBalance(project, cid),
+      read(cid, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
+      terminal ? read(cid, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, NATIVE_TOKEN]).catch(function () { return null; }) : Promise.resolve(null),
+    ]).then(function (res) {
+      var bal = res[0], supply = res[1], surplus = res[2];
+      var hasBal = bal != null && bal > 0n;
+      // Cash-out value: what `bal` tokens reclaim now (native, no price feed → no revert).
+      var cashJob = (hasBal && supply && supply >= bal && surplus != null)
+        ? read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, bal, supply, surplus]).catch(function () { return null; })
+        : Promise.resolve(hasBal ? null : 0n);
+      // Max loan: borrowable ETH against `bal` collateral. Returns 0 while the cash-out delay is active.
+      var loanJob = (hasBal && revLoans)
+        ? read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, bal, 18n, 1n]).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; })
+        : Promise.resolve(revLoans ? (hasBal ? null : 0n) : null);
+      return Promise.all([cashJob, loanJob]).then(function (out) {
+        return { id: cid, name: chain.name, balance: bal, cashout: out[0], maxLoan: out[1] };
+      });
+    });
+  }));
+}
+
+// When this revnet's loans/cash-outs unlock (the cash-out delay), read from its data hook (REVOwner).
+// Returns a bigint unix timestamp, or null when there's no delay / no data hook.
+function readCashOutDelay(project) {
+  var dh = project.metadata && project.metadata.dataHook;
+  if (!dh || dh === ZERO_ADDRESS) return Promise.resolve(null);
+  return clientFor(project.chainId).readContract({
+    address: dh, abi: cashOutDelayAbi, functionName: 'cashOutDelayOf', args: [BigInt(project.id)],
+  }).then(function (d) { return toBigInt(d); }).catch(function () { return null; });
+}
+
+// "You": the connected wallet's position in this project across chains + the action buttons. Sits at the
+// top of the Owners tab (replaces the standalone Ops tab for revnets).
+function renderYouCard(project) {
+  var sym = project.tokenSymbol || 'tokens';
+  var wrap = el('div', 'you-card');
+  var body = el('div', 'you-body');
+  wrap.appendChild(body);
+  wrap.appendChild(opsActionsRow(project));
+
+  function load() {
+    var acct = getAccount && getAccount();
+    body.innerHTML = '';
+    if (!acct) {
+      var m = el('div', 'detail-card-body you-empty');
+      m.textContent = 'Connect a wallet to see your ' + sym + ' across chains, its cash-out value, and your max loan.';
+      var c = document.createElement('button'); c.className = 'ops-action-btn you-connect'; c.textContent = 'Connect wallet';
+      c.addEventListener('click', function () { connect().then(load).catch(function () {}); });
+      body.appendChild(m); body.appendChild(c);
+      return;
+    }
+    var status = el('div', 'detail-card-body'); status.textContent = 'Reading your position across chains…'; body.appendChild(status);
+    Promise.all([fetchYouPosition(project), readCashOutDelay(project)]).then(function (out) {
+      if (!body.isConnected) return;
+      var rows = out[0], delay = out[1];
+      // The revnet's cash-out delay gates BOTH direct cash-outs (REVOwner.beforeCashOutRecordedWith
+      // reverts) AND loans (borrowableAmountFrom returns 0). The cash-out *value* still computes (pure
+      // bonding-curve calc), so we show it but mark it locked; loans can't compute, so they read "Locked".
+      var locked = delay != null && delay > 0n && Number(delay) > Math.floor(Date.now() / 1000);
+      function cashCell(r) {
+        if (r.cashout == null) return '—';
+        return locked ? { main: formatEth(r.cashout), sub: 'locked' } : formatEth(r.cashout);
+      }
+      // While locked, borrowableAmountFrom returns 0, but the contract's borrowable capacity IS the
+      // bonding-curve reclaim — i.e. ≈ the cash-out value. Show that as the would-be loan, marked locked.
+      function loanCell(r) {
+        if (r.maxLoan == null) return '—'; // no REVLoans on this chain
+        if (r.maxLoan > 0n) return formatEth(r.maxLoan); // unlocked: the real borrowable
+        if (locked && r.cashout != null && r.cashout > 0n) return { main: formatEth(r.cashout), sub: 'locked' };
+        return locked ? 'Locked' : formatEth(0n);
+      }
+      status.remove();
+      var held = rows.filter(function (r) { return r.balance && r.balance > 0n; });
+      if (!held.length) {
+        var none = el('div', 'detail-card-body you-empty');
+        none.textContent = 'You don’t hold any ' + sym + ' yet. Pay the project to get some.';
+        body.appendChild(none);
+        return;
+      }
+      var table = el('div', 'detail-ops-table');
+      table.appendChild(opsRow('Chain', 'Balance', 'Cash out', 'Max loan', true, false));
+      var totBal = 0n, totCash = 0n, totLoan = 0n, anyLoan = false;
+      held.forEach(function (r) {
+        table.appendChild(opsRow(
+          r.name,
+          formatTokenCount(r.balance) + ' ' + sym,
+          cashCell(r),
+          loanCell(r),
+          false, false, r.id));
+        totBal += r.balance;
+        if (r.cashout != null) totCash += r.cashout;
+        if (r.maxLoan != null && r.maxLoan > 0n) { totLoan += r.maxLoan; anyLoan = true; }
+      });
+      var totCashCell = locked ? { main: formatEth(totCash), sub: 'locked' } : formatEth(totCash);
+      // Locked total loan ≈ total cash-out value (same bonding-curve reclaim).
+      var totLoanCell = anyLoan ? formatEth(totLoan) : (locked && totCash > 0n ? { main: formatEth(totCash), sub: 'locked' } : (locked ? 'Locked' : '—'));
+      table.appendChild(opsRow('Total', formatTokenCount(totBal) + ' ' + sym, totCashCell, totLoanCell, false, true));
+      body.appendChild(table);
+      if (locked) {
+        var note = el('div', 'you-footnote');
+        note.textContent = 'Cash-outs and loans unlock ' + formatDateShort(delay) + '. Locked values estimate what you could redeem or borrow then.';
+        body.appendChild(note);
+      }
+    }).catch(function () {
+      if (!body.isConnected) return;
+      status.textContent = 'Could not read your position.';
+    });
+  }
+
+  load();
+  onWalletChange(function () { if (body.isConnected) load(); });
+  document.addEventListener('jb:bridge-updated', function () { if (body.isConnected) load(); });
+  return wrap;
 }
 
 // Movement, as a bottom subsection (activity-feed style) of "Settlement".
@@ -5045,7 +5261,7 @@ function renderBridgeTransactions(project) {
   var card = el('div', 'detail-subsection bridge-card');
   var head = el('div', 'bridge-card-head');
   var title = el('div', 'detail-subsection-title bridge-title');
-  title.textContent = 'Movement';
+  title.textContent = 'Recent movement';
   head.appendChild(title);
 
   var filter = document.createElement('select');
@@ -6101,7 +6317,6 @@ function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
   [amm, issuance, cashout].forEach(function (v) { if (v && v > 0) { pmin = Math.min(pmin, v); pmax = Math.max(pmax, v); } });
   if (!(pmax > pmin) || !isFinite(pmin) || !isFinite(pmax) || pmin <= 0) return null;
   var lmin = Math.log(pmin), lmax = Math.log(pmax), span = (lmax - lmin) || 1;
-  lmin -= span * 0.05; lmax += span * 0.05; span = lmax - lmin;
   var N = 56;
   // Per band: liquidity (bar height) + the REV/ETH it holds at the current price (hover tooltip).
   var bands = [];
@@ -6122,30 +6337,33 @@ function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
     bands.push({ mid: mid, pLo: pLo, pHi: pHi, liq: liq, eth: ethW, rev: revW });
   }
   var maxL = Math.max.apply(null, bands.map(function (b) { return b.liq; })) || 1;
-  var W = 600, H = 150, padL = 8, padR = 8, labelH = 13, padT = 2, plotTop = padT + labelH, padB = 16, plotW = W - padL - padR, plotH = H - plotTop - padB;
+  // viewBox aspect ≈ the container (left column ≈ 300px) so the SVG scales ~uniformly — otherwise the
+  // <text> labels render horizontally stretched/thin under preserveAspectRatio="none".
+  var W = 300, H = 150, padL = 0, padR = 0, labelH = 20, padT = 4, padB = 24;
+  var plotTop = padT + labelH, plotW = W - padL - padR, plotH = H - plotTop - padB;
   var xOf = function (price) { return padL + ((Math.log(price) - lmin) / span) * plotW; };
   var bw = plotW / N, svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="lp-depth-svg" preserveAspectRatio="none" role="img" aria-label="Pool liquidity by price band">';
   for (var j = 0; j < N; j++) {
     if (bands[j].liq <= 0) continue;
     var h = (bands[j].liq / maxL) * plotH, x = padL + j * bw;
-    var color = (amm && bands[j].mid < amm) ? '#6ec4c4' : '#b8602e';
+    var color = (amm && bands[j].mid < amm) ? '#6ec4c4' : '#cca080'; // below price: teal-light, above: orange-light
     svg += '<rect x="' + x.toFixed(1) + '" y="' + (plotTop + plotH - h).toFixed(1) + '" width="' + Math.max(0.5, bw - 0.5).toFixed(1) + '" height="' + h.toFixed(1) + '" fill="' + color + '" opacity="0.5"/>';
   }
   // Markers: dashed line spans the bars; label sits in the row ABOVE the bars (no overlap).
   function marker(price, color, label) {
-    if (!(price > 0) || price < Math.exp(lmin) || price > Math.exp(lmax)) return '';
-    var x = xOf(price);
+    if (!(price > 0) || price < pmin * (1 - 1e-9) || price > pmax * (1 + 1e-9)) return ''; // tol: exp(log(pmin)) can round just above pmin
+    var x = Math.max(0.8, Math.min(W - 0.8, xOf(price))); // full-bleed: keep edge markers fully visible
     return '<line x1="' + x.toFixed(1) + '" y1="' + plotTop + '" x2="' + x.toFixed(1) + '" y2="' + (plotTop + plotH) + '" stroke="' + color + '" stroke-width="1.5" stroke-dasharray="3 2"/>'
-      + '<text x="' + Math.max(16, Math.min(W - 16, x)).toFixed(1) + '" y="' + (padT + 9) + '" font-size="8" fill="' + color + '" text-anchor="middle">' + label + '</text>';
+      + '<text x="' + Math.max(28, Math.min(W - 28, x)).toFixed(1) + '" y="' + (padT + 12) + '" font-size="12" fill="#7d6858" text-anchor="middle">' + label + '</text>';
   }
   svg += marker(cashout, '#2c2018', 'floor');
   svg += marker(amm, '#b8602e', 'price');
   svg += marker(issuance, '#6ec4c4', 'ceiling');
-  svg += '<text x="' + padL + '" y="' + (H - 4) + '" font-size="8" fill="#9a8579" text-anchor="start">' + formatPrice(Math.exp(lmin)) + '</text>';
-  svg += '<text x="' + (W - padR) + '" y="' + (H - 4) + '" font-size="8" fill="#9a8579" text-anchor="end">' + formatPrice(Math.exp(lmax)) + '</text>';
+  svg += '<text x="' + padL + '" y="' + (H - 7) + '" font-size="12" fill="#7d6858" text-anchor="start">' + formatPrice(Math.exp(lmin)) + '</text>';
+  svg += '<text x="' + (W - padR) + '" y="' + (H - 7) + '" font-size="12" fill="#7d6858" text-anchor="end">' + formatPrice(Math.exp(lmax)) + '</text>';
   svg += '</svg>';
   var panel = el('div', 'lp-depth');
-  var title = el('div', 'lp-depth-title'); title.textContent = 'Pool liquidity by price (ETH / ' + sym + ')'; panel.appendChild(title);
+  var title = el('div', 'detail-card-title lp-depth-title'); title.textContent = 'Depth'; panel.appendChild(title);
   var holder = el('div', 'lp-depth-holder'); holder.innerHTML = svg;
   var tip = el('div', 'lp-depth-tip'); tip.style.display = 'none'; holder.appendChild(tip);
   holder.addEventListener('mousemove', function (e) {
@@ -6179,19 +6397,20 @@ function renderLpOwnersPie(lp) {
   var svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('viewBox', '0 0 240 240'); svg.setAttribute('class', 'owners-pie-svg'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'LP owner distribution');
   var cx = 120, cy = 120, outer = 92, inner = 54, angle = -Math.PI / 2;
+  // Pink-light fill, borders distinguish slices (matches the owners donut).
   if (owners.length === 1) {
-    var only = document.createElementNS(svgNS, 'circle');
-    only.setAttribute('cx', String(cx)); only.setAttribute('cy', String(cy)); only.setAttribute('r', String((outer + inner) / 2));
-    only.setAttribute('fill', 'none'); only.setAttribute('stroke', OWNER_PIE_COLORS[0]); only.setAttribute('stroke-width', String(outer - inner));
-    var t0 = document.createElementNS(svgNS, 'title'); t0.textContent = truncAddr(owners[0].address) + ' · 100%'; only.appendChild(t0);
-    svg.appendChild(only);
+    var ring = document.createElementNS(svgNS, 'path');
+    ring.setAttribute('d', donutSlicePath(cx, cy, outer, inner, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 - 0.001));
+    ring.setAttribute('class', 'owners-pie-slice');
+    var t0 = document.createElementNS(svgNS, 'title'); t0.textContent = truncAddr(owners[0].address) + ' · 100%'; ring.appendChild(t0);
+    svg.appendChild(ring);
   } else {
-    owners.forEach(function (o, idx) {
+    owners.forEach(function (o) {
       var frac = o.valueEth / total; if (!(frac > 0)) return;
       var next = angle + frac * Math.PI * 2;
       var path = document.createElementNS(svgNS, 'path');
       path.setAttribute('d', donutSlicePath(cx, cy, outer, inner, angle, next));
-      path.setAttribute('fill', OWNER_PIE_COLORS[idx % OWNER_PIE_COLORS.length]);
+      path.setAttribute('class', 'owners-pie-slice');
       var t = document.createElementNS(svgNS, 'title'); t.textContent = truncAddr(o.address) + ' · ' + (frac * 100).toFixed(1) + '%'; path.appendChild(t);
       svg.appendChild(path); angle = next;
     });
@@ -6212,10 +6431,9 @@ function renderLpTable(lp, sym, chainId) {
   var head = el('div', 'owners-row owners-head');
   ['Account', 'ETH', sym, 'Share'].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
   table.appendChild(head);
-  owners.forEach(function (o, idx) {
+  owners.forEach(function (o) {
     var tr = el('div', 'owners-row');
     var acct = el('span', 'owners-account');
-    var dot = el('span', 'owners-dot'); dot.style.background = OWNER_PIE_COLORS[idx % OWNER_PIE_COLORS.length]; acct.appendChild(dot);
     acct.appendChild(addressNode(o.address));
     if (o.positions > 1) { var pc = el('span', 'lp-pos-count'); pc.textContent = o.positions + ' positions'; acct.appendChild(pc); }
     tr.appendChild(acct);
@@ -6235,7 +6453,7 @@ function renderLpCompositionBar(lp, sym) {
   var total = ethF + revVal;
   if (!(total > 0)) return null;
   var ethPct = ethF / total * 100, revPct = revVal / total * 100;
-  var ethColor = OWNER_PIE_COLORS[2 % OWNER_PIE_COLORS.length], revColor = OWNER_PIE_COLORS[0];
+  var ethColor = '#6ec4c4', revColor = '#cca080'; // teal-light (ETH) / orange-light (REV)
   var wrap = el('div', 'lp-bar-wrap');
   var bar = el('div', 'lp-bar');
   var s0 = el('div', 'lp-bar-seg'); s0.style.width = ethPct + '%'; s0.style.background = ethColor; s0.title = 'ETH ' + ethPct.toFixed(1) + '%'; bar.appendChild(s0);
@@ -6567,14 +6785,33 @@ function buildAddLiquidityModal(project) {
   return wrap;
 }
 
-function opsRow(c, s, b, u, isHead, isTotal) {
+function opsRow(c, s, b, u, isHead, isTotal, chainId) {
   var row = el('div', 'detail-ops-row' + (isHead ? ' detail-ops-head' : '') + (isTotal ? ' detail-ops-total' : ''));
-  [c, s, b, u].forEach(function (v) {
+  [c, s, b, u].forEach(function (v, i) {
     var cell = el('span', 'detail-ops-cell');
-    cell.textContent = v;
+    if (i === 0 && chainId != null) {
+      cell.classList.add('detail-ops-chain');
+      cell.appendChild(chainLogo(chainId, c));
+      cell.appendChild(document.createTextNode(c));
+    } else if (v && typeof v === 'object') {
+      // { main, sub } — main value with a muted secondary (e.g. a share-of-total percentage).
+      cell.appendChild(document.createTextNode(v.main));
+      if (v.sub) { var sub = el('span', 'detail-ops-sub'); sub.textContent = v.sub; cell.appendChild(sub); }
+    } else {
+      cell.textContent = v;
+    }
     row.appendChild(cell);
   });
   return row;
+}
+
+// A part's share of a total, formatted as a percent with adaptive precision (so tiny chains still read).
+function pctOf(part, total) {
+  if (part == null || !total || total === 0n) return null;
+  var pct = Number(part * 100000000n / total) / 1000000; // percent, 6-dec internal precision
+  if (pct === 0) return '0%';
+  var dec = pct >= 1 ? 2 : pct >= 0.001 ? 3 : 4;
+  return pct.toFixed(dec) + '%';
 }
 
 function fetchOps(project) {
@@ -6594,10 +6831,10 @@ function fetchOps(project) {
       // once there's at least a token of supply. No currency conversion → no price-feed revert.
       if (supply && supply >= ONE_TOKEN && balance != null) {
         return read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, balance])
-          .then(function (uv) { return { name: chain.name, supply: supply, balance: balance, unitValue: uv }; })
-          .catch(function () { return { name: chain.name, supply: supply, balance: balance, unitValue: null }; });
+          .then(function (uv) { return { id: cid, name: chain.name, supply: supply, balance: balance, unitValue: uv }; })
+          .catch(function () { return { id: cid, name: chain.name, supply: supply, balance: balance, unitValue: null }; });
       }
-      return { name: chain.name, supply: supply, balance: balance, unitValue: null };
+      return { id: cid, name: chain.name, supply: supply, balance: balance, unitValue: null };
     });
   }));
 }
