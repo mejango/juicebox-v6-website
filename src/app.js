@@ -10,7 +10,6 @@ import { buildEmbedUrl, getAccount, connect, onWalletChange, eagerConnect, trunc
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute } from './discover.js';
 import { renderDataTab } from './data-tab.js';
-import { openCreateFlow } from './create-flow.js';
 
 // Component renderers for pretty mode
 import { renderPayComponent } from './pay-component.js';
@@ -90,8 +89,7 @@ function initTabs() {
       location.hash = '#' + (TAB_TO_NAV[btn.dataset.tab] || btn.dataset.tab);
     });
   });
-  var createBtn = document.getElementById('create-btn');
-  if (createBtn) createBtn.addEventListener('click', function() { openCreateFlow(); });
+  // The Create button now lives inside the Discover tab (rendered by renderDiscoverTab), wired there.
 
   var connectBtn = document.getElementById('connect-btn');
   if (connectBtn) {

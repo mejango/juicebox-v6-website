@@ -4,13 +4,14 @@
 // executeRead. Projects 1–7 are the canonical V6 set deployed across the testnets.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, getWalletClient, switchChain, onWalletChange } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange } from './component-base.js';
 import { CHAINS, getCustomRpc, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub, shortHex } from './pay-preview.js';
 import { bendystrawQuery } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrTxHash } from './relayr.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
+import { openCreateFlow } from './create-flow.js';
 
 // One batched client per chain. `batch.multicall` makes viem fold all the concurrent
 // readContract calls (7 projects × ~7 reads) into a couple of Multicall3 requests, so a
@@ -488,7 +489,7 @@ function makeNftCart() {
 function renderShopSection(project, shop, cart) {
   var wrap = el('div', 'detail-section');
   var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title'); title.textContent = 'Store'; card.appendChild(title);
+  var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; card.appendChild(title);
   var body = el('div', 'shop-body'); card.appendChild(body);
   wrap.appendChild(card);
 
@@ -501,9 +502,14 @@ function renderShopSection(project, shop, cart) {
   }
 
   // Operator: add an NFT tier (shown once we know the 721 hook). Appended after the body resolves.
+  // Bottom-left also shows the 721 collection's contract address.
   function appendAddTierFoot(s) {
     if (!s || !s.hook) return;
-    var foot = el('div', 'detail-about-foot');
+    var foot = el('div', 'detail-about-foot shop-foot');
+    var addr = el('div', 'shop-collection-addr');
+    addr.appendChild(document.createTextNode('Address: '));
+    addr.appendChild(addressLinkNode(s.hook, project.chainId));
+    foot.appendChild(addr);
     var add = el('a', 'operator-cta'); add.href = '#'; add.textContent = 'Add item for sale';
     add.title = 'Add an NFT item for sale (operator only)';
     add.addEventListener('click', function (e) { e.preventDefault(); openAddTierModal(project, s); });
@@ -530,7 +536,7 @@ function renderShopSection(project, shop, cart) {
     s.tiers.forEach(function (t) { if (!seen[t.category]) { seen[t.category] = true; cats.push(t.category); } });
     cats.sort(function (a, b) { return a - b; });
     var catNames = {}, headingEls = {}, refreshers = {};
-    function catLabel(c) { return catNames[c] || (c === 0 ? 'General' : 'Category ' + c); }
+    function catLabel(c) { return catNames[c] || (project.storeCategories && project.storeCategories[c]) || (c === 0 ? 'General' : 'Category ' + c); }
     cats.forEach(function (c) {
       var group = el('div', 'shop-cat-group');
       var heading = el('div', 'shop-cat-heading'); heading.textContent = catLabel(c); group.appendChild(heading);
@@ -561,6 +567,32 @@ function renderShopSection(project, shop, cart) {
 // JB721 tiers cap supply at one billion − 1; that maximum doubles as the "unlimited" sentinel.
 var TIER_UNLIMITED_SUPPLY = 999999999;
 
+// Resolve a project (by its id on `chainId`) to a display name + its projectId on each chain in its
+// sucker group. Lets a tier split route to the SAME project on every chain it's offered on, and lets us
+// confirm the project by name. Cached. Returns { name, byChain: { chainId: projectId } } or null.
+var _splitProjCache = {};
+function resolveSplitProject(projectId, chainId) {
+  var key = chainId + ':' + projectId;
+  if (_splitProjCache[key]) return _splitProjCache[key];
+  var p = (async function () {
+    var res = await bendystrawQuery(
+      'query($projectId: Float!, $chainId: Float!, $version: Float!) { project(projectId: $projectId, chainId: $chainId, version: $version) { name handle suckerGroupId } }',
+      { projectId: Number(projectId), chainId: Number(chainId), version: BENDYSTRAW_VERSION }
+    ).catch(function () { return null; });
+    var proj = res && res.project;
+    if (!proj) return null;
+    var byChain = {}; byChain[Number(chainId)] = Number(projectId);
+    if (proj.suckerGroupId) {
+      var g = await bendystrawQuery('query($id: String!) { suckerGroup(id: $id) { projects } }', { id: proj.suckerGroupId }).catch(function () { return null; });
+      var list = g && g.suckerGroup && g.suckerGroup.projects;
+      if (Array.isArray(list)) list.forEach(function (s) { var m = /^(\d+)-(\d+)-/.exec(String(s)); if (m) byChain[Number(m[1])] = Number(m[2]); });
+    }
+    return { name: proj.name || proj.handle || ('Project #' + projectId), byChain: byChain };
+  })();
+  _splitProjCache[key] = p;
+  return p;
+}
+
 // Operator-only: add an NFT tier to the project's 721 hook on the chosen chains, via relayr.
 function openAddTierModal(project, shop) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
@@ -581,24 +613,32 @@ function openAddTierModal(project, shop) {
     if (attrs && attrs.step) i.step = attrs.step; if (attrs && attrs.min) i.min = attrs.min;
     parent.appendChild(i); return i;
   }
-  var nameInput = fieldIn(content, 'Name', 'e.g. Founding Member', null, 0);
+  var nameInput = fieldIn(content, 'Name', 'My juicy thing', null, 0);
 
-  var ilbl = el('div', 'operator-edit-label'); ilbl.style.marginTop = '10px';
-  ilbl.innerHTML = 'Media <span class="operator-edit-hint">— image, gif, video, audio, PDF, text… up to ' + MAX_MEDIA_MB + ' MB.</span>';
-  content.appendChild(ilbl);
+  var ilbl = el('div', 'operator-edit-label'); ilbl.style.marginTop = '10px'; ilbl.textContent = 'Media'; content.appendChild(ilbl);
+  var isub = el('div', 'operator-edit-sub'); isub.textContent = 'Image, gif, video, audio, PDF, text… up to ' + MAX_MEDIA_MB + ' MB.'; content.appendChild(isub);
   var imgRow = el('div', 'operator-edit-logo');
   var imgPrev = document.createElement('img'); imgPrev.className = 'operator-edit-logo-prev'; imgPrev.style.display = 'none'; imgRow.appendChild(imgPrev);
   var mediaHint = el('span', 'operator-edit-hint'); mediaHint.style.display = 'none'; imgRow.appendChild(mediaHint);
   var imgFile = document.createElement('input'); imgFile.type = 'file'; imgFile.className = 'operator-edit-logo-file';
   // Any file type: image / gif / video / audio / pdf / markdown / text …
   imgFile.accept = 'image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown';
+  var mediaClear = el('a', 'operator-edit-logo-clear'); mediaClear.href = '#'; mediaClear.textContent = '✕'; mediaClear.title = 'Remove file'; mediaClear.style.display = 'none';
   var mediaMsg = el('div', 'operator-edit-mediamsg'); mediaMsg.style.display = 'none';
   var selectedMedia = null;
   function showPreview(f) {
     if ((f.type || '').indexOf('image') === 0) { imgPrev.style.display = ''; imgPrev.src = URL.createObjectURL(f); mediaHint.style.display = 'none'; }
     else { imgPrev.style.display = 'none'; mediaHint.style.display = ''; mediaHint.textContent = (f.type || 'file') + ' · ' + formatFileSize(f.size); }
+    mediaClear.style.display = '';
   }
   function setMedia(f) { selectedMedia = f; showPreview(f); }
+  function clearMedia() {
+    selectedMedia = null;
+    imgPrev.style.display = 'none'; imgPrev.removeAttribute('src');
+    mediaHint.style.display = 'none'; mediaHint.textContent = '';
+    mediaMsg.style.display = 'none';
+    mediaClear.style.display = 'none';
+  }
   function checkSize() {
     var f = selectedMedia; if (!f) { mediaMsg.style.display = 'none'; return; }
     if (f.size <= MAX_MEDIA_BYTES) { mediaMsg.style.display = 'none'; return; }
@@ -626,45 +666,236 @@ function openAddTierModal(project, shop) {
     }
   }
   imgFile.addEventListener('change', function () {
-    var f = imgFile.files && imgFile.files[0]; if (!f) return;
+    var f = imgFile.files && imgFile.files[0];
+    if (!f) { clearMedia(); return; } // picker dismissed / cleared — drop the stale preview
     setMedia(f); checkSize();
   });
-  imgRow.appendChild(imgFile); content.appendChild(imgRow);
+  mediaClear.addEventListener('click', function (e) { e.preventDefault(); imgFile.value = ''; clearMedia(); });
+  imgRow.appendChild(imgFile); imgRow.appendChild(mediaClear); content.appendChild(imgRow);
   content.appendChild(mediaMsg);
 
   var priceInput = fieldIn(content, 'Price (' + priceUnit + ')', '0.0', { type: 'number', step: 'any', min: '0' });
-  var supplyInput = fieldIn(content, 'Inventory supply (leave empty for unlimited)', '', { type: 'number', step: '1', min: '1' });
 
-  // Advanced options — reserved mints, tier-level splits, governance, flags.
-  var advToggle = el('a', 'operator-cta operator-adv-toggle'); advToggle.href = '#'; advToggle.textContent = 'Advanced options ▾';
+  // Split sales — opt-in checkbox under Price. When on, route a % of each sale to addresses/projects.
+  var splitRefChain = (allChains[0] && allChains[0].id) || project.chainId; // chain the entered project IDs refer to
+  // Wrap the checkbox + recipients in one section so it hugs the Price field above but keeps the standard
+  // gap to Inventory below, regardless of whether the recipients are shown.
+  var splitSection = el('div', 'operator-split-section'); content.appendChild(splitSection);
+  var splitCbRow = el('label', 'operator-flag-row'); splitCbRow.style.marginTop = '0';
+  var splitCb = document.createElement('input'); splitCb.type = 'checkbox'; splitCbRow.appendChild(splitCb);
+  var scs = el('span'); scs.textContent = 'Split sales'; splitCbRow.appendChild(scs); splitSection.appendChild(splitCbRow);
+  var splitWrap = el('div', 'operator-split-recipients'); splitWrap.style.display = 'none'; splitSection.appendChild(splitWrap);
+  var splitSub = el('div', 'operator-edit-sub'); splitSub.textContent = 'Send part of each sale to other addresses or projects. The rest goes to this project.'; splitWrap.appendChild(splitSub);
+  var splitRowsBox = el('div', 'splits-edit-rows'); splitWrap.appendChild(splitRowsBox);
+  var splitRows = [];
+  function addTierSplitRow() {
+    var row = el('div', 'tier-split-row');
+    var line = el('div', 'tier-split-line');
+    var pct = el('input', 'splits-edit-pct'); pct.type = 'number'; pct.step = 'any'; pct.min = '0'; pct.placeholder = '10';
+    var to = el('span', 'tier-split-to'); to.textContent = '% to';
+    var recip = el('input', 'splits-edit-addr tier-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
+    var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕';
+    line.appendChild(pct); line.appendChild(to); line.appendChild(recip); line.appendChild(rm); row.appendChild(line);
+    // Project-recipient extras: a confirmation of the project name + a token-beneficiary line.
+    var nameHint = el('div', 'tier-split-projname'); nameHint.style.display = 'none'; row.appendChild(nameHint);
+    var benefRow = el('div', 'tier-split-benef'); benefRow.style.display = 'none';
+    var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… who receives the project’s tokens'; benefRow.appendChild(benef);
+    row.appendChild(benefRow);
+    var rec = { pct: pct, recip: recip, benef: benef, nameHint: nameHint };
+    function refresh() {
+      var v = (recip.value || '').trim();
+      if (/^[0-9]+$/.test(v) && Number(v) > 0) {
+        benefRow.style.display = ''; nameHint.style.display = ''; nameHint.className = 'tier-split-projname'; nameHint.textContent = 'Looking up project #' + v + '…';
+        resolveSplitProject(v, splitRefChain).then(function (info) {
+          if ((recip.value || '').trim() !== v) return;
+          if (info) { nameHint.textContent = '→ ' + info.name; }
+          else { nameHint.className = 'tier-split-projname warn'; nameHint.textContent = 'No project #' + v + ' found on this chain.'; }
+        });
+      } else { benefRow.style.display = 'none'; nameHint.style.display = 'none'; }
+    }
+    recip.addEventListener('input', refresh);
+    rm.addEventListener('click', function (e) { e.preventDefault(); splitRows = splitRows.filter(function (x) { return x !== rec; }); row.remove(); if (!splitRows.length) { splitCb.checked = false; splitWrap.style.display = 'none'; } });
+    rec.isEmpty = function () { return !(recip.value || '').trim() && !(pct.value || '').trim(); };
+    rec.parse = function () {
+      var v = (recip.value || '').trim();
+      if (/^0x[0-9a-fA-F]{40}$/.test(v)) return { projectId: 0, beneficiary: v };
+      if (/^[0-9]+$/.test(v) && Number(v) > 0) {
+        var b = (benef.value || '').trim();
+        if (!/^0x[0-9a-fA-F]{40}$/.test(b)) throw new Error('Project #' + v + ' needs a token beneficiary address');
+        return { projectId: Number(v), beneficiary: b };
+      }
+      throw new Error('Enter a 0x address or a project ID');
+    };
+    splitRowsBox.appendChild(row); splitRows.push(rec);
+  }
+  var addSplit = el('a', 'operator-cta splits-edit-add'); addSplit.href = '#'; addSplit.textContent = '+ Add recipient';
+  addSplit.addEventListener('click', function (e) { e.preventDefault(); addTierSplitRow(); }); splitWrap.appendChild(addSplit);
+  splitCb.addEventListener('change', function () {
+    splitWrap.style.display = splitCb.checked ? '' : 'none';
+    if (splitCb.checked && !splitRows.length) addTierSplitRow();
+  });
+
+  // Initial discount — opt-in checkbox under Split sales; sets the item's starting % off the price.
+  var discCbRow = el('label', 'operator-flag-row');
+  var discCb = document.createElement('input'); discCb.type = 'checkbox'; discCbRow.appendChild(discCb);
+  var discS = el('span'); discS.textContent = 'Initial discount'; discCbRow.appendChild(discS); splitSection.appendChild(discCbRow);
+  var discWrap = el('div', 'operator-disc-wrap'); discWrap.style.display = 'none'; splitSection.appendChild(discWrap);
+  var discRow = el('div', 'operator-reserve-freqrow');
+  var discInput = el('input', 'operator-edit-jwt operator-inline-num'); discInput.type = 'number'; discInput.step = 'any'; discInput.min = '0'; discInput.max = '100'; discInput.placeholder = '10';
+  discRow.appendChild(discInput); discRow.appendChild(document.createTextNode(' % off the price'));
+  discWrap.appendChild(discRow);
+  discCb.addEventListener('change', function () { discWrap.style.display = discCb.checked ? '' : 'none'; if (!discCb.checked) discInput.value = ''; });
+
+  // Splitting and discounting only make sense once there's a price — gate both checkboxes on a non-zero price.
+  function syncSplitEnabled() {
+    var hasPrice = parseFloat(priceInput.value) > 0;
+    splitCb.disabled = !hasPrice; splitCbRow.classList.toggle('disabled', !hasPrice);
+    if (!hasPrice && splitCb.checked) { splitCb.checked = false; splitWrap.style.display = 'none'; }
+    discCb.disabled = !hasPrice; discCbRow.classList.toggle('disabled', !hasPrice);
+    if (!hasPrice && discCb.checked) { discCb.checked = false; discWrap.style.display = 'none'; }
+  }
+  priceInput.addEventListener('input', syncSplitEnabled);
+  syncSplitEnabled();
+
+  // Inventory — unlimited by default; uncheck to cap the supply. Wrapped in a section so the gap to
+  // Category stays a consistent 24px whether or not the quantity field is shown (the row ends in a
+  // checkbox with no bottom margin, so without the wrapper the gap collapses to the label's 10px).
+  var invSection = el('div', 'operator-inv-section'); content.appendChild(invSection);
+  var invLbl = el('div', 'operator-edit-label'); invLbl.style.marginTop = '0'; invLbl.textContent = 'Inventory'; invSection.appendChild(invLbl);
+  var unlimitedRow = el('label', 'operator-flag-row'); unlimitedRow.style.marginTop = '0';
+  var unlimitedCb = document.createElement('input'); unlimitedCb.type = 'checkbox'; unlimitedCb.checked = true; unlimitedRow.appendChild(unlimitedCb);
+  var us = el('span'); us.textContent = 'Unlimited'; unlimitedRow.appendChild(us); invSection.appendChild(unlimitedRow);
+  var supplyWrap = el('div', 'operator-supply-wrap'); supplyWrap.style.display = 'none';
+  var supplyLbl = el('div', 'operator-edit-sub'); supplyLbl.style.marginTop = '8px'; supplyLbl.textContent = 'Quantity'; supplyWrap.appendChild(supplyLbl);
+  var supplyInput = el('input', 'operator-edit-jwt'); supplyInput.type = 'number'; supplyInput.step = '1'; supplyInput.min = '1'; supplyInput.placeholder = '100'; supplyWrap.appendChild(supplyInput);
+  invSection.appendChild(supplyWrap);
+  unlimitedCb.addEventListener('change', function () { supplyWrap.style.display = unlimitedCb.checked ? 'none' : ''; });
+
+  // Category — pick from the operator's named store categories (or Default). Categories are named in the
+  // project metadata (projectUri), so adding them costs a tx — let the operator add several in one go.
+  var catLbl = el('div', 'operator-edit-label'); catLbl.style.marginTop = '10px'; catLbl.textContent = 'Category'; content.appendChild(catLbl);
+  var catSub = el('div', 'operator-edit-sub'); catSub.textContent = 'Items being sold can be organized by category.'; content.appendChild(catSub);
+  var categorySelect = el('select', 'operator-cat-select');
+  function rebuildCatOptions() {
+    categorySelect.innerHTML = '';
+    var o0 = document.createElement('option'); o0.value = '0'; o0.textContent = 'Default'; categorySelect.appendChild(o0);
+    Object.keys(project.storeCategories || {}).map(Number).filter(function (n) { return n > 0; }).sort(function (a, b) { return a - b; })
+      .forEach(function (n) { var o = document.createElement('option'); o.value = String(n); o.textContent = project.storeCategories[n] + ' (#' + n + ')'; categorySelect.appendChild(o); });
+    var oAdd = document.createElement('option'); oAdd.value = '__add__'; oAdd.textContent = '+ Add category…'; categorySelect.appendChild(oAdd);
+  }
+  rebuildCatOptions(); content.appendChild(categorySelect);
+  var lastCatValue = '0';
+  var addCatBox = el('div', 'operator-cat-add'); addCatBox.style.display = 'none';
+  var catNameRows = el('div', 'operator-cat-names'); addCatBox.appendChild(catNameRows);
+  var catInputs = [];
+  // New categories get the next free ids after the existing ones; show each row as "<id> is [name]".
+  var catBaseId = Object.keys(project.storeCategories || {}).map(Number).reduce(function (m, n) { return n > m ? n : m; }, 0);
+  function renumberCatRows() {
+    var tags = catNameRows.querySelectorAll('.cat-id');
+    for (var i = 0; i < tags.length; i++) tags[i].textContent = (catBaseId + i + 1) + ' is';
+  }
+  function addCatNameRow() {
+    var row = el('div', 'operator-cat-namerow');
+    var idTag = el('span', 'cat-id');
+    var inp = el('input', 'splits-edit-addr'); inp.type = 'text'; inp.placeholder = 'category name';
+    var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕';
+    rm.addEventListener('click', function (e) {
+      e.preventDefault();
+      catInputs = catInputs.filter(function (x) { return x !== inp; });
+      row.remove(); renumberCatRows();
+      // Removing the last row cancels adding — restore the dropdown.
+      if (!catInputs.length) { addCatBox.style.display = 'none'; categorySelect.style.display = ''; }
+    });
+    row.appendChild(idTag); row.appendChild(inp); row.appendChild(rm); catNameRows.appendChild(row); catInputs.push(inp);
+    renumberCatRows();
+  }
+  addCatNameRow();
+  var addAnother = el('a', 'operator-cta operator-cat-another'); addAnother.href = '#'; addAnother.textContent = '+ Add another';
+  addAnother.addEventListener('click', function (e) { e.preventDefault(); addCatNameRow(); }); addCatBox.appendChild(addAnother);
+  var addCatActions = el('div', 'operator-cat-actions');
+  var addCatSave = el('a', 'operator-cta'); addCatSave.href = '#'; addCatSave.textContent = 'Save categories'; addCatActions.appendChild(addCatSave);
+  addCatBox.appendChild(addCatActions);
+  var addCatStatus = el('div', 'operator-edit-status'); addCatBox.appendChild(addCatStatus);
+  content.appendChild(addCatBox);
+  // Choosing "+ Add category…" swaps the dropdown itself for the text editor (revert selection first).
+  categorySelect.addEventListener('change', function () {
+    if (categorySelect.value === '__add__') { categorySelect.value = lastCatValue; categorySelect.style.display = 'none'; addCatBox.style.display = 'block'; }
+    else { lastCatValue = categorySelect.value; }
+  });
+  addCatSave.addEventListener('click', function (e) {
+    e.preventDefault();
+    var names = catInputs.map(function (i) { return (i.value || '').trim(); }).filter(Boolean);
+    function setS(msg, kind) { addCatStatus.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); addCatStatus.textContent = msg; }
+    if (!names.length) { setS('Enter at least one category name', 'error'); return; }
+    if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
+    addStoreCategories(project, allChains, operatorAddr, names, setS).then(function (newIds) {
+      if (!newIds || !newIds.length) return;
+      rebuildCatOptions(); categorySelect.value = String(newIds[0]); lastCatValue = categorySelect.value;
+      catNameRows.innerHTML = ''; catInputs = []; addCatNameRow();
+      addCatBox.style.display = 'none'; categorySelect.style.display = '';
+    }).catch(function (err) { setS((err && (err.shortMessage || err.message)) || 'Failed to add categories', 'error'); });
+  });
+
+  // Extra options — reserved mints, tier-level splits, governance, flags.
+  var advToggle = el('a', 'operator-cta operator-adv-toggle'); advToggle.href = '#'; advToggle.textContent = 'Extra options ▾';
   content.appendChild(advToggle);
   var adv = el('div', 'operator-edit-adv'); adv.style.display = 'none'; content.appendChild(adv);
-  advToggle.addEventListener('click', function (e) { e.preventDefault(); var open = adv.style.display === 'none'; adv.style.display = open ? 'block' : 'none'; advToggle.textContent = 'Advanced options ' + (open ? '▴' : '▾'); });
+  advToggle.addEventListener('click', function (e) { e.preventDefault(); var open = adv.style.display === 'none'; adv.style.display = open ? 'block' : 'none'; advToggle.textContent = 'Extra options ' + (open ? '▴' : '▾'); });
 
-  var categoryInput = fieldIn(adv, 'Category (groups tiers; 0 = default)', '0', { type: 'number', step: '1', min: '0' }, 0);
-  var reserveFreqInput = fieldIn(adv, 'Reserve 1 of every N mints (0 = none)', '0', { type: 'number', step: '1', min: '0' });
-  var reserveBenefInput = fieldIn(adv, 'Reserve beneficiary', '0x… (required when reserving)');
-  var votingInput = fieldIn(adv, 'Voting units per NFT (governance; 0 = none)', '0', { type: 'number', step: '1', min: '0' });
-
-  // Tier split — route a % of each sale to recipients (remainder goes to the project).
-  var spLbl = el('div', 'operator-edit-label'); spLbl.style.marginTop = '10px'; spLbl.textContent = 'Route % of each sale to recipients'; adv.appendChild(spLbl);
-  var splitPctInput = el('input', 'operator-edit-jwt'); splitPctInput.type = 'number'; splitPctInput.placeholder = '% of each sale (0 = none)'; splitPctInput.step = 'any'; splitPctInput.min = '0'; adv.appendChild(splitPctInput);
-  var splitRowsBox = el('div', 'splits-edit-rows'); splitRowsBox.style.marginTop = '6px'; adv.appendChild(splitRowsBox);
-  var splitRows = [];
-  var addSplit = el('a', 'operator-cta splits-edit-add'); addSplit.href = '#'; addSplit.textContent = '+ Add recipient';
-  addSplit.addEventListener('click', function (e) { e.preventDefault(); addSplitRecipientRow(splitRowsBox, splitRows, {}); }); adv.appendChild(addSplit);
-
-  // Flags.
-  var flLbl = el('div', 'operator-edit-label'); flLbl.style.marginTop = '12px'; flLbl.textContent = 'Options'; adv.appendChild(flLbl);
-  function flagCheck(label) {
-    var row = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox';
-    row.appendChild(cb); var s = el('span'); s.textContent = label; row.appendChild(s); adv.appendChild(row); return cb;
+  // Labeled field with a plain-language subtitle under each advanced option.
+  function advField(labelText, subtitle, placeholder, attrs, topGap) {
+    var l = el('div', 'operator-edit-label'); l.style.marginTop = (topGap == null ? 12 : topGap) + 'px'; l.textContent = labelText; adv.appendChild(l);
+    if (subtitle) { var s = el('div', 'operator-edit-sub'); s.textContent = subtitle; adv.appendChild(s); }
+    var i = el('input', 'operator-edit-jwt'); i.type = (attrs && attrs.type) || 'text'; i.placeholder = placeholder || '';
+    if (attrs && attrs.step) i.step = attrs.step; if (attrs && attrs.min) i.min = attrs.min;
+    adv.appendChild(i); return i;
   }
-  var allowOwnerMintCb = flagCheck('Owner can mint for free');
-  var transfersPausableCb = flagCheck('Transfers pausable');
-  var cantBeRemovedCb = flagCheck('Cannot be removed later');
 
-  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '12px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
+  // Reserve — opt-in checkbox; when on, set aside "1 of every N sold" for a chosen address.
+  var reserveCbRow = el('label', 'operator-flag-row');
+  var reserveCb = document.createElement('input'); reserveCb.type = 'checkbox'; reserveCbRow.appendChild(reserveCb);
+  var rcs = el('span'); rcs.textContent = 'Reserve inventory'; reserveCbRow.appendChild(rcs);
+  adv.appendChild(reserveCbRow);
+  var rsub = el('div', 'operator-flag-sub'); rsub.textContent = 'Set aside items as they’re bought'; adv.appendChild(rsub);
+  var reserveWrap = el('div', 'operator-reserve-wrap'); reserveWrap.style.display = 'none'; adv.appendChild(reserveWrap);
+  // One inline line: "1 of [N] sold to [0x…]"
+  var freqRow = el('div', 'operator-reserve-freqrow');
+  freqRow.appendChild(document.createTextNode('1 of '));
+  var reserveFreqInput = el('input', 'operator-edit-jwt operator-inline-num'); reserveFreqInput.type = 'number'; reserveFreqInput.step = '1'; reserveFreqInput.min = '1'; reserveFreqInput.placeholder = '10';
+  freqRow.appendChild(reserveFreqInput);
+  freqRow.appendChild(document.createTextNode(' sold to '));
+  var reserveBenefInput = el('input', 'operator-edit-jwt operator-inline-addr'); reserveBenefInput.type = 'text'; reserveBenefInput.placeholder = '0x… address';
+  freqRow.appendChild(reserveBenefInput);
+  reserveWrap.appendChild(freqRow);
+  reserveCb.addEventListener('change', function () { reserveWrap.style.display = reserveCb.checked ? '' : 'none'; });
+
+  // Flags — one per row, each with a plain-language subtitle.
+  function flagCheck(label, sub, checked) {
+    var row = el('label', 'operator-flag-row'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!checked;
+    row.appendChild(cb); var s = el('span'); s.textContent = label; row.appendChild(s); adv.appendChild(row);
+    if (sub) { var d = el('div', 'operator-flag-sub'); d.textContent = sub; adv.appendChild(d); }
+    return cb;
+  }
+  var allowOwnerMintCb = flagCheck('Owner privileged access', 'Owner can take from inventory for free');
+  // Transfers can only be paused per-ruleset; revnets have fixed rulesets, so the option doesn't apply.
+  var transfersPausableCb = project.isRevnet ? null : flagCheck('Transfers pausable per ruleset', 'Allow this item’s transfers to be paused during a ruleset.');
+  var cantBeRemovedCb = flagCheck('Permanent', 'Lock this item so it can never be removed from the store.');
+  // Credits: default on. cantBuyWithCredits is the inverse of this checkbox.
+  var allowCreditsCb = flagCheck('Allow credit purchases', 'Payments that don’t buy items get credits equal to their payment, usable later to buy items that allow it.', true);
+  // Discount: a capability flag only — no initial discount is set here. cantIncreaseDiscountPercent is the inverse.
+  var ownerDiscountCb = flagCheck('Owner can edit discounts', 'The item can have its percent discount changed by the owner.', true);
+
+  // Voting units — opt-in, last in the list. Default off; the price drives governance weight unless overridden.
+  var votingCbRow = el('label', 'operator-flag-row');
+  var votingCb = document.createElement('input'); votingCb.type = 'checkbox'; votingCbRow.appendChild(votingCb);
+  var vcs = el('span'); vcs.textContent = 'Custom voting units'; votingCbRow.appendChild(vcs);
+  adv.appendChild(votingCbRow);
+  var vsub = el('div', 'operator-flag-sub'); vsub.textContent = 'Useful if you have custom governance needs.'; adv.appendChild(vsub);
+  var votingWrap = el('div', 'operator-voting-wrap'); votingWrap.style.display = 'none'; adv.appendChild(votingWrap);
+  var votingInput = el('input', 'operator-edit-jwt'); votingInput.type = 'number'; votingInput.step = '1'; votingInput.min = '0'; votingInput.placeholder = '0'; votingWrap.appendChild(votingInput);
+  votingCb.addEventListener('change', function () { votingWrap.style.display = votingCb.checked ? '' : 'none'; if (!votingCb.checked) votingInput.value = ''; });
+
+  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '24px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
   var chainBox = el('div', 'splits-edit-chains');
   var chainChecks = allChains.map(function (c) {
     var row = el('label', 'splits-edit-chain');
@@ -699,12 +930,18 @@ function openAddTierModal(project, shop) {
     if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
     var form = {
-      name: nameInput.value, price: priceInput.value, supply: supplyInput.value, priceDecimals: priceDecimals,
+      name: nameInput.value, price: priceInput.value, supply: unlimitedCb.checked ? '' : supplyInput.value, priceDecimals: priceDecimals,
       imageFile: selectedMedia,
-      category: categoryInput.value, reserveFreq: reserveFreqInput.value, reserveBenef: reserveBenefInput.value,
-      votingUnits: votingInput.value, splitPct: splitPctInput.value,
-      splitRows: splitRows,
-      flags: { allowOwnerMint: allowOwnerMintCb.checked, transfersPausable: transfersPausableCb.checked, cantBeRemoved: cantBeRemovedCb.checked },
+      category: categorySelect.value, reserveFreq: reserveCb.checked ? reserveFreqInput.value : '', reserveBenef: reserveBenefInput.value,
+      votingUnits: votingInput.value,
+      splitOn: splitCb.checked, splitRows: splitRows, splitRefChain: splitRefChain,
+      discountPct: discCb.checked ? discInput.value : '',
+      flags: {
+        allowOwnerMint: allowOwnerMintCb.checked, transfersPausable: transfersPausableCb ? transfersPausableCb.checked : false,
+        cantBeRemoved: cantBeRemovedCb.checked,
+        cantBuyWithCredits: !allowCreditsCb.checked,
+        cantIncreaseDiscountPercent: !ownerDiscountCb.checked,
+      },
     };
     submitAddTier(project, selected, operatorAddr, form, setStatus, modal).catch(function (err) {
       busy = false; setStatus((err && (err.shortMessage || err.message)) || 'Add item failed', 'error');
@@ -727,34 +964,56 @@ async function submitAddTier(project, selectedChains, operatorAddr, form, setSta
   var reserveFreq = parseInt(form.reserveFreq || '0', 10) || 0;
   var reserveBenef = (form.reserveBenef || '').trim();
   var votingUnits = parseInt(form.votingUnits || '0', 10) || 0;
+  // Discount: user enters 0–100% off; stored as a fraction of DISCOUNT_DENOMINATOR (200, = free at 100%).
+  var discountPercent = 0;
+  var discountStr = (form.discountPct || '').trim();
+  if (discountStr !== '') {
+    var dpct = parseFloat(discountStr);
+    if (!(dpct >= 0) || dpct > 100) { setStatus('Discount must be between 0 and 100%', 'error'); return; }
+    discountPercent = Math.min(200, Math.round(dpct / 100 * 200));
+  }
   if (reserveFreq > 0) {
     if (supply === 1) { setStatus('A reserved tier needs a supply of at least 2 (or unlimited)', 'error'); return; }
     if (!/^0x[0-9a-fA-F]{40}$/.test(reserveBenef)) { setStatus('Enter a reserve beneficiary address', 'error'); return; }
   }
-  // Tier split: % of each sale routed to recipients (each recipient a share of that pool).
-  var splitPctRaw = parseFloat(form.splitPct || '0') || 0;
-  var splitPercent = Math.round(splitPctRaw / 100 * 1e9);
-  var tierSplits = [];
-  if (splitPercent > 0) {
-    var sum = 0;
+  // Split sales: each recipient gets a % of the sale. We compute the pool size (sum) and each recipient's
+  // share of it. Project recipients carry their source-chain id; we resolve per-chain ids below.
+  var splitDefs = [];
+  var splitTotalPct = 0;
+  if (form.splitOn) {
     var sr = form.splitRows || [];
     for (var si = 0; si < sr.length; si++) {
       if (sr[si].isEmpty()) continue;
       var sp = parseFloat(sr[si].pct.value);
-      if (!(sp > 0)) { setStatus('Split row ' + (si + 1) + ': enter a percentage above 0', 'error'); return; }
+      if (!(sp > 0)) { setStatus('Recipient ' + (si + 1) + ': enter a percentage above 0', 'error'); return; }
       var parsedS;
-      try { parsedS = sr[si].parse(); } catch (e) { setStatus('Split row ' + (si + 1) + ': ' + e.message, 'error'); return; }
-      sum += sp;
-      tierSplits.push({ percent: Math.round(sp / 100 * 1e9), projectId: parsedS.projectId, beneficiary: parsedS.beneficiary, preferAddToBalance: false, lockedUntil: 0, hook: ZERO_ADDRESS });
+      try { parsedS = sr[si].parse(); } catch (e) { setStatus('Recipient ' + (si + 1) + ': ' + e.message, 'error'); return; }
+      splitTotalPct += sp;
+      splitDefs.push({ pct: sp, projectId: parsedS.projectId, beneficiary: parsedS.beneficiary });
     }
-    if (!tierSplits.length) { setStatus('Add at least one split recipient (or set the route to 0%)', 'error'); return; }
-    if (sum > 100.0001) { setStatus('Split recipients add up to ' + (Math.round(sum * 100) / 100) + '% — must be 100% or less', 'error'); return; }
+    if (!splitDefs.length) { setStatus('Add at least one recipient, or turn off Split sales', 'error'); return; }
+    if (splitTotalPct > 100.0001) { setStatus('Recipients add up to ' + (Math.round(splitTotalPct * 100) / 100) + '% — must be 100% or less', 'error'); return; }
   }
+  var splitPercent = Math.round(splitTotalPct / 100 * 1e9);
 
   if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
   if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin the tier image + metadata.', 'error'); return; }
   var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
   if (!account) return;
+
+  // Resolve project recipients across chains so the SAME project receives funds on each chain offered.
+  for (var di = 0; di < splitDefs.length; di++) {
+    if (splitDefs[di].projectId > 0) {
+      setStatus('Resolving project #' + splitDefs[di].projectId + '…', 'pending');
+      var info = await resolveSplitProject(splitDefs[di].projectId, form.splitRefChain);
+      if (!info) { setStatus('Couldn’t find project #' + splitDefs[di].projectId, 'error'); return; }
+      for (var ci = 0; ci < selectedChains.length; ci++) {
+        var scid = selectedChains[ci].id;
+        if (!info.byChain[scid]) { setStatus('Project #' + splitDefs[di].projectId + ' (' + info.name + ') isn’t on ' + (selectedChains[ci].name || scid) + ' — remove it or that chain.', 'error'); return; }
+      }
+      splitDefs[di].byChain = info.byChain;
+    }
+  }
 
   if (form.imageFile && form.imageFile.size > MAX_MEDIA_BYTES) {
     setStatus('Media is ' + formatFileSize(form.imageFile.size) + ' — over the ' + MAX_MEDIA_MB + ' MB max. Compress it or choose a smaller file.', 'error');
@@ -775,17 +1034,27 @@ async function submitAddTier(project, selectedChains, operatorAddr, form, setSta
   var metaUri = await pinJson(tierMeta, name + '-tier');
   var encodedIpfsUri = encodeIpfsUriToBytes32(metaUri);
 
-  var tier = {
+  var tierBase = {
     price: price, initialSupply: supply, votingUnits: votingUnits, reserveFrequency: reserveFreq,
     reserveBeneficiary: reserveFreq > 0 ? reserveBenef : ZERO_ADDRESS,
-    encodedIpfsUri: encodedIpfsUri, category: category, discountPercent: 0,
+    encodedIpfsUri: encodedIpfsUri, category: category, discountPercent: discountPercent,
     flags: {
       allowOwnerMint: !!form.flags.allowOwnerMint, useReserveBeneficiaryAsDefault: false,
       transfersPausable: !!form.flags.transfersPausable, useVotingUnits: votingUnits > 0,
-      cantBeRemoved: !!form.flags.cantBeRemoved, cantIncreaseDiscountPercent: false, cantBuyWithCredits: false,
+      cantBeRemoved: !!form.flags.cantBeRemoved, cantIncreaseDiscountPercent: !!form.flags.cantIncreaseDiscountPercent,
+      cantBuyWithCredits: !!form.flags.cantBuyWithCredits,
     },
-    splitPercent: splitPercent, splits: tierSplits,
   };
+  // Per-chain split list — project recipients use that chain's projectId so the same project is paid.
+  function tierSplitsFor(cid) {
+    return splitDefs.map(function (d) {
+      return {
+        percent: Math.round(d.pct / splitTotalPct * 1e9),
+        projectId: d.projectId > 0 ? BigInt(d.byChain[cid]) : 0n,
+        beneficiary: d.beneficiary, preferAddToBalance: false, lockedUntil: 0, hook: ZERO_ADDRESS,
+      };
+    });
+  }
 
   // The 721 hook address can differ per chain — resolve each from that chain's REVOwner up front.
   setStatus('Reading 721 hooks…', 'pending');
@@ -798,11 +1067,44 @@ async function submitAddTier(project, selectedChains, operatorAddr, form, setSta
   }
 
   await runRelayrAcrossChains(selectedChains, account, function (cid) {
+    var tier = Object.assign({}, tierBase, { splitPercent: splitPercent, splits: form.splitOn ? tierSplitsFor(cid) : [] });
     return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [[tier], []] }) };
-  }, 800000n, setStatus);
+  }, 800000n, setStatus, { label: 'Add item for sale', title: 'Confirm add item' });
 
   setStatus('Item added on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + ' ✓', 'success');
   setTimeout(function () { modal.close(); }, 1400);
+}
+
+// Operator-only: append one or more named store categories to the project metadata (projectUri) on every
+// chain, via relayr — in a single tx. Returns the new categories' numeric ids (or null on bail). Category
+// names live in projectUri; the 721 tiers reference them by number.
+async function addStoreCategories(project, chains, operatorAddr, names, setStatus) {
+  names = (names || []).map(function (n) { return (n || '').trim(); }).filter(Boolean);
+  if (!names.length) { setStatus('Enter at least one category name', 'error'); return null; }
+  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  if (!account) return null;
+  if (!hasPinata()) { setStatus('Add a Pinata JWT below to name categories.', 'error'); return null; }
+
+  setStatus('Reading metadata…', 'pending');
+  var pc = (chains[0] && chains[0].id) || project.chainId;
+  var curUri = await clientFor(pc).readContract({ address: getAddress('JBController', pc), abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)] }).catch(function () { return null; });
+  var meta = curUri ? (await fetchMetadata(curUri)) : null;
+  meta = meta ? Object.assign({}, meta) : {};
+  var cats = (meta.storeCategories && typeof meta.storeCategories === 'object') ? Object.assign({}, meta.storeCategories) : {};
+  var nextId = 1; Object.keys(cats).map(Number).forEach(function (n) { if (n >= nextId) nextId = n + 1; });
+  var newIds = [];
+  names.forEach(function (nm) { cats[nextId] = nm; newIds.push(nextId); nextId++; });
+  meta.storeCategories = cats;
+
+  setStatus('Pinning categories…', 'pending');
+  var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
+  await runRelayrAcrossChains(chains, account, function (cid) {
+    return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
+  }, 400000n, setStatus, { label: 'Add store categories', title: 'Confirm categories' });
+
+  project.storeCategories = cats;
+  setStatus(names.length + ' categor' + (names.length > 1 ? 'ies' : 'y') + ' added ✓', 'success');
+  return newIds;
 }
 
 function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
@@ -1545,6 +1847,19 @@ function ensNameOf(address) {
   return p;
 }
 
+// Forward ENS resolution (name → address), mainnet, cached. Returns null for non-names / no record.
+var _ensAddrCache = {};
+function ensAddressOf(name) {
+  var key = (name || '').trim().toLowerCase();
+  if (!key || key.indexOf('.') === -1) return Promise.resolve(null);
+  if (_ensAddrCache[key]) return _ensAddrCache[key];
+  var p = (async function () {
+    try { return await clientFor(1).getEnsAddress({ name: key }); } catch (e) { return null; }
+  })();
+  _ensAddrCache[key] = p;
+  return p;
+}
+
 var _operatorCache = {};
 function addressOrNull(address) {
   if (!address || String(address).toLowerCase() === ZERO_ADDRESS.toLowerCase()) return null;
@@ -1793,6 +2108,8 @@ async function fetchProject(id, chainId) {
       project.discord = meta.discord || null;
       project.telegram = meta.telegram || null;
       project.tags = Array.isArray(meta.tags) ? meta.tags : [];
+      // Operator-defined names for 721 store categories: { "1": "Memberships", … } (category 0 = Default).
+      project.storeCategories = (meta.storeCategories && typeof meta.storeCategories === 'object') ? meta.storeCategories : {};
     }).catch(function () {}));
 
   var revOwnerAddr = getAddress('REVOwner', chainId);
@@ -1903,6 +2220,14 @@ export function applyDiscoverRoute(route) {
     return;
   }
 
+  // Show a ghost detail immediately so a direct route load isn't blank during the fetch.
+  // showProjectDetail() later removes this `.project-detail` and swaps in the real page.
+  if (_container) {
+    var stale = _container.querySelector('.project-detail');
+    if (stale) stale.remove();
+    _container.appendChild(renderDetailSkeleton());
+  }
+
   ensureGroups().then(function (groups) {
     var g = null;
     for (var i = 0; i < groups.length; i++) if (groups[i].id === id) { g = groups[i]; break; }
@@ -1921,9 +2246,16 @@ export function applyDiscoverRoute(route) {
 function renderGrid() {
   _gridWrapper = el('div', 'discover-grid-wrapper');
 
+  // Top row: "Work in progress" banner on the left, the Create button top-right within the tab.
+  var topRow = el('div', 'discover-top');
   var header = el('div', 'discover-header');
   header.textContent = 'Work in progress';
-  _gridWrapper.appendChild(header);
+  topRow.appendChild(header);
+  var createBtn = el('button', 'tab-create'); createBtn.textContent = '+ Create';
+  createBtn.title = 'Create — in tuning before launch';
+  createBtn.addEventListener('click', function () { openCreateFlow(); });
+  topRow.appendChild(createBtn);
+  _gridWrapper.appendChild(topRow);
 
   var grid = el('div', 'discover-grid');
   _gridWrapper.appendChild(grid);
@@ -2062,9 +2394,6 @@ function renderProjectCard(project) {
 
   var stats = el('div', 'discover-card-stats');
   stats.appendChild(statItem('Balance', formatEth(project.balance)));
-  stats.appendChild(statItem('Token', project.tokenSymbol ? (project.tokenSymbol) : 'credits'));
-  stats.appendChild(statItem('Token supply', formatTokens(project.totalSupply)));
-  stats.appendChild(statItem('Reserved', project.metadata ? percentFromRuleset(project.metadata.reservedPercent) : '—'));
   if (project.indexedStats) {
     stats.appendChild(statItem('Volume', formatEth(toBigInt(project.indexedStats.volume || 0))));
     stats.appendChild(statItem('Payments', String(project.indexedStats.paymentsCount)));
@@ -2205,6 +2534,18 @@ function renderProjectDetail(project, initialTab) {
     builders['Rulesets & Funds'] = function () { return renderRulesetsFundsSection(project); };
     tabs = ['About', 'Rulesets & Funds', 'Tokens', 'Ops'];
   }
+  // Shop tab: shown optimistically (assume the project can sell items) so a #shop route resolves and the
+  // tab doesn't pop in late. Once the 721-hook read resolves it's either filled with real content or
+  // removed (project has no hook and can't get one).
+  var shopState = { shop: null, loaded: false };
+  builders.Shop = function () {
+    if (shopState.loaded && shopState.shop) return renderShopSection(project, shopState.shop, nftCart);
+    var wrap = el('div', 'detail-section'); var card = el('div', 'detail-card');
+    var t = el('div', 'detail-card-title'); t.textContent = 'Shop'; card.appendChild(t);
+    var b = el('div', 'shop-body'); b.textContent = 'Loading…'; card.appendChild(b);
+    wrap.appendChild(card); return wrap;
+  };
+  tabs.push('Shop');
   var tabRow = el('div', 'project-detail-tabs');
   var contentArea = el('div', 'project-detail-content');
   var built = {};
@@ -2237,18 +2578,22 @@ function renderProjectDetail(project, initialTab) {
       tabRow.appendChild(btn);
     })(tabs[i]);
   }
-  // Store tab: revnets always get one (operators can add tiers even before any exist); other projects
-  // only when they already have tiers. Injected async as the LAST tab once the 721 hook is read.
+  // Resolve the 721 hook: fill the optimistic Shop tab with real content, or remove it if the project
+  // has no hook and can't get one (revnets always keep it — operators can add tiers even before any exist).
   fetchProjectTiers(project).then(function (shop) {
+    if (!wrap.isConnected) return;
     var show = shop && (shop.tiers.length || project.isRevnet);
-    if (!show || !wrap.isConnected || builders.Shop) return;
-    builders.Shop = function () { return renderShopSection(project, shop, nftCart); };
-    tabs.push('Shop');
-    var sbtn = document.createElement('button');
-    sbtn.className = 'detail-tab-btn'; sbtn.textContent = 'Store';
-    sbtn.addEventListener('click', function () { showTab('Shop'); routerSetHash(projectHash(project, 'Shop')); });
-    tabRow.appendChild(sbtn);
-    if (initialTab && tabSlug(initialTab) === 'shop') showTab('Shop');
+    if (show) {
+      shopState.shop = shop; shopState.loaded = true;
+      built.Shop = null; // drop the loading placeholder so the real section rebuilds
+      if (_activeDetail && _activeDetail.current === 'Shop') showTab('Shop');
+    } else {
+      tabs = tabs.filter(function (t) { return t !== 'Shop'; });
+      delete builders.Shop; delete built.Shop;
+      var btns = tabRow.querySelectorAll('.detail-tab-btn');
+      for (var b = 0; b < btns.length; b++) if (btns[b].textContent === 'Shop') { btns[b].remove(); break; }
+      if (_activeDetail && _activeDetail.current === 'Shop') showTab(tabs[0]);
+    }
   }).catch(function () {});
 
   rightCol.appendChild(tabRow);
@@ -2855,6 +3200,7 @@ function renderPayCard(project, cart) {
     var processing = add ? 'Adding to balance' : 'Payment processing';
     var confirmed = add ? 'Added to balance' : 'Payment confirmed';
     executeTransaction(Object.assign({}, txParams, {
+      skipConfirm: true, // already confirmed via openPayConfirm
       onStatus: function (m, kind, meta) {
         var cls = 'paybox-status' + (kind === 'pending' ? ' pending' : '');
         if (meta && meta.phase === 'submitted') setPayStatus(cls, processing, meta);
@@ -3153,7 +3499,7 @@ async function submitTransferOperator(project, selectedChains, operatorAddr, new
     var revOwner = getAddress('REVOwner', cid);
     if (!revOwner) throw new Error('No REVOwner on ' + (CHAINS[cid] && CHAINS[cid].name || cid));
     return { to: revOwner, data: encodeFunctionData({ abi: setOperatorOfAbi, functionName: 'setOperatorOf', args: [BigInt(project.id), newOperator] }) };
-  }, 500000n, setStatus);
+  }, 500000n, setStatus, { label: 'Transfer operator', title: 'Confirm transfer operator' });
 
   setStatus('Operator transferred on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + ' ✓', 'success');
   project.operator = newOperator;
@@ -3206,6 +3552,29 @@ function openEditProjectModal(project) {
   var discordInput = field('Discord', 'invite or handle', '');
   var telegramInput = field('Telegram', 'handle or link', '');
 
+  // Store categories — names for the 721 store's category numbers (category 0 is always "Default").
+  // Each row keeps a stable id so existing tier→category links don't shift when rows are added/removed.
+  var catLbl = el('div', 'operator-edit-label'); catLbl.style.marginTop = '10px';
+  catLbl.innerHTML = 'Store categories <span class="operator-edit-hint">— label the shop item categories.</span>';
+  content.appendChild(catLbl);
+  var catRowsBox = el('div', 'splits-edit-rows'); content.appendChild(catRowsBox);
+  var catRows = [];
+  function nextCatId() { var mx = 0; catRows.forEach(function (r) { if (r.id > mx) mx = r.id; }); return mx + 1; }
+  function addCatRow(id, name) {
+    var row = el('div', 'splits-edit-row');
+    var idTag = el('span', 'cat-id'); idTag.textContent = id + ' is'; row.appendChild(idTag);
+    var nameIn = el('input', 'splits-edit-addr'); nameIn.type = 'text'; nameIn.placeholder = 'category name'; nameIn.value = name || '';
+    var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
+    var rec = { id: id, name: nameIn };
+    rm.addEventListener('click', function (e) { e.preventDefault(); catRows = catRows.filter(function (x) { return x !== rec; }); row.remove(); });
+    row.appendChild(nameIn); row.appendChild(rm);
+    catRowsBox.appendChild(row); catRows.push(rec);
+  }
+  Object.keys(project.storeCategories || {}).map(Number).filter(function (n) { return n > 0; }).sort(function (a, b) { return a - b; })
+    .forEach(function (n) { addCatRow(n, project.storeCategories[n]); });
+  var addCat = el('a', 'operator-cta splits-edit-add'); addCat.href = '#'; addCat.textContent = '+ Add category';
+  addCat.addEventListener('click', function (e) { e.preventDefault(); addCatRow(nextCatId(), ''); }); content.appendChild(addCat);
+
   // Backfill socials/tagline from the live metadata (project.* doesn't carry them) so we don't wipe values.
   var loadedMeta = null;
   (function () {
@@ -3253,6 +3622,7 @@ function openEditProjectModal(project) {
     var form = {
       name: nameInput.value, tagline: taglineInput.value, description: ta.value, website: websiteInput.value,
       twitter: twitterInput.value, discord: discordInput.value, telegram: telegramInput.value,
+      storeCategories: (function () { var m = {}; catRows.forEach(function (r) { var n = (r.name.value || '').trim(); if (n) m[r.id] = n; }); return m; })(),
       logoFile: (logoFile.files && logoFile.files[0]) || null, preloadedMeta: loadedMeta,
     };
     submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal).catch(function (err) {
@@ -3300,14 +3670,27 @@ async function ensureOperatorAccount(project, operatorAddr, setStatus) {
 
 // Shared: sign one ERC-2771 call per chain, quote the relayr bundle, take one payment, poll to completion.
 // buildCall(chainId) -> { to, data }. Resolves when every chain reports Success.
-async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus) {
-  setStatus('Sign the change for ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
-  var txs = [];
+async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus, confirmOpts) {
+  confirmOpts = confirmOpts || {};
+  // Build each chain's call first so we can show the exact on-chain target + calldata before anything is signed.
+  var calls = [];
   for (var i = 0; i < chains.length; i++) {
     var cid = chains[i].id;
     var call = buildCall(cid);
     if (!call || !call.to) throw new Error('No target contract on ' + (chains[i].name || cid));
-    txs.push(await buildForwardedTx(cid, account, call.to, call.data, gas || 400000n));
+    calls.push({ cid: cid, name: chains[i].name || ('chain ' + cid), to: call.to, data: call.data });
+  }
+  var ok = await confirmTransactionModal({
+    via: 'relayr — one prepaid payment relays the same change to every chain below',
+    action: confirmOpts.label || 'Cross-chain update',
+    chains: calls.map(function (c) { return { chain: c.name, contract: c.to, calldata: c.data }; }),
+  }, { title: confirmOpts.title || 'Confirm cross-chain transaction', confirmText: 'Confirm & send' });
+  if (!ok) { setStatus('Transaction cancelled', ''); throw new Error('Transaction cancelled'); }
+
+  setStatus('Sign the change for ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
+  var txs = [];
+  for (var j = 0; j < calls.length; j++) {
+    txs.push(await buildForwardedTx(calls[j].cid, account, calls[j].to, calls[j].data, gas || 400000n));
   }
   setStatus('Requesting relayr quote…', 'pending');
   var bundle = await relayrPostBundle(txs);
@@ -3360,19 +3743,21 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   meta.twitter = trim(form.twitter);
   meta.discord = trim(form.discord);
   meta.telegram = trim(form.telegram);
+  if (form.storeCategories) { if (Object.keys(form.storeCategories).length) meta.storeCategories = form.storeCategories; else delete meta.storeCategories; }
 
   setStatus('Pinning updated metadata…', 'pending');
   var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
 
   await runRelayrAcrossChains(chains, account, function (cid) {
     return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
-  }, 400000n, setStatus);
+  }, 400000n, setStatus, { label: 'Edit project details', title: 'Confirm edit' });
 
   setStatus('Project updated across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + ' ✓', 'success');
   // Reflect changes in memory + the live card without a reload.
   project.name = meta.name; project.tagline = meta.projectTagline;
   project.descriptionHtml = meta.description || null; project.description = htmlToText(meta.description);
   project.infoUri = meta.infoUri || null;
+  project.storeCategories = meta.storeCategories || {};
   if (newLogoUri) project.logoUri = ipfsToHttp(newLogoUri);
   var liveDesc = document.querySelector('.detail-about-desc');
   if (liveDesc) { liveDesc.innerHTML = ''; renderRichTextInto(liveDesc, meta.description); }
@@ -3443,13 +3828,13 @@ async function submitTokenEdit(project, chains, operatorAddr, deployed, name, sy
     // Rename the existing ERC-20 on every chain.
     await runRelayrAcrossChains(chains, account, function (cid) {
       return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setTokenMetadataAbi, functionName: 'setTokenMetadataOf', args: [BigInt(project.id), name, symbol] }) };
-    }, 300000n, setStatus);
+    }, 300000n, setStatus, { label: 'Rename token', title: 'Confirm token rename' });
   } else {
     // Deploy the ERC-20. Deterministic salt → same address on every chain (same operator + salt).
     var salt = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [BigInt(project.id), symbol]));
     await runRelayrAcrossChains(chains, account, function (cid) {
       return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: deployErc20Abi, functionName: 'deployERC20For', args: [BigInt(project.id), name, symbol, salt] }) };
-    }, 1500000n, setStatus);
+    }, 1500000n, setStatus, { label: 'Deploy ERC-20 token', title: 'Confirm token deploy' });
   }
 
   setStatus((deployed ? 'Token renamed on ' : 'Token deployed across ') + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + ' ✓', 'success');
@@ -3477,6 +3862,56 @@ function skel(w, h, cls) {
   if (w) b.style.width = w;
   if (h) b.style.height = h;
   return b;
+}
+// Whole-page detail ghost — mirrors renderProjectDetail's layout (header + two columns) so a direct
+// project-route load shows the page shape immediately instead of a blank screen during the fetch.
+function renderDetailSkeleton() {
+  var wrap = el('div', 'project-detail detail-spacious');
+  var back = el('button', 'detail-back'); back.textContent = '←'; back.title = 'Back to projects';
+  back.addEventListener('click', function () { showProjectGrid(false); });
+  wrap.appendChild(back);
+
+  // Header: logo + two lines (name, then a wider subtitle) — kept minimal to avoid a noisy stack.
+  var header = el('div', 'project-detail-header');
+  var top = el('div', 'detail-head-top');
+  top.appendChild(skel('64px', '64px'));
+  var titleCol = el('div', 'detail-head-titlecol');
+  titleCol.style.flex = '1'; titleCol.style.minWidth = '0'; // skel blocks are % width, so the column needs to claim the row
+  titleCol.appendChild(skel('38%', '22px'));
+  var tg = skel('64%', '12px'); tg.style.marginTop = '10px'; titleCol.appendChild(tg);
+  top.appendChild(titleCol);
+  header.appendChild(top);
+  wrap.appendChild(header);
+
+  var cols = el('div', 'project-detail-columns');
+
+  // Left column: the Pay card as ONE block + a couple activity rows (avatar + single line).
+  var left = el('div', 'project-detail-left');
+  var payGhost = el('div', 'detail-card'); payGhost.appendChild(skel('100%', '170px')); left.appendChild(payGhost);
+  var actGhost = el('div'); actGhost.style.marginTop = '22px';
+  for (var a = 0; a < 3; a++) {
+    var row = el('div'); row.style.display = 'flex'; row.style.alignItems = 'center'; row.style.gap = '10px'; row.style.margin = '14px 0';
+    var av = skel('24px', '24px', 'skel-circle'); av.style.flex = '0 0 24px'; row.appendChild(av);
+    row.appendChild(skel((58 - a * 8) + '%', '12px'));
+    actGhost.appendChild(row);
+  }
+  left.appendChild(actGhost);
+  cols.appendChild(left);
+
+  // Right column: tab row + 3 price chips + one big chart block (dropped the noisy range-button row).
+  var right = el('div', 'project-detail-right');
+  var tabs = el('div', 'project-detail-tabs');
+  for (var i = 0; i < 4; i++) { var t = skel('56px', '14px'); t.style.marginRight = '20px'; tabs.appendChild(t); }
+  right.appendChild(tabs);
+  var content = el('div', 'project-detail-content');
+  var chips = el('div'); chips.style.display = 'flex'; chips.style.gap = '10px';
+  for (var k = 0; k < 3; k++) { chips.appendChild(skel('32%', '46px')); }
+  content.appendChild(chips);
+  var chart = skel('100%', '320px'); chart.style.marginTop = '16px'; content.appendChild(chart);
+  right.appendChild(content);
+  cols.appendChild(right);
+  wrap.appendChild(cols);
+  return wrap;
 }
 // Ops-style table ghost: real header text up top, shimmer cells below (You / Settlement).
 function skelOpsTable(headers, nRows) {
@@ -4948,6 +5383,7 @@ function renderAutoIssuance(project, stages) {
     btn.textContent = 'Distributing…';
     setConfirmBusy(ctx, true);
     executeTransaction({
+      skipConfirm: true, // already confirmed via openTxConfirm
       chainId: row.chain.id,
       address: row.revOwnerAddr,
       abi: autoIssueForAbi,
@@ -6204,7 +6640,7 @@ function renderOwnersSplits(project) {
 
   // Operator CTA — edit the current stage's split recipients (subtle underlined, bottom of the section,
   // above "Latest distributions" which the caller appends after this wrap).
-  var foot = el('div', 'detail-about-foot');
+  var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '20px';
   var edit = el('a', 'operator-cta'); edit.textContent = 'Edit splits'; edit.href = '#';
   edit.title = 'Edit the current stage’s split recipients (operator only)';
   edit.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project); });
@@ -6220,32 +6656,61 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   opts = opts || {};
   var row = el('div', 'splits-edit-row');
   var recip = el('input', 'splits-edit-addr'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
-  var pct = el('input', 'splits-edit-pct'); pct.type = 'number'; pct.placeholder = '%'; pct.step = 'any'; pct.min = '0';
+  var pct = el('input', 'splits-edit-pct'); pct.type = 'number'; pct.placeholder = '10'; pct.step = 'any'; pct.min = '0';
   var sign = el('span', 'splits-edit-pctsign'); sign.textContent = '%';
   var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
   row.appendChild(recip); row.appendChild(pct); row.appendChild(sign); row.appendChild(rm);
+  recip.placeholder = '0x…, name.eth, or project ID';
   var benefRow = el('div', 'splits-edit-benef'); benefRow.style.display = 'none';
   var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… token beneficiary for that project';
   benefRow.appendChild(benef);
-  function refresh() { benefRow.style.display = /^[0-9]+$/.test((recip.value || '').trim()) ? '' : 'none'; }
+  // ENS hint — shows what an entered name resolves to, under the recipient field.
+  var ensHint = el('div', 'splits-edit-hint'); ensHint.style.display = 'none';
+  var ensAddr = null; // resolved address for the current ENS input
+  function isEnsName(v) { return v.indexOf('.') !== -1 && !/^0x[0-9a-fA-F]{40}$/.test(v) && !/^[0-9]+$/.test(v); }
+  function refresh() {
+    var v = (recip.value || '').trim();
+    benefRow.style.display = /^[0-9]+$/.test(v) ? '' : 'none';
+    if (isEnsName(v)) {
+      // Forward resolve a name → address.
+      ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = 'Resolving ' + v + '…'; ensAddr = null;
+      ensAddressOf(v).then(function (addr) {
+        if ((recip.value || '').trim() !== v) return; // input changed while resolving
+        if (addr) { ensAddr = addr; ensHint.className = 'splits-edit-hint'; ensHint.textContent = '→ ' + addr; }
+        else { ensAddr = null; ensHint.className = 'splits-edit-hint warn'; ensHint.textContent = 'No address set for ' + v; }
+      });
+    } else if (/^0x[0-9a-fA-F]{40}$/.test(v)) {
+      // Reverse resolve an address → its ENS name (display only; the address is used as-is).
+      ensAddr = null; ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = 'Looking up ENS…';
+      ensNameOf(v).then(function (name) {
+        if ((recip.value || '').trim() !== v) return;
+        if (name) { ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = '→ ' + name; }
+        else ensHint.style.display = 'none';
+      });
+    } else { ensHint.style.display = 'none'; ensAddr = null; }
+  }
   var rec = {
     pct: pct, orig: (opts.prefill && opts.prefill.orig) || null,
     isEmpty: function () { return !(recip.value || '').trim() && !(pct.value || '').trim(); },
     parse: function () {
       var v = (recip.value || '').trim();
       if (/^0x[0-9a-fA-F]{40}$/.test(v)) return { projectId: 0n, beneficiary: v };
+      if (isEnsName(v)) {
+        if (!ensAddr) throw new Error(v + ' hasn’t resolved to an address yet');
+        return { projectId: 0n, beneficiary: ensAddr };
+      }
       if (/^[0-9]+$/.test(v) && Number(v) > 0) {
         var b = (benef.value || '').trim();
         if (!/^0x[0-9a-fA-F]{40}$/.test(b)) throw new Error('Project #' + v + ' recipient needs a token beneficiary address');
         return { projectId: BigInt(v), beneficiary: b };
       }
-      throw new Error('Enter a 0x address or a project ID');
+      throw new Error('Enter a 0x address, ENS name, or a project ID');
     },
   };
   recip.addEventListener('input', refresh);
   if (opts.onChange) pct.addEventListener('input', opts.onChange);
-  rm.addEventListener('click', function (e) { e.preventDefault(); var i = rows.indexOf(rec); if (i >= 0) rows.splice(i, 1); row.remove(); benefRow.remove(); if (opts.onChange) opts.onChange(); });
-  rowsBox.appendChild(row); rowsBox.appendChild(benefRow); rows.push(rec);
+  rm.addEventListener('click', function (e) { e.preventDefault(); var i = rows.indexOf(rec); if (i >= 0) rows.splice(i, 1); row.remove(); ensHint.remove(); benefRow.remove(); if (opts.onChange) opts.onChange(); });
+  rowsBox.appendChild(row); rowsBox.appendChild(ensHint); rowsBox.appendChild(benefRow); rows.push(rec);
   if (opts.prefill) {
     var pf = opts.prefill;
     if (Number(pf.projectId) > 0) { recip.value = String(pf.projectId); benef.value = pf.beneficiary || ''; }
@@ -6268,12 +6733,40 @@ function openEditSplitsModal(project) {
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to edit splits.'));
 
+  // "Editing splits for Stage X's Y% split limit." — X = current stage number, Y = the stage's reserved percent.
+  var splitStages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
+  var curStageId = project.ruleset ? String(project.ruleset.id) : null;
+  var stageNum = 1;
+  for (var si = 0; si < splitStages.length; si++) if (String(splitStages[si].id) === curStageId) { stageNum = si + 1; break; }
+  var reservedPct = project.metadata && project.metadata.reservedPercent != null ? percentFromRuleset(project.metadata.reservedPercent) : null;
   var note = el('div', 'operator-edit-across');
-  note.textContent = 'Edits the current stage’s split recipients. Percentages are shares of the reserved group; the remainder (if any) goes to ' + projectOwnerRecipientLabel(project) + '.';
+  note.textContent = 'Editing splits for Stage ' + stageNum + (reservedPct ? '’s ' + reservedPct + ' split limit.' : '.');
   content.appendChild(note);
 
-  // Chain checkboxes — which chains to apply the change on.
-  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '12px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
+  // Recipients editor — prefilled from the current ruleset's reserved splits.
+  var rlbl = el('div', 'operator-edit-label'); rlbl.style.marginTop = '12px'; rlbl.textContent = 'Recipients'; content.appendChild(rlbl);
+  var rowsBox = el('div', 'splits-edit-rows'); content.appendChild(rowsBox);
+  var totalLine = el('div', 'splits-edit-total'); content.appendChild(totalLine);
+
+  var rows = [];
+  function recalcTotal() {
+    var sum = rows.reduce(function (a, r) { return a + (parseFloat(r.pct.value) || 0); }, 0);
+    var atHundred = Math.abs(sum - 100) < 0.005;
+    totalLine.textContent = 'Total: ' + (Math.round(sum * 100) / 100) + '%' + (atHundred ? '' : ' — Must add up to 100%');
+    totalLine.className = 'splits-edit-total' + (atHundred ? '' : ' error');
+  }
+  (project.reservedSplits || []).forEach(function (sp) {
+    addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal, prefill: { projectId: sp.projectId, beneficiary: sp.beneficiary, pct: Math.round(Number(sp.percent) / 1e9 * 1e4) / 100, orig: sp } });
+  });
+  if (!rows.length) addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal });
+  recalcTotal();
+
+  var addLink = el('a', 'operator-cta splits-edit-add'); addLink.href = '#'; addLink.textContent = '+ Add recipient';
+  addLink.addEventListener('click', function (e) { e.preventDefault(); addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal }); recalcTotal(); });
+  content.appendChild(addLink);
+
+  // Chain checkboxes — which chains to apply the change on. Kept at the bottom, just above Save.
+  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '18px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
   var chainBox = el('div', 'splits-edit-chains');
   var chainChecks = allChains.map(function (c) {
     var row = el('label', 'splits-edit-chain');
@@ -6285,27 +6778,6 @@ function openEditSplitsModal(project) {
     return { chain: c, cb: cb };
   });
   content.appendChild(chainBox);
-
-  // Recipients editor — prefilled from the current ruleset's reserved splits.
-  var rlbl = el('div', 'operator-edit-label'); rlbl.style.marginTop = '12px'; rlbl.textContent = 'Recipients'; content.appendChild(rlbl);
-  var rowsBox = el('div', 'splits-edit-rows'); content.appendChild(rowsBox);
-  var totalLine = el('div', 'splits-edit-total'); content.appendChild(totalLine);
-
-  var rows = [];
-  function recalcTotal() {
-    var sum = rows.reduce(function (a, r) { return a + (parseFloat(r.pct.value) || 0); }, 0);
-    totalLine.textContent = 'Total: ' + (Math.round(sum * 100) / 100) + '%' + (sum > 100 ? ' — over 100%' : (sum < 100 ? ' — ' + (Math.round((100 - sum) * 100) / 100) + '% to ' + projectOwnerRecipientLabel(project) : ''));
-    totalLine.className = 'splits-edit-total' + (sum > 100 ? ' error' : '');
-  }
-  (project.reservedSplits || []).forEach(function (sp) {
-    addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal, prefill: { projectId: sp.projectId, beneficiary: sp.beneficiary, pct: Math.round(Number(sp.percent) / 1e9 * 1e4) / 100, orig: sp } });
-  });
-  if (!rows.length) addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal });
-  recalcTotal();
-
-  var addLink = el('a', 'operator-cta splits-edit-add'); addLink.href = '#'; addLink.textContent = '+ Add recipient';
-  addLink.addEventListener('click', function (e) { e.preventDefault(); addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal }); recalcTotal(); });
-  content.appendChild(addLink);
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
@@ -6368,7 +6840,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
 
   await runRelayrAcrossChains(selectedChains, account, function (cid) {
     return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [BigInt(project.id), BigInt(ridMap[cid]), groups] }) };
-  }, 600000n, setStatus);
+  }, 600000n, setStatus, { label: 'Edit splits', title: 'Confirm edit splits' });
 
   setStatus('Splits updated on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + ' ✓', 'success');
   setTimeout(function () { modal.close(); }, 1400);
@@ -6841,6 +7313,7 @@ function renderBridgeTransactionsTable(rows, project) {
           var lowGas = bal != null && bal < 200000000000000n; // < 0.0002 ETH ≈ not enough for gas
           openTxConfirm(payload, function (ctx) {
             executeTransaction({
+              skipConfirm: true, // already confirmed via openTxConfirm
               chainId: tx.peerChainId, address: tx.peerSucker, abi: suckerClaimAbi, functionName: 'claim',
               args: [{ token: NATIVE_TOKEN, leaf: leaf, proof: tx.proof }],
               onStatus: function (m, kind) { ctx.showStatus(m, kind); },
@@ -6870,6 +7343,7 @@ function renderBridgeTransactionsTable(rows, project) {
           };
           openTxConfirm(payload, function (ctx) {
             executeTransaction({
+              skipConfirm: true, // already confirmed via openTxConfirm
               chainId: tx.chainId, address: tx.sourceSucker, abi: suckerBridgeAbi, functionName: 'toRemote', args: [NATIVE_TOKEN], value: fee,
               onStatus: function (m, kind) { ctx.showStatus(m, kind); },
               onError: function (m) { ctx.showStatus(m, 'error'); },
@@ -6920,6 +7394,7 @@ function openTxConfirm(payload, onConfirm, opts) {
   pre.textContent = JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
     .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
   content.appendChild(pre);
+  appendAuditPromptLink(content, payload);
   var status = el('div', 'modal-status tx-confirm-status');
   status.style.display = 'none';
   content.appendChild(status);

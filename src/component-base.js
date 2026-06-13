@@ -455,13 +455,143 @@ export function createWalletButton(label, onClick, permissionNote) {
 
 // --- Transaction execution pipeline ---
 
+// Build a copy-pasteable prompt the user can feed to an LLM to sanity-check a transaction before signing.
+// Includes the exact payload, block-explorer link(s) to the target contract(s), and a safety checklist.
+export function buildTxAuditPrompt(payload) {
+  var lines = [];
+  lines.push("I'm about to sign a blockchain transaction in the Juicebox V6 web app. Act as a careful security reviewer: tell me whether it is safe to sign and whether it matches my intent. Flag anything suspicious — assume I could be the target of a scam or a spoofed UI.");
+  lines.push('');
+  lines.push('Transaction payload — exactly what will be sent on-chain:');
+  lines.push('```json');
+  lines.push(JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2));
+  lines.push('```');
+  lines.push('');
+  var links = auditLinksFromPayload(payload);
+  if (links.length) {
+    lines.push('Verify the target contract(s) — open these, confirm the source is verified and the address is the legitimate Juicebox V6 contract (not a look-alike):');
+    links.forEach(function (l) { lines.push('- ' + l.label + ': ' + l.url); });
+    lines.push('');
+  }
+  lines.push('Check specifically:');
+  lines.push('1. Decode the `function` and each `arg` — do they match what I believe I am doing?');
+  lines.push('2. Is `value` (native token sent with the call) what I expect? Flag any unexpected non-zero value.');
+  lines.push('3. If there is an `erc20Approval`, is the amount bounded and the spender expected? Warn on unlimited / uint256-max approvals.');
+  lines.push('4. Are any addresses in the args recipients of funds, tokens, ownership, or operator/permission rights? Are they my address or one I explicitly named?');
+  lines.push('5. For cross-chain (relayr) calls, is the SAME change applied consistently across every listed chain, with no extra chain slipped in?');
+  lines.push('6. Any sign of a drain, ownership/operator transfer, or permission grant I did not intend?');
+  lines.push('');
+  lines.push('Juicebox V6 docs: https://docs.juicebox.money — contract source: https://github.com/Bananapus . If the target address is not a recognizable Juicebox V6 deployment, warn me explicitly.');
+  lines.push('');
+  lines.push('End with a one-line verdict: SAFE TO SIGN / DO NOT SIGN / NEEDS MORE INFO, followed by the top reasons.');
+  return lines.join('\n');
+}
+
+// Derive block-explorer address links from a confirm payload (direct: {chain,contract}; relayr: {chains:[{chain,contract}]}).
+function auditLinksFromPayload(payload) {
+  var out = [];
+  function explorer(chainName, addr) {
+    if (!addr) return null;
+    var id = null;
+    for (var k in CHAINS) { if (CHAINS[k] && CHAINS[k].name === chainName) { id = k; break; } }
+    var be = id && CHAINS[id].blockExplorers && CHAINS[id].blockExplorers.default;
+    if (!be || !be.url) return null;
+    return be.url.replace(/\/$/, '') + '/address/' + addr;
+  }
+  if (payload && Array.isArray(payload.chains)) {
+    payload.chains.forEach(function (c) { var u = explorer(c.chain, c.contract || c.to); if (u) out.push({ label: c.chain + ' target', url: u }); });
+  } else if (payload) {
+    var u = explorer(payload.chain, payload.contract || payload.address || payload.to);
+    if (u) out.push({ label: 'Target contract', url: u });
+  }
+  return out;
+}
+
+// Append a subtle "[copy prompt to verify with your LLM]" link that copies buildTxAuditPrompt(payload).
+export function appendAuditPromptLink(container, payload) {
+  var DEFAULT = 'Copy tx audit prompt';
+  var wrap = el('div', 'tx-audit-prompt');
+  var link = el('a', 'tx-audit-link'); link.href = '#'; link.textContent = DEFAULT;
+  link.addEventListener('click', function (e) {
+    e.preventDefault();
+    var text = buildTxAuditPrompt(payload);
+    var p = (navigator.clipboard && navigator.clipboard.writeText) ? navigator.clipboard.writeText(text) : Promise.reject();
+    p.then(function () { link.textContent = 'Copied — paste into your LLM'; })
+     .catch(function () { link.textContent = 'Copy failed — select the payload above'; });
+    setTimeout(function () { link.textContent = DEFAULT; }, 2200);
+  });
+  wrap.appendChild(link); container.appendChild(wrap);
+}
+
+// Pre-sign confirmation modal — shows the exact transaction payload and resolves true/false.
+// Self-contained (no dependency on discover.js) so every executeTransaction caller can gate on it.
+// Reuses the global modal/confirm CSS classes for a consistent look.
+export function confirmTransactionModal(payload, opts) {
+  opts = opts || {};
+  return new Promise(function (resolve) {
+    var overlay = el('div', 'modal-overlay');
+    var dialog = el('div', 'modal-dialog');
+    var head = el('div', 'modal-head');
+    var h = el('div', 'modal-title'); h.textContent = opts.title || 'Confirm transaction'; head.appendChild(h);
+    var x = document.createElement('button'); x.className = 'modal-close'; x.textContent = '✕'; head.appendChild(x);
+    dialog.appendChild(head);
+    var content = el('div', 'pay-confirm');
+    var note = el('div', 'tx-confirm-note');
+    note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
+    content.appendChild(note);
+    var pre = el('pre', 'create-payload');
+    pre.textContent = JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
+      .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
+    content.appendChild(pre);
+    appendAuditPromptLink(content, payload);
+    var foot = el('div', 'create-modal-foot');
+    var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
+    var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
+    foot.appendChild(cancel); foot.appendChild(confirm); content.appendChild(foot);
+    dialog.appendChild(content); overlay.appendChild(dialog);
+    var done = false;
+    function close(result) { if (done) return; done = true; document.removeEventListener('keydown', onKey); overlay.remove(); resolve(result); }
+    function onKey(e) { if (e.key === 'Escape') close(false); }
+    x.addEventListener('click', function () { close(false); });
+    cancel.addEventListener('click', function () { close(false); });
+    confirm.addEventListener('click', function () { close(true); });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(false); });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(overlay);
+  });
+}
+
 export function executeTransaction(opts) {
-  // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, onStatus, onSuccess, onError }
+  // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, onStatus, onSuccess, onError, skipConfirm, label }
   var wallet = getWalletClient();
   if (!wallet) { opts.onError('Connect wallet to transact'); return; }
   var account = getAccount();
   if (!account) { opts.onError('Connect wallet to transact'); return; }
 
+  // Build the review payload and require explicit confirmation, unless the caller already showed its own.
+  var confirmStep;
+  if (opts.skipConfirm) {
+    confirmStep = Promise.resolve(true);
+  } else {
+    var payload = {
+      action: opts.label || opts.functionName,
+      chain: (CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || ('chain ' + opts.chainId),
+      contract: opts.address,
+      function: opts.functionName,
+      args: opts.args,
+      value: (opts.value || 0n),
+    };
+    if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
+      payload.erc20Approval = { token: opts.tokenAddr, spender: opts.spenderAddr, amount: opts.approvalAmount };
+    }
+    confirmStep = confirmTransactionModal(payload, { title: opts.confirmTitle || 'Confirm transaction', confirmText: opts.confirmText });
+  }
+
+  confirmStep.then(function (ok) {
+    if (!ok) { opts.onError('Transaction cancelled'); return; }
+    sendNow();
+  });
+
+  function sendNow() {
   opts.onStatus('Checking wallet network...', 'pending');
 
   wallet.getChainId().then(function(walletChainId) {
@@ -505,6 +635,7 @@ export function executeTransaction(opts) {
       opts.onError(msg.length > 150 ? msg.slice(0, 150) + '...' : msg);
     }
   });
+  }
 }
 
 function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {

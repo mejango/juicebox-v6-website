@@ -4,6 +4,7 @@
 
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange } from './wallet.js';
+import { confirmTransactionModal } from './component-base.js';
 import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
@@ -325,22 +326,32 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
     var args = inputs.map(function(inp) { return inp.getValue(); });
     var value = valueInput ? parseEtherSafe(valueInput.getValue()) : undefined;
 
-    outputArea.innerHTML = '<div class="tx-pending">Awaiting wallet confirmation...</div>';
-
-    wallet.writeContract({
-      address: contractAddress,
-      abi: [fn],
-      functionName: fn.name,
+    // Review the exact call before sending.
+    confirmTransactionModal({
+      action: fn.name,
+      chain: (CHAINS[chainId] && CHAINS[chainId].name) || ('chain ' + chainId),
+      contract: contractAddress,
+      function: fn.name,
       args: args,
-      value: value,
-    }).then(function(hash) {
-      outputArea.innerHTML = '<div class="tx-success">TX submitted: ' + hash + '</div>';
-      return pub.waitForTransactionReceipt({ hash: hash });
-    }).then(function(receipt) {
-      outputArea.innerHTML = '<div class="tx-success">Confirmed in block ' + receipt.blockNumber + ' · TX: ' + truncateAddress(receipt.transactionHash) + '</div>';
-    }).catch(function(err) {
-      outputArea.innerHTML = '';
-      outputArea.appendChild(renderError(formatError(err, abi)));
+      value: value || 0n,
+    }, { title: 'Confirm transaction' }).then(function(ok) {
+      if (!ok) { outputArea.innerHTML = ''; outputArea.appendChild(renderError('Transaction cancelled')); return; }
+      outputArea.innerHTML = '<div class="tx-pending">Awaiting wallet confirmation...</div>';
+      wallet.writeContract({
+        address: contractAddress,
+        abi: [fn],
+        functionName: fn.name,
+        args: args,
+        value: value,
+      }).then(function(hash) {
+        outputArea.innerHTML = '<div class="tx-success">TX submitted: ' + hash + '</div>';
+        return pub.waitForTransactionReceipt({ hash: hash });
+      }).then(function(receipt) {
+        outputArea.innerHTML = '<div class="tx-success">Confirmed in block ' + receipt.blockNumber + ' · TX: ' + truncateAddress(receipt.transactionHash) + '</div>';
+      }).catch(function(err) {
+        outputArea.innerHTML = '';
+        outputArea.appendChild(renderError(formatError(err, abi)));
+      });
     });
   });
 }
