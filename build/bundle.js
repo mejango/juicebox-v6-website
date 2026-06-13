@@ -41,7 +41,7 @@ async function build() {
   fs.copyFileSync(path.join(SRC, 'style.css'), path.join(DIST, 'style.css'));
 
   // Copy static assets
-  for (const asset of ['jblogo.gif', 'favicon.png']) {
+  for (const asset of ['jblogo.gif', 'favicon.svg']) {
     const src = path.join(SRC, asset);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(DIST, asset));
   }

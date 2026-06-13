@@ -9,6 +9,8 @@ import { CHAINS, getCustomRpc, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub, shortHex } from './pay-preview.js';
 import { bendystrawQuery } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
+import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrTxHash } from './relayr.js';
+import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 
 // One batched client per chain. `batch.multicall` makes viem fold all the concurrent
 // readContract calls (7 projects × ~7 reads) into a couple of Multicall3 requests, so a
@@ -164,6 +166,21 @@ var payAbi = [{
     { name: 'metadata', type: 'bytes' },
   ],
   outputs: [{ name: 'beneficiaryTokenCount', type: 'uint256' }],
+}];
+
+// addToBalanceOf — same shape on JBMultiTerminal and JBRouterTerminalRegistry. Adds funds to a project's
+// balance WITHOUT minting tokens to anyone. shouldReturnHeldFees=false keeps it a plain top-up.
+var addToBalanceAbi = [{
+  type: 'function', name: 'addToBalanceOf', stateMutability: 'payable',
+  inputs: [
+    { name: 'projectId', type: 'uint256' },
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint256' },
+    { name: 'shouldReturnHeldFees', type: 'bool' },
+    { name: 'memo', type: 'string' },
+    { name: 'metadata', type: 'bytes' },
+  ],
+  outputs: [],
 }];
 
 // What tokens a project's terminal accepts DIRECTLY (its accounting contexts). USD-based revnets accept
@@ -326,7 +343,15 @@ function resolveTierMedia(shop, tier, chainId) {
     }
     return ipfsToHttp(img);
   };
-  var pick = function (j) { return { name: j.productName || j.name, image: resolveImage(j.image || j.imageUri), category: j.categoryName }; };
+  var pick = function (j) {
+    return {
+      name: j.productName || j.name,
+      image: resolveImage(j.image || j.imageUri),
+      animationUrl: (j.animation_url || j.animationUrl) ? ipfsToHttp(j.animation_url || j.animationUrl) : '',
+      mediaType: j.mediaType || '',
+      category: j.categoryName,
+    };
+  };
   var fromIpfs = function () {
     var ipfs = decodeEncodedIpfs(tier.encodedIpfsUri);
     if (!ipfs) return {};
@@ -341,6 +366,104 @@ function resolveTierMedia(shop, tier, chainId) {
       }).catch(fromIpfs);
   }
   return Promise.resolve(fromIpfs());
+}
+
+// Classify a tier's media so we render the right element. Prefer the stored MIME (`mediaType`), then the
+// URL extension, defaulting to image (covers png/jpg/webp/gif/svg, which an <img> handles).
+function tierMediaKind(m) {
+  var t = (m.mediaType || '').toLowerCase();
+  if (t.indexOf('image') === 0) return 'image';
+  if (t.indexOf('video') === 0) return 'video';
+  if (t.indexOf('audio') === 0) return 'audio';
+  if (t === 'application/pdf') return 'pdf';
+  if (t.indexOf('text/') === 0 || t.indexOf('markdown') !== -1) return 'text';
+  if (t) return 'file';
+  var url = (m.animationUrl || m.image || '').toLowerCase().split('?')[0].split('#')[0];
+  if (/\.(png|jpe?g|webp|gif|svg|avif|bmp)$/.test(url)) return 'image';
+  if (/\.(mp4|webm|mov|m4v|ogv)$/.test(url)) return 'video';
+  if (/\.(mp3|wav|ogg|flac|m4a|aac)$/.test(url)) return 'audio';
+  if (/\.pdf$/.test(url)) return 'pdf';
+  if (/\.(txt|md|markdown|json|csv)$/.test(url)) return 'text';
+  return m.image ? 'image' : (m.animationUrl ? 'file' : '');
+}
+function tierMediaBadge(label, alt, url) {
+  var node = url ? document.createElement('a') : el('div', 'tier-media-badge');
+  node.className = 'tier-media-badge';
+  if (url) { node.href = url; node.target = '_blank'; node.rel = 'noopener'; }
+  var t = el('span', 'tier-media-badge-ext'); t.textContent = label; node.appendChild(t);
+  node.title = alt || '';
+  return node;
+}
+// Render a tier's media (any file type) into `container`. mode 'full' (card) or 'thumb' (small preview).
+function renderTierMediaInto(container, m, alt, mode) {
+  container.innerHTML = '';
+  var kind = tierMediaKind(m);
+  if (!kind) return false;
+  var media = m.animationUrl || m.image;
+  if (kind === 'image') {
+    var img = document.createElement('img'); img.loading = 'lazy'; img.src = m.image || media; img.alt = alt || ''; container.appendChild(img); return true;
+  }
+  if (kind === 'video') {
+    var v = document.createElement('video'); v.src = media; v.muted = true; v.loop = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
+    if (mode === 'full') { v.controls = true; v.autoplay = true; } else { v.autoplay = true; }
+    container.appendChild(v); return true;
+  }
+  if (kind === 'audio') {
+    if (mode === 'thumb') { container.appendChild(tierMediaBadge('♪', alt, media)); return true; }
+    var wrapA = el('div', 'tier-media-audio');
+    if (m.image) { var ai = document.createElement('img'); ai.loading = 'lazy'; ai.src = m.image; ai.alt = alt || ''; wrapA.appendChild(ai); }
+    var au = document.createElement('audio'); au.src = media; au.controls = true; wrapA.appendChild(au);
+    container.appendChild(wrapA); return true;
+  }
+  if (kind === 'pdf') {
+    if (mode === 'thumb') { container.appendChild(tierMediaBadge('PDF', alt, media)); return true; }
+    var f = document.createElement('iframe'); f.src = media; f.className = 'tier-media-frame'; f.setAttribute('loading', 'lazy'); container.appendChild(f); return true;
+  }
+  if (kind === 'text') {
+    if (mode === 'thumb') { container.appendChild(tierMediaBadge('TXT', alt, media)); return true; }
+    var pre = el('pre', 'tier-media-text'); pre.textContent = 'Loading…'; container.appendChild(pre);
+    fetch(media).then(function (r) { return r.text(); }).then(function (txt) { pre.textContent = txt.slice(0, 6000); }).catch(function () { pre.textContent = 'Could not load file.'; });
+    return true;
+  }
+  container.appendChild(tierMediaBadge('FILE', alt, media)); return true;
+}
+
+// Recommended max upload size — keeps IPFS-gateway load times reasonable. Over-limit images can be
+// compressed client-side; other media can't (state the limit and ask for a smaller file).
+var MAX_MEDIA_MB = 25;
+var MAX_MEDIA_BYTES = MAX_MEDIA_MB * 1024 * 1024;
+function formatFileSize(bytes) {
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1) + ' MB';
+  if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+  return bytes + ' B';
+}
+// Downscale + re-encode an image File until it fits under `maxBytes` (best effort). Returns a new File.
+function compressImageFile(file, maxBytes) {
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      var w = img.naturalWidth, h = img.naturalHeight;
+      var canvas = document.createElement('canvas'); var ctx = canvas.getContext('2d');
+      var attempts = [[1, 0.82], [1, 0.6], [0.8, 0.7], [0.8, 0.5], [0.6, 0.6], [0.6, 0.4], [0.45, 0.5], [0.35, 0.45]];
+      var i = 0, last = null;
+      var toFile = function (blob) { return new File([blob], (file.name.replace(/\.[^.]+$/, '') || 'image') + '.jpg', { type: 'image/jpeg' }); };
+      function next() {
+        if (i >= attempts.length) { URL.revokeObjectURL(url); return resolve(last ? toFile(last) : null); }
+        var a = attempts[i++];
+        canvas.width = Math.max(1, Math.round(w * a[0])); canvas.height = Math.max(1, Math.round(h * a[0]));
+        ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          if (!blob) return next();
+          last = blob;
+          if (blob.size <= maxBytes) { URL.revokeObjectURL(url); resolve(toFile(blob)); } else next();
+        }, 'image/jpeg', a[1]);
+      }
+      next();
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Could not read image for compression')); };
+    img.src = url;
+  });
 }
 
 // Shared NFT "cart" for one project detail: selection (tierId→qty) + resolved names, with subscribers so
@@ -365,19 +488,43 @@ function makeNftCart() {
 function renderShopSection(project, shop, cart) {
   var wrap = el('div', 'detail-section');
   var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; card.appendChild(title);
-  var intro = el('div', 'detail-card-body owners-intro');
-  intro.textContent = 'Mint these NFTs by paying the project — your payment also mints ' + (project.tokenSymbol || 'tokens') + ', and any overpayment becomes credits.';
-  card.appendChild(intro);
+  var title = el('div', 'detail-card-title'); title.textContent = 'Store'; card.appendChild(title);
   var body = el('div', 'shop-body'); card.appendChild(body);
   wrap.appendChild(card);
+
+  // Intro line — only shown when there's something for sale (inserted above the body on tier load).
+  function showIntro() {
+    if (card.querySelector('.owners-intro')) return;
+    var intro = el('div', 'detail-card-body owners-intro');
+    intro.textContent = 'Mint these NFTs by paying the project — your payment also mints ' + (project.tokenSymbol || 'tokens') + ', and any overpayment becomes credits.';
+    card.insertBefore(intro, body);
+  }
+
+  // Operator: add an NFT tier (shown once we know the 721 hook). Appended after the body resolves.
+  function appendAddTierFoot(s) {
+    if (!s || !s.hook) return;
+    var foot = el('div', 'detail-about-foot');
+    var add = el('a', 'operator-cta'); add.href = '#'; add.textContent = 'Add item for sale';
+    add.title = 'Add an NFT item for sale (operator only)';
+    add.addEventListener('click', function (e) { e.preventDefault(); openAddTierModal(project, s); });
+    foot.appendChild(add);
+    card.appendChild(foot);
+  }
 
   var ready = shop ? Promise.resolve(shop) : fetchProjectTiers(project);
   body.textContent = 'Loading items…';
   ready.then(function (s) {
     if (!wrap.isConnected) return;
     body.innerHTML = '';
-    if (!s || !s.tiers.length) { body.className = 'detail-card-body owners-empty'; body.textContent = 'No items for sale.'; return; }
+    if (!s || !s.tiers.length) {
+      body.className = 'detail-card-body owners-empty';
+      body.textContent = s ? 'No items being sold yet' : 'No NFT store available.';
+      appendAddTierFoot(s);
+      return;
+    }
+    showIntro();
+    appendAddTierFoot(s);
+    body.className = 'shop-body';
     // Group tiers under category headings (juicy-vision layout), sorted by category number.
     var cats = [], seen = {};
     s.tiers.forEach(function (t) { if (!seen[t.category]) { seen[t.category] = true; cats.push(t.category); } });
@@ -409,6 +556,253 @@ function renderShopSection(project, shop, cart) {
     if (_activeDetail) _activeDetail.shopFocus = focusTier;
   }).catch(function () { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = 'Could not load the shop.'; } });
   return wrap;
+}
+
+// JB721 tiers cap supply at one billion − 1; that maximum doubles as the "unlimited" sentinel.
+var TIER_UNLIMITED_SUPPLY = 999999999;
+
+// Operator-only: add an NFT tier to the project's 721 hook on the chosen chains, via relayr.
+function openAddTierModal(project, shop) {
+  var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
+  var operatorAddr = projectAuthorityAddress(project);
+  var allChains = (project.chains && project.chains.length)
+    ? project.chains
+    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+  var baseUsd = project.metadata && Number(project.metadata.baseCurrency) === 2;
+  var priceUnit = baseUsd ? 'USDC' : 'ETH';
+  var priceDecimals = baseUsd ? 6 : 18;
+
+  var content = el('div', 'modal-body operator-edit');
+  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to add an item.'));
+
+  function fieldIn(parent, label, placeholder, attrs, topGap) {
+    var l = el('div', 'operator-edit-label'); l.style.marginTop = (topGap == null ? 10 : topGap) + 'px'; l.textContent = label; parent.appendChild(l);
+    var i = el('input', 'operator-edit-jwt'); i.type = (attrs && attrs.type) || 'text'; i.placeholder = placeholder || '';
+    if (attrs && attrs.step) i.step = attrs.step; if (attrs && attrs.min) i.min = attrs.min;
+    parent.appendChild(i); return i;
+  }
+  var nameInput = fieldIn(content, 'Name', 'e.g. Founding Member', null, 0);
+
+  var ilbl = el('div', 'operator-edit-label'); ilbl.style.marginTop = '10px';
+  ilbl.innerHTML = 'Media <span class="operator-edit-hint">— image, gif, video, audio, PDF, text… up to ' + MAX_MEDIA_MB + ' MB.</span>';
+  content.appendChild(ilbl);
+  var imgRow = el('div', 'operator-edit-logo');
+  var imgPrev = document.createElement('img'); imgPrev.className = 'operator-edit-logo-prev'; imgPrev.style.display = 'none'; imgRow.appendChild(imgPrev);
+  var mediaHint = el('span', 'operator-edit-hint'); mediaHint.style.display = 'none'; imgRow.appendChild(mediaHint);
+  var imgFile = document.createElement('input'); imgFile.type = 'file'; imgFile.className = 'operator-edit-logo-file';
+  // Any file type: image / gif / video / audio / pdf / markdown / text …
+  imgFile.accept = 'image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown';
+  var mediaMsg = el('div', 'operator-edit-mediamsg'); mediaMsg.style.display = 'none';
+  var selectedMedia = null;
+  function showPreview(f) {
+    if ((f.type || '').indexOf('image') === 0) { imgPrev.style.display = ''; imgPrev.src = URL.createObjectURL(f); mediaHint.style.display = 'none'; }
+    else { imgPrev.style.display = 'none'; mediaHint.style.display = ''; mediaHint.textContent = (f.type || 'file') + ' · ' + formatFileSize(f.size); }
+  }
+  function setMedia(f) { selectedMedia = f; showPreview(f); }
+  function checkSize() {
+    var f = selectedMedia; if (!f) { mediaMsg.style.display = 'none'; return; }
+    if (f.size <= MAX_MEDIA_BYTES) { mediaMsg.style.display = 'none'; return; }
+    mediaMsg.style.display = ''; mediaMsg.className = 'operator-edit-mediamsg warn'; mediaMsg.innerHTML = '';
+    var over = document.createTextNode('This file is ' + formatFileSize(f.size) + ' — over the ' + MAX_MEDIA_MB + ' MB max. ');
+    mediaMsg.appendChild(over);
+    if ((f.type || '').indexOf('image') === 0) {
+      var comp = el('a', 'operator-cta'); comp.href = '#'; comp.textContent = 'Compress to fit';
+      comp.addEventListener('click', function (e) {
+        e.preventDefault();
+        mediaMsg.className = 'operator-edit-mediamsg'; mediaMsg.textContent = 'Compressing…';
+        compressImageFile(f, MAX_MEDIA_BYTES).then(function (cf) {
+          if (cf && cf.size <= MAX_MEDIA_BYTES) {
+            setMedia(cf);
+            mediaMsg.className = 'operator-edit-mediamsg ok'; mediaMsg.textContent = 'Compressed to ' + formatFileSize(cf.size) + ' ✓';
+          } else {
+            setMedia(cf || f); checkSize();
+            if (cf) mediaMsg.innerHTML = 'Compressed to ' + formatFileSize(cf.size) + ', still over the limit — try a smaller source.';
+          }
+        }).catch(function () { mediaMsg.className = 'operator-edit-mediamsg warn'; mediaMsg.textContent = 'Could not compress this image — choose a smaller file.'; });
+      });
+      mediaMsg.appendChild(comp);
+    } else {
+      mediaMsg.appendChild(document.createTextNode('Video/audio/other files can’t be compressed here — choose a smaller file.'));
+    }
+  }
+  imgFile.addEventListener('change', function () {
+    var f = imgFile.files && imgFile.files[0]; if (!f) return;
+    setMedia(f); checkSize();
+  });
+  imgRow.appendChild(imgFile); content.appendChild(imgRow);
+  content.appendChild(mediaMsg);
+
+  var priceInput = fieldIn(content, 'Price (' + priceUnit + ')', '0.0', { type: 'number', step: 'any', min: '0' });
+  var supplyInput = fieldIn(content, 'Inventory supply (leave empty for unlimited)', '', { type: 'number', step: '1', min: '1' });
+
+  // Advanced options — reserved mints, tier-level splits, governance, flags.
+  var advToggle = el('a', 'operator-cta operator-adv-toggle'); advToggle.href = '#'; advToggle.textContent = 'Advanced options ▾';
+  content.appendChild(advToggle);
+  var adv = el('div', 'operator-edit-adv'); adv.style.display = 'none'; content.appendChild(adv);
+  advToggle.addEventListener('click', function (e) { e.preventDefault(); var open = adv.style.display === 'none'; adv.style.display = open ? 'block' : 'none'; advToggle.textContent = 'Advanced options ' + (open ? '▴' : '▾'); });
+
+  var categoryInput = fieldIn(adv, 'Category (groups tiers; 0 = default)', '0', { type: 'number', step: '1', min: '0' }, 0);
+  var reserveFreqInput = fieldIn(adv, 'Reserve 1 of every N mints (0 = none)', '0', { type: 'number', step: '1', min: '0' });
+  var reserveBenefInput = fieldIn(adv, 'Reserve beneficiary', '0x… (required when reserving)');
+  var votingInput = fieldIn(adv, 'Voting units per NFT (governance; 0 = none)', '0', { type: 'number', step: '1', min: '0' });
+
+  // Tier split — route a % of each sale to recipients (remainder goes to the project).
+  var spLbl = el('div', 'operator-edit-label'); spLbl.style.marginTop = '10px'; spLbl.textContent = 'Route % of each sale to recipients'; adv.appendChild(spLbl);
+  var splitPctInput = el('input', 'operator-edit-jwt'); splitPctInput.type = 'number'; splitPctInput.placeholder = '% of each sale (0 = none)'; splitPctInput.step = 'any'; splitPctInput.min = '0'; adv.appendChild(splitPctInput);
+  var splitRowsBox = el('div', 'splits-edit-rows'); splitRowsBox.style.marginTop = '6px'; adv.appendChild(splitRowsBox);
+  var splitRows = [];
+  var addSplit = el('a', 'operator-cta splits-edit-add'); addSplit.href = '#'; addSplit.textContent = '+ Add recipient';
+  addSplit.addEventListener('click', function (e) { e.preventDefault(); addSplitRecipientRow(splitRowsBox, splitRows, {}); }); adv.appendChild(addSplit);
+
+  // Flags.
+  var flLbl = el('div', 'operator-edit-label'); flLbl.style.marginTop = '12px'; flLbl.textContent = 'Options'; adv.appendChild(flLbl);
+  function flagCheck(label) {
+    var row = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox';
+    row.appendChild(cb); var s = el('span'); s.textContent = label; row.appendChild(s); adv.appendChild(row); return cb;
+  }
+  var allowOwnerMintCb = flagCheck('Owner can mint for free');
+  var transfersPausableCb = flagCheck('Transfers pausable');
+  var cantBeRemovedCb = flagCheck('Cannot be removed later');
+
+  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '12px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
+  var chainBox = el('div', 'splits-edit-chains');
+  var chainChecks = allChains.map(function (c) {
+    var row = el('label', 'splits-edit-chain');
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.value = String(c.id);
+    row.appendChild(cb); row.appendChild(chainLogo(c.id, c.name));
+    var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); row.appendChild(nm);
+    chainBox.appendChild(row); return { chain: c, cb: cb };
+  });
+  content.appendChild(chainBox);
+
+  var jwtInput = null;
+  if (!hasPinata()) {
+    var jlbl = el('div', 'operator-edit-label'); jlbl.style.marginTop = '12px';
+    jlbl.innerHTML = 'Pinata JWT <span class="operator-edit-hint">— to pin the tier image + metadata to IPFS. '
+      + '<a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.</span>';
+    content.appendChild(jlbl);
+    jwtInput = el('input', 'operator-edit-jwt'); jwtInput.type = 'password'; jwtInput.placeholder = 'pinata JWT'; jwtInput.autocomplete = 'off'; jwtInput.spellcheck = false;
+    content.appendChild(jwtInput);
+  }
+
+  var status = el('div', 'operator-edit-status'); content.appendChild(status);
+  var actions = el('div', 'operator-edit-actions');
+  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Add item for sale';
+  actions.appendChild(submit); content.appendChild(actions);
+
+  var modal = openModal('Add item for sale', content);
+  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var busy = false;
+  submit.addEventListener('click', function (e) {
+    e.preventDefault();
+    if (busy) return;
+    if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
+    var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
+    var form = {
+      name: nameInput.value, price: priceInput.value, supply: supplyInput.value, priceDecimals: priceDecimals,
+      imageFile: selectedMedia,
+      category: categoryInput.value, reserveFreq: reserveFreqInput.value, reserveBenef: reserveBenefInput.value,
+      votingUnits: votingInput.value, splitPct: splitPctInput.value,
+      splitRows: splitRows,
+      flags: { allowOwnerMint: allowOwnerMintCb.checked, transfersPausable: transfersPausableCb.checked, cantBeRemoved: cantBeRemovedCb.checked },
+    };
+    submitAddTier(project, selected, operatorAddr, form, setStatus, modal).catch(function (err) {
+      busy = false; setStatus((err && (err.shortMessage || err.message)) || 'Add item failed', 'error');
+    });
+    busy = true;
+  });
+}
+
+async function submitAddTier(project, selectedChains, operatorAddr, form, setStatus, modal) {
+  var name = (form.name || '').trim();
+  if (!name) { setStatus('Enter a name', 'error'); return; }
+  var price;
+  try { price = parseAmount(form.price, form.priceDecimals); } catch (_) { setStatus('Enter a valid price', 'error'); return; }
+  // Empty supply = unlimited (the contract's one-billion-minus-one max).
+  var supplyStr = (form.supply || '').trim();
+  var supply = supplyStr === '' ? TIER_UNLIMITED_SUPPLY : parseInt(supplyStr, 10);
+  if (supplyStr !== '' && !(supply > 0)) { setStatus('Enter a supply above 0, or leave empty for unlimited', 'error'); return; }
+
+  var category = parseInt(form.category || '0', 10) || 0;
+  var reserveFreq = parseInt(form.reserveFreq || '0', 10) || 0;
+  var reserveBenef = (form.reserveBenef || '').trim();
+  var votingUnits = parseInt(form.votingUnits || '0', 10) || 0;
+  if (reserveFreq > 0) {
+    if (supply === 1) { setStatus('A reserved tier needs a supply of at least 2 (or unlimited)', 'error'); return; }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(reserveBenef)) { setStatus('Enter a reserve beneficiary address', 'error'); return; }
+  }
+  // Tier split: % of each sale routed to recipients (each recipient a share of that pool).
+  var splitPctRaw = parseFloat(form.splitPct || '0') || 0;
+  var splitPercent = Math.round(splitPctRaw / 100 * 1e9);
+  var tierSplits = [];
+  if (splitPercent > 0) {
+    var sum = 0;
+    var sr = form.splitRows || [];
+    for (var si = 0; si < sr.length; si++) {
+      if (sr[si].isEmpty()) continue;
+      var sp = parseFloat(sr[si].pct.value);
+      if (!(sp > 0)) { setStatus('Split row ' + (si + 1) + ': enter a percentage above 0', 'error'); return; }
+      var parsedS;
+      try { parsedS = sr[si].parse(); } catch (e) { setStatus('Split row ' + (si + 1) + ': ' + e.message, 'error'); return; }
+      sum += sp;
+      tierSplits.push({ percent: Math.round(sp / 100 * 1e9), projectId: parsedS.projectId, beneficiary: parsedS.beneficiary, preferAddToBalance: false, lockedUntil: 0, hook: ZERO_ADDRESS });
+    }
+    if (!tierSplits.length) { setStatus('Add at least one split recipient (or set the route to 0%)', 'error'); return; }
+    if (sum > 100.0001) { setStatus('Split recipients add up to ' + (Math.round(sum * 100) / 100) + '% — must be 100% or less', 'error'); return; }
+  }
+
+  if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
+  if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin the tier image + metadata.', 'error'); return; }
+  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  if (!account) return;
+
+  if (form.imageFile && form.imageFile.size > MAX_MEDIA_BYTES) {
+    setStatus('Media is ' + formatFileSize(form.imageFile.size) + ' — over the ' + MAX_MEDIA_MB + ' MB max. Compress it or choose a smaller file.', 'error');
+    return;
+  }
+  // Pin the media (any file type) + a metadata JSON, then encode the CID into the tier's bytes32 URI.
+  // Images use the standard `image` field; everything else uses `animation_url`, with a `mediaType` hint.
+  var tierMeta = { name: name };
+  if (form.imageFile) {
+    setStatus('Pinning media…', 'pending');
+    var mediaUri = await pinFile(form.imageFile, name);
+    var mt = (form.imageFile.type || '').toLowerCase();
+    tierMeta.mediaType = mt;
+    if (mt.indexOf('image') === 0) tierMeta.image = mediaUri;
+    else tierMeta.animation_url = mediaUri;
+  }
+  setStatus('Pinning item metadata…', 'pending');
+  var metaUri = await pinJson(tierMeta, name + '-tier');
+  var encodedIpfsUri = encodeIpfsUriToBytes32(metaUri);
+
+  var tier = {
+    price: price, initialSupply: supply, votingUnits: votingUnits, reserveFrequency: reserveFreq,
+    reserveBeneficiary: reserveFreq > 0 ? reserveBenef : ZERO_ADDRESS,
+    encodedIpfsUri: encodedIpfsUri, category: category, discountPercent: 0,
+    flags: {
+      allowOwnerMint: !!form.flags.allowOwnerMint, useReserveBeneficiaryAsDefault: false,
+      transfersPausable: !!form.flags.transfersPausable, useVotingUnits: votingUnits > 0,
+      cantBeRemoved: !!form.flags.cantBeRemoved, cantIncreaseDiscountPercent: false, cantBuyWithCredits: false,
+    },
+    splitPercent: splitPercent, splits: tierSplits,
+  };
+
+  // The 721 hook address can differ per chain — resolve each from that chain's REVOwner up front.
+  setStatus('Reading 721 hooks…', 'pending');
+  var hookMap = {};
+  for (var i = 0; i < selectedChains.length; i++) {
+    var cid = selectedChains[i].id;
+    var h = await read(cid, 'REVOwner', REVO_TIERED_HOOK_ABI, 'tiered721HookOf', [BigInt(project.id)]).catch(function () { return null; });
+    if (!h || /^0x0+$/.test(h)) throw new Error('No 721 hook on ' + (selectedChains[i].name || cid));
+    hookMap[cid] = h;
+  }
+
+  await runRelayrAcrossChains(selectedChains, account, function (cid) {
+    return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [[tier], []] }) };
+  }, 800000n, setStatus);
+
+  setStatus('Item added on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + ' ✓', 'success');
+  setTimeout(function () { modal.close(); }, 1400);
 }
 
 function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
@@ -457,7 +851,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
     var nm = m.name || ('Tier ' + tier.id);
     if (cart) { cart.setImage(tier.id, m.image); if (m.name) cart.setName(tier.id, nm); }
     if (m.name) nameEl.textContent = m.name;
-    if (m.image) { imgWrap.innerHTML = ''; var img = document.createElement('img'); img.loading = 'lazy'; img.src = m.image; img.alt = nm; imgWrap.appendChild(img); }
+    if (m.image || m.animationUrl) renderTierMediaInto(imgWrap, m, nm, 'full');
     if (m.category && onCat) onCat(tier.category, m.category);
   });
   return c;
@@ -536,7 +930,7 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
     var nm = m.name || ('Tier ' + tier.id);
     cart.setImage(tier.id, m.image); cart.setName(tier.id, nm);
     it.title = nm + ' · ' + formatEth(tier.price);
-    if (m.image) { imgWrap.innerHTML = ''; var img = document.createElement('img'); img.loading = 'lazy'; img.src = m.image; img.alt = nm; imgWrap.appendChild(img); }
+    if (m.image || m.animationUrl) renderTierMediaInto(imgWrap, m, nm, 'thumb');
   });
   return it;
 }
@@ -546,6 +940,62 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
 var uriOfAbi = [{
   type: 'function', name: 'uriOf', stateMutability: 'view',
   inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ name: '', type: 'string' }],
+}];
+// JBController.setUriOf — operator-only (SET_PROJECT_URI permission). Sent as an ERC-2771 meta-tx via relayr.
+var setUriOfAbi = [{
+  type: 'function', name: 'setUriOf', stateMutability: 'nonpayable',
+  inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'uri', type: 'string' }], outputs: [],
+}];
+// JBController.deployERC20For — operator-only (DEPLOY_ERC20). Sets the token name/symbol by deploying the
+// ERC-20 (only possible while the project still uses credits). Same salt+sender => same address per chain.
+var deployErc20Abi = [{
+  type: 'function', name: 'deployERC20For', stateMutability: 'nonpayable',
+  inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'salt', type: 'bytes32' }],
+  outputs: [{ name: 'token', type: 'address' }],
+}];
+// JBController.setTokenMetadataOf — operator-only (SET_TOKEN_METADATA). Renames a DEPLOYED token
+// (JBERC20.setMetadata). Name and symbol are mutable after deployment, contrary to plain ERC-20s.
+var setTokenMetadataAbi = [{
+  type: 'function', name: 'setTokenMetadataOf', stateMutability: 'nonpayable', outputs: [],
+  inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }],
+}];
+// REVOwner.setOperatorOf — current-operator-only. Rotates the revnet's split operator (address(0)
+// relinquishes permanently). Sent as an ERC-2771 meta-tx via relayr like the other operator actions.
+var setOperatorOfAbi = [{
+  type: 'function', name: 'setOperatorOf', stateMutability: 'nonpayable', outputs: [],
+  inputs: [{ name: 'revnetId', type: 'uint256' }, { name: 'newOperator', type: 'address' }],
+}];
+// JB721TiersHook.adjustTiers — operator-only (ADJUST_721_TIERS). Adds/removes NFT tiers. The hook is
+// ERC-2771-aware, so this fans across chains via relayr like the other operator actions.
+var JB721_TIER_CONFIG = { name: 'tiersToAdd', type: 'tuple[]', components: [
+  { name: 'price', type: 'uint104' }, { name: 'initialSupply', type: 'uint32' }, { name: 'votingUnits', type: 'uint32' },
+  { name: 'reserveFrequency', type: 'uint16' }, { name: 'reserveBeneficiary', type: 'address' }, { name: 'encodedIpfsUri', type: 'bytes32' },
+  { name: 'category', type: 'uint24' }, { name: 'discountPercent', type: 'uint8' },
+  { name: 'flags', type: 'tuple', components: [
+    { name: 'allowOwnerMint', type: 'bool' }, { name: 'useReserveBeneficiaryAsDefault', type: 'bool' }, { name: 'transfersPausable', type: 'bool' },
+    { name: 'useVotingUnits', type: 'bool' }, { name: 'cantBeRemoved', type: 'bool' }, { name: 'cantIncreaseDiscountPercent', type: 'bool' }, { name: 'cantBuyWithCredits', type: 'bool' } ] },
+  { name: 'splitPercent', type: 'uint32' },
+  { name: 'splits', type: 'tuple[]', components: [
+    { name: 'percent', type: 'uint32' }, { name: 'projectId', type: 'uint64' }, { name: 'beneficiary', type: 'address' },
+    { name: 'preferAddToBalance', type: 'bool' }, { name: 'lockedUntil', type: 'uint48' }, { name: 'hook', type: 'address' } ] },
+] };
+var adjustTiersAbi = [{
+  type: 'function', name: 'adjustTiers', stateMutability: 'nonpayable', outputs: [],
+  inputs: [JB721_TIER_CONFIG, { name: 'tierIdsToRemove', type: 'uint256[]' }],
+}];
+// JBController.setSplitGroupsOf — operator-only (SET_SPLIT_GROUPS). Replaces a ruleset's split groups.
+var setSplitGroupsAbi = [{
+  type: 'function', name: 'setSplitGroupsOf', stateMutability: 'nonpayable', outputs: [],
+  inputs: [
+    { name: 'projectId', type: 'uint256' },
+    { name: 'rulesetId', type: 'uint256' },
+    { name: 'splitGroups', type: 'tuple[]', components: [
+      { name: 'groupId', type: 'uint256' },
+      { name: 'splits', type: 'tuple[]', components: [
+        { name: 'percent', type: 'uint32' }, { name: 'projectId', type: 'uint64' }, { name: 'beneficiary', type: 'address' },
+        { name: 'preferAddToBalance', type: 'bool' }, { name: 'lockedUntil', type: 'uint48' }, { name: 'hook', type: 'address' } ] },
+    ] },
+  ],
 }];
 var ownerOfAbi = [{
   type: 'function', name: 'ownerOf', stateMutability: 'view',
@@ -994,12 +1444,19 @@ function addressLinkNode(address, chainId) {
   if (!address || address === ZERO_ADDRESS) return node;
   var chain = CHAINS[chainId];
   var base = chain && chain.blockExplorers && chain.blockExplorers.default && chain.blockExplorers.default.url;
-  if (!base) return node;
-  var a = document.createElement('a');
-  a.href = base.replace(/\/$/, '') + '/address/' + address;
-  a.target = '_blank'; a.rel = 'noopener'; a.className = 'detail-address-link';
-  a.appendChild(node);
-  return a;
+  var inner = node;
+  if (base) {
+    var a = document.createElement('a');
+    a.href = base.replace(/\/$/, '') + '/address/' + address;
+    a.target = '_blank'; a.rel = 'noopener'; a.className = 'detail-address-link';
+    a.appendChild(node);
+    inner = a;
+  }
+  // Safe badge sits OUTSIDE the explorer link so its click opens the details modal, not the link.
+  var wrap = el('span', 'address-with-safe');
+  wrap.appendChild(inner);
+  wrap.appendChild(safeBadge(address, chainId));
+  return wrap;
 }
 
 function formatEth(wei) {
@@ -1135,14 +1592,14 @@ function chainById(chainId) {
 
 // A span that shows the truncated address immediately, then upgrades to the ENS name
 // (keeping the address as a tooltip) if one resolves.
-function addressNode(address) {
+function addressNode(address, chainId) {
   var span = el('span', 'detail-address');
   if (!address || address === ZERO_ADDRESS) { span.textContent = '—'; return span; }
-  span.textContent = truncAddr(address);
-  span.title = address;
+  var label = el('span'); label.textContent = truncAddr(address); label.title = address; span.appendChild(label);
   ensNameOf(address).then(function (name) {
-    if (name) { span.textContent = name; span.title = name + '  ·  ' + address; }
+    if (name) { label.textContent = name; label.title = name + '  ·  ' + address; }
   });
+  if (chainId) span.appendChild(safeBadge(address, chainId));
   return span;
 }
 
@@ -1166,11 +1623,15 @@ function copyText(text) {
   }
 }
 
-function fullAddressNode(address) {
+function fullAddressNode(address, resolveEns, chainId) {
   var wrap = el('span', 'detail-address-copy');
   var value = el('span', 'detail-full-address');
   value.textContent = address || '—';
   wrap.appendChild(value);
+  if (resolveEns && address && address !== ZERO_ADDRESS) {
+    value.title = address;
+    ensNameOf(address).then(function (n) { if (n) value.textContent = n; }).catch(function () {});
+  }
 
   if (!address || address === ZERO_ADDRESS) return wrap;
 
@@ -1193,7 +1654,71 @@ function fullAddressNode(address) {
     }).catch(function () {});
   });
   wrap.appendChild(btn);
+  if (chainId) wrap.appendChild(safeBadge(address, chainId));
   return wrap;
+}
+
+// ── Safe (Gnosis Safe) detection + details ───────────────────────────────────
+var SAFE_ABI = [
+  { type: 'function', name: 'getThreshold', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'getOwners', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
+];
+// Safe wallet-app chain prefixes (https://app.safe.global) for the "Open in Safe" link. Best-effort.
+var SAFE_CHAIN_PREFIX = { 1: 'eth', 10: 'oeth', 8453: 'base', 42161: 'arb1', 11155111: 'sep' };
+var SAFE_ICON_SVG = '<svg viewBox="0 0 661.62 661.47" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="m531.98 330.7h-49.42c-14.76 0-26.72 11.96-26.72 26.72v71.73c0 14.76-11.96 26.72-26.72 26.72h-196.61c-14.76 0-26.72 11.96-26.72 26.72v49.42c0 14.76 11.96 26.72 26.72 26.72h207.99c14.76 0 26.55-11.96 26.55-26.72v-39.65c0-14.76 11.96-25.23 26.72-25.23h38.2c14.76 0 26.72-11.96 26.72-26.72v-83.3c0-14.76-11.96-26.41-26.72-26.41zm-326.2-98.18c0-14.76 11.96-26.72 26.72-26.72h196.49c14.76 0 26.72-11.96 26.72-26.72v-49.42c0-14.76-11.96-26.72-26.72-26.72h-207.88c-14.76 0-26.72 11.96-26.72 26.72v38.08c0 14.76-11.96 26.72-26.72 26.72h-38.03c-14.76 0-26.72 11.96-26.72 26.72v83.39c0 14.76 12.01 26.12 26.77 26.12h49.42c14.76 0 26.72-11.96 26.72-26.72l-.05-71.44zm101.77 46.23h47.47c15.47 0 28.02 12.56 28.02 28.02v47.47c0 15.47-12.56 28.02-28.02 28.02h-47.47c-15.47 0-28.02-12.56-28.02-28.02v-47.47c0-15.47 12.56-28.02 28.02-28.02z" fill="currentColor"></path></svg>';
+
+var _safeCache = {};
+// Return { owners, threshold } if `address` is a Safe on `chainId`, else null. On-chain (works any chain).
+function fetchSafeInfo(address, chainId) {
+  if (!address || address === ZERO_ADDRESS || !chainId) return Promise.resolve(null);
+  var key = chainId + ':' + address.toLowerCase();
+  if (_safeCache[key]) return _safeCache[key];
+  var p = (async function () {
+    try {
+      var client = clientFor(chainId);
+      var threshold = await client.readContract({ address: address, abi: SAFE_ABI, functionName: 'getThreshold', args: [] });
+      var owners = await client.readContract({ address: address, abi: SAFE_ABI, functionName: 'getOwners', args: [] });
+      if (owners && owners.length && BigInt(threshold) > 0n) return { owners: owners, threshold: Number(threshold) };
+      return null;
+    } catch (_) { return null; }
+  })();
+  _safeCache[key] = p;
+  return p;
+}
+// A slot that fills with a small Safe icon (opening the details modal) once we confirm the address is a Safe.
+function safeBadge(address, chainId) {
+  var slot = el('span', 'safe-badge-slot');
+  fetchSafeInfo(address, chainId).then(function (info) {
+    if (!info || !slot.isConnected) return;
+    var btn = el('button', 'safe-badge'); btn.type = 'button';
+    btn.title = 'Safe · ' + info.threshold + ' of ' + info.owners.length + ' signers — view details';
+    btn.innerHTML = SAFE_ICON_SVG;
+    btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openSafeModal(address, chainId, info); });
+    slot.appendChild(btn);
+  }).catch(function () {});
+  return slot;
+}
+function openSafeModal(address, chainId, info) {
+  var content = el('div', 'modal-body safe-modal');
+  var policy = el('div', 'safe-policy');
+  policy.innerHTML = 'Requires <strong>' + info.threshold + ' of ' + info.owners.length + '</strong> signatures';
+  content.appendChild(policy);
+
+  var addrRow = el('div', 'safe-addr'); addrRow.appendChild(fullAddressNode(address, true)); content.appendChild(addrRow);
+
+  var lbl = el('div', 'safe-signers-label'); lbl.textContent = 'Signers'; content.appendChild(lbl);
+  var list = el('div', 'safe-signers');
+  info.owners.forEach(function (o) { var row = el('div', 'safe-signer'); row.appendChild(addressNode(o, chainId)); list.appendChild(row); });
+  content.appendChild(list);
+
+  var prefix = SAFE_CHAIN_PREFIX[chainId];
+  if (prefix) {
+    var link = document.createElement('a'); link.className = 'safe-applink';
+    link.href = 'https://app.safe.global/home?safe=' + prefix + ':' + address;
+    link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open in Safe ↗';
+    content.appendChild(link);
+  }
+  openModal('Safe', content);
 }
 
 // -- On-chain fetch --
@@ -1264,6 +1789,9 @@ async function fetchProject(id, chainId) {
       project.tagline = stripHtml(meta.projectTagline || meta.tagline) || null;
       project.logoUri = meta.logoUri ? ipfsToHttp(meta.logoUri) : null;
       project.infoUri = meta.infoUri || null;
+      project.twitter = meta.twitter || null;
+      project.discord = meta.discord || null;
+      project.telegram = meta.telegram || null;
       project.tags = Array.isArray(meta.tags) ? meta.tags : [];
     }).catch(function () {}));
 
@@ -1709,16 +2237,17 @@ function renderProjectDetail(project, initialTab) {
       tabRow.appendChild(btn);
     })(tabs[i]);
   }
-  // Shop tab: only present when the project has 721 tiers. Inject async (after "About") once detected.
+  // Store tab: revnets always get one (operators can add tiers even before any exist); other projects
+  // only when they already have tiers. Injected async as the LAST tab once the 721 hook is read.
   fetchProjectTiers(project).then(function (shop) {
-    if (!shop || !shop.tiers.length || !wrap.isConnected || builders.Shop) return;
+    var show = shop && (shop.tiers.length || project.isRevnet);
+    if (!show || !wrap.isConnected || builders.Shop) return;
     builders.Shop = function () { return renderShopSection(project, shop, nftCart); };
-    tabs.splice(1, 0, 'Shop');
+    tabs.push('Shop');
     var sbtn = document.createElement('button');
-    sbtn.className = 'detail-tab-btn'; sbtn.textContent = 'Shop';
+    sbtn.className = 'detail-tab-btn'; sbtn.textContent = 'Store';
     sbtn.addEventListener('click', function () { showTab('Shop'); routerSetHash(projectHash(project, 'Shop')); });
-    var first = tabRow.querySelector('.detail-tab-btn');
-    if (first && first.nextSibling) tabRow.insertBefore(sbtn, first.nextSibling); else tabRow.appendChild(sbtn);
+    tabRow.appendChild(sbtn);
     if (initialTab && tabSlug(initialTab) === 'shop') showTab('Shop');
   }).catch(function () {});
 
@@ -1823,6 +2352,8 @@ function renderPayCard(project, cart) {
     preview: null,
     slippageBps: 100, // AMM-route max slippage (default 1%)
     shop: null,       // { hook, tiers, ... } once the strip loads
+    mode: 'pay',      // 'pay' (mint tokens) | 'addbalance' (top up balance, mint nothing)
+    conversion: null, // { sym, units } router-swap landed amount for add-to-balance
   };
   state.token = state.tokens[0] || null;
   loadAcceptedTokens(state.chainId); // refine direct-vs-router from the project's accounting contexts
@@ -1831,6 +2362,34 @@ function renderPayCard(project, cart) {
   var previewGen = 0;
 
   function nativeToken() { return state.tokens.filter(function (t) { return t.address.toLowerCase() === NATIVE_TOKEN.toLowerCase(); })[0]; }
+  // The project's directly-accepted token (the swap target a router top-up lands in).
+  function acceptedToken() { return state.tokens.filter(function (t) { return !t.viaRouter; })[0]; }
+  function acceptedTokenSym() { var t = acceptedToken(); return t ? (t.symbol || '').replace(/\s*\(native\)/i, '') : ''; }
+  function formatSwapUnits(n) {
+    if (!isFinite(n) || n <= 0) return '0';
+    if (n >= 1) return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (n >= 0.0001) return n.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+    return n.toPrecision(2);
+  }
+  // Per-(chain, accepted-token) issuance rate: project tokens minted per 1 whole accepted-token unit.
+  // Cached because it's constant on the issuance route; used to back the router swap output out of a pay
+  // preview (swap output is identical whether the follow-on op is pay or addToBalance).
+  var _rateCache = {};
+  function loadAcceptedRate(chainId, acc) {
+    var key = chainId + ':' + acc.address.toLowerCase();
+    if (_rateCache[key]) return Promise.resolve(_rateCache[key]);
+    var unit = 10n ** BigInt(acc.decimals || 18);
+    return computePayPreview({ chainId: chainId, projectId: project.id, token: acc.address, amount: unit, beneficiary: getAccount() || undefined })
+      .then(function (r) {
+        if (r && !r.unavailable && r.received != null) {
+          var per = (r.received || 0n) + (r.reserved || 0n);
+          // Both legs (router input + this reference) pass through the same issuance/buyback curve, so the
+          // ratio recovers the landed accepted-token amount on either route — keep the route to compare.
+          if (per > 0n) { _rateCache[key] = { per: per, unit: unit, decimals: acc.decimals || 18, routing: r.routing }; return _rateCache[key]; }
+        }
+        return null;
+      }).catch(function () { return null; });
+  }
   function nftTierById(id) { return state.shop ? state.shop.tiers.filter(function (t) { return t.id === id; })[0] : null; }
   function nftTotalWei() {
     var s = 0n, sel = cart.entries();
@@ -1889,11 +2448,24 @@ function renderPayCard(project, cart) {
     onViewAll: openShopTab,
   }));
 
-  // Row 1: "Pay on <chain>"  ...  <currency>
+  // Row 1: "[Pay ▾] on <chain>" — the leading word is the action toggle (Pay / Add to balance).
   var topRow = el('div', 'paybox-top');
   var payOn = el('div', 'paybox-payon');
+  // Action picker as the sentence's first word.
+  var modeSel = el('select', 'paybox-select paybox-mode');
+  [['pay', 'Pay'], ['addbalance', 'Add to balance']].forEach(function (m) {
+    var o = document.createElement('option'); o.value = m[0]; o.textContent = m[1]; modeSel.appendChild(o);
+  });
+  modeSel.value = state.mode;
+  modeSel.addEventListener('change', function () {
+    state.mode = modeSel.value;
+    sizeSelectToText(modeSel);
+    updateModeUi();
+    schedulePreview();
+  });
+  payOn.appendChild(modeSel);
   var payOnLabel = el('span', 'paybox-payon-label');
-  payOnLabel.textContent = 'Pay on';
+  payOnLabel.textContent = 'on';
   payOn.appendChild(payOnLabel);
   payOn.appendChild(document.createTextNode(' ')); // real space so it reads as a sentence
   if (chains.length > 1) {
@@ -1922,6 +2494,7 @@ function renderPayCard(project, cart) {
   }
   topRow.appendChild(payOn);
   card.appendChild(topRow);
+  sizeSelectToText(modeSel);
 
   // Currency control lives inline inside the amount field (appended to the amount row below).
   var currWrap = el('div', 'paybox-curr-wrap');
@@ -1969,6 +2542,12 @@ function renderPayCard(project, cart) {
   amountRow.appendChild(payBtn);
   card.appendChild(amountRow);
 
+  // Reflect the selected action across the button label (Pay → Add) and feedback. NFTs only mint on a Pay.
+  function updateModeUi() {
+    payBtn.textContent = state.mode === 'addbalance' ? 'Add' : 'Pay';
+    renderFeedback();
+  }
+
   // Memo — subtle, optional, directly under the amount/Pay row.
   var memo = el('input', 'paybox-memo');
   memo.type = 'text';
@@ -2005,6 +2584,24 @@ function renderPayCard(project, cart) {
     feedback.innerHTML = '';
     var p = state.preview;
     var isAmm = !!(p && p.routing === 'amm');
+
+    // Add-to-balance mints nothing — funds land in the project balance. "You get" is always 0; for a
+    // swap-via-router top-up, show how much of the project's accepted token lands on-chain after the swap.
+    if (state.mode === 'addbalance') {
+      var aline = el('div', 'paybox-yg-zero'); aline.textContent = 'You get 0 ' + sym; feedback.appendChild(aline);
+      if (state.token && state.token.viaRouter) {
+        var conv = el('div', 'paybox-conv');
+        if (state.phase === 'previewing') conv.textContent = 'Estimating swap…';
+        else if (state.conversion) conv.textContent = '≈ ' + state.conversion.amount + ' ' + state.conversion.sym + ' lands on-chain after the swap';
+        else if (p && p.unavailable) { conv.className = 'paybox-conv muted'; conv.textContent = 'Swaps into ' + (acceptedTokenSym() || 'the project token') + ' on-chain'; }
+        else { conv.className = 'paybox-conv muted'; conv.textContent = 'Swaps into ' + (acceptedTokenSym() || 'the project token') + ' on-chain'; }
+        feedback.appendChild(conv);
+      }
+      var abal = el('div', 'paybox-splits');
+      abal.textContent = 'Adds to the project balance — nothing else.';
+      feedback.appendChild(abal);
+      return;
+    }
 
     var label = el('div', 'paybox-yg-label');
     label.textContent = isAmm ? 'You get at least' : 'You get';
@@ -2108,11 +2705,33 @@ function renderPayCard(project, cart) {
       if (gen !== previewGen) return;
       state.phase = 'ready';
       state.preview = p;
+      state.conversion = null;
       renderFeedback();
+      // Add-to-balance via router: derive the accepted-token amount that lands after the swap. The
+      // simulated pay's total mint ÷ the per-unit issuance rate = the swap output (route must be issuance).
+      var acc = acceptedToken();
+      if (state.mode === 'addbalance' && state.token.viaRouter && acc && p && !p.unavailable && p.received != null) {
+        var accSym = (acc.symbol || '').replace(/\s*\(native\)/i, '');
+        var accUnit = Number(10n ** BigInt(acc.decimals || 18));
+        if (p.routing === 'amm' && p.amm && p.amm.quotedAmountToSwapWith != null) {
+          // AMM route: the buyback's swap input IS the accepted-token amount that landed from the router swap.
+          state.conversion = { sym: accSym, amount: formatSwapUnits(Number(p.amm.quotedAmountToSwapWith) / accUnit) };
+          renderFeedback();
+        } else if (p.routing === 'issuance') {
+          // Issuance route: recover the landed amount from the per-unit mint rate (same route both sides).
+          var total = (p.received || 0n) + (p.reserved || 0n);
+          loadAcceptedRate(state.chainId, acc).then(function (rate) {
+            if (gen !== previewGen || !rate || rate.per === 0n || rate.routing !== 'issuance') return;
+            state.conversion = { sym: accSym, amount: formatSwapUnits(Number(total) / Number(rate.per)) };
+            renderFeedback();
+          });
+        }
+      }
     }).catch(function () {
       if (gen !== previewGen) return;
       state.phase = 'ready';
       state.preview = null;
+      state.conversion = null;
       renderFeedback();
     });
   }
@@ -2124,8 +2743,11 @@ function renderPayCard(project, cart) {
     var amt;
     try { amt = parseAmount(state.amount, state.token.decimals || 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
 
+    var addBalance = state.mode === 'addbalance';
+
     // Selected 721 tiers mint via the pay metadata; the amount must cover their ETH total (overpay → tokens).
-    var tierIds = selectedTierIds();
+    // Add-to-balance mints nothing, so NFTs are ignored entirely on that path.
+    var tierIds = addBalance ? [] : selectedTierIds();
     var metadata = '0x';
     if (tierIds.length && state.shop) {
       var nftFloor = nftTotalWei();
@@ -2145,13 +2767,21 @@ function renderPayCard(project, cart) {
     var viaRouter = !!state.token.viaRouter; // swap currency → authorize via a gasless Permit2 signature, not a router approve
     // Require back what the user was quoted (issuance exact; AMM minus chosen slippage). Only when the
     // preview matches the current amount; otherwise leave unprotected rather than risk a stale floor.
-    var minTokens = (state.phase === 'ready') ? payMinTokens(state.preview, state.slippageBps) : 0n;
-    var args = [BigInt(project.id), state.token.address, amt, beneficiary, minTokens, state.memo || '', metadata];
+    var minTokens = (!addBalance && state.phase === 'ready') ? payMinTokens(state.preview, state.slippageBps) : 0n;
+
+    // pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) — metadata at index 6.
+    // addToBalanceOf(projectId, token, amount, shouldReturnHeldFees, memo, metadata) — metadata at index 5.
+    var fnName = addBalance ? 'addToBalanceOf' : 'pay';
+    var fnAbi = addBalance ? addToBalanceAbi : payAbi;
+    var args = addBalance
+      ? [BigInt(project.id), state.token.address, amt, false, state.memo || '', metadata]
+      : [BigInt(project.id), state.token.address, amt, beneficiary, minTokens, state.memo || '', metadata];
+    var metaIdx = addBalance ? 5 : 6;
     var txParams = {
       chainId: state.chainId,
       address: terminal,
-      abi: payAbi,
-      functionName: 'pay',
+      abi: fnAbi,
+      functionName: fnName,
       args: args,
       value: isNative ? amt : 0n,
       // Direct ERC20 pays approve the terminal inline; swap-via-router pays authorize through Permit2 (below).
@@ -2173,12 +2803,17 @@ function renderPayCard(project, cart) {
         + ' — ' + tierIds.length + ' NFT' + (tierIds.length > 1 ? 's' : '') + ' minted by the 721 hook';
     }
     confirmArgs.amount = amt.toString() + ' (' + human + ')';
-    confirmArgs.beneficiary = beneficiary;
-    confirmArgs.minReturnedTokens = minTokens.toString() + (minTokens > 0n
-      ? ' (' + formatTokenCount(minTokens) + ' ' + sym
-        + (state.preview && state.preview.routing === 'amm' ? ', ' + (state.slippageBps / 100) + '% max slippage' : '')
-        + ')'
-      : '');
+    if (addBalance) {
+      confirmArgs.shouldReturnHeldFees = false;
+      if (viaRouter && state.conversion) confirmArgs.landsOnChain = '≈ ' + state.conversion.amount + ' ' + state.conversion.sym + ' after swap';
+    } else {
+      confirmArgs.beneficiary = beneficiary;
+      confirmArgs.minReturnedTokens = minTokens.toString() + (minTokens > 0n
+        ? ' (' + formatTokenCount(minTokens) + ' ' + sym
+          + (state.preview && state.preview.routing === 'amm' ? ', ' + (state.slippageBps / 100) + '% max slippage' : '')
+          + ')'
+        : '');
+    }
     confirmArgs.memo = state.memo || '';
     confirmArgs.metadata = viaRouter ? 'Permit2 single-allowance signature (added when you sign)' : metadata;
     openPayConfirm({
@@ -2186,7 +2821,7 @@ function renderPayCard(project, cart) {
       chainId: state.chainId,
       contract: viaRouter ? 'JBRouterTerminalRegistry' : 'JBMultiTerminal',
       address: terminal,
-      'function': 'pay',
+      'function': fnName,
       value: isNative ? (amt.toString() + ' wei (' + human + ')') : '0',
       erc20Approval: isNative ? null
         : (viaRouter
@@ -2195,10 +2830,10 @@ function renderPayCard(project, cart) {
       args: confirmArgs,
     }, function send() {
       if (!viaRouter) { sendPay(txParams); return; }
-      // Swap-via-router: authorize with a Permit2 signature (replaces the scary router-approve tx), then pay.
+      // Swap-via-router: authorize with a Permit2 signature (replaces the scary router-approve tx), then send.
       var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
       buildRouterPermit2Metadata(state.chainId, state.token.address, beneficiary, terminal, amt, statusCb)
-        .then(function (meta) { var p = Object.assign({}, txParams); p.args = args.slice(); p.args[6] = meta; sendPay(p); })
+        .then(function (meta) { var p = Object.assign({}, txParams); p.args = args.slice(); p.args[metaIdx] = meta; sendPay(p); })
         .catch(function (e) { status.className = 'paybox-status error'; status.textContent = (e && (e.shortMessage || e.message)) || 'Permit2 authorization failed'; });
     });
   }
@@ -2216,14 +2851,17 @@ function renderPayCard(project, cart) {
   }
 
   function sendPay(txParams) {
+    var add = state.mode === 'addbalance';
+    var processing = add ? 'Adding to balance' : 'Payment processing';
+    var confirmed = add ? 'Added to balance' : 'Payment confirmed';
     executeTransaction(Object.assign({}, txParams, {
       onStatus: function (m, kind, meta) {
         var cls = 'paybox-status' + (kind === 'pending' ? ' pending' : '');
-        if (meta && meta.phase === 'submitted') setPayStatus(cls, 'Payment processing', meta);
+        if (meta && meta.phase === 'submitted') setPayStatus(cls, processing, meta);
         else { status.className = cls; status.textContent = m; }
       },
       onSuccess: function (m, meta) {
-        setPayStatus('paybox-status success', 'Payment confirmed', meta);
+        setPayStatus('paybox-status success', confirmed, meta);
         status.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true }));
       },
       onError: function (m) { status.className = 'paybox-status error'; status.textContent = m; },
@@ -2263,6 +2901,11 @@ function renderDetailHeader(project) {
   name.textContent = project.name;
   nameRow.appendChild(name);
   titleCol.appendChild(nameRow);
+
+  // Tagline between the title and the stat line (when set).
+  if (project.tagline) {
+    var tagEl = el('div', 'detail-tagline'); tagEl.textContent = project.tagline; titleCol.appendChild(tagEl);
+  }
 
   // Stat line: balance · supply (under the title).
   var statLine = el('div', 'detail-head-stats');
@@ -2322,39 +2965,98 @@ function renderDetailHeader(project) {
   return header;
 }
 
-// About tab: the full description + tags, then the on-chain identity details.
+// About tab: the editable project profile (logo, tagline, description, links — one Edit), then the
+// Token card (name/symbol/address — its own Edit), then Other info (per-chain IDs + operator).
 function renderAboutSection(project) {
   var section = el('div', 'detail-section');
-  if (project.description) {
-    var descCard = el('div', 'detail-card');
-    var t = el('div', 'detail-card-title'); t.textContent = 'About'; descCard.appendChild(t);
-    var d = el('div', 'detail-card-body detail-about-desc');
-    if (project.descriptionHtml) {
-      renderRichTextInto(d, project.descriptionHtml);
-    } else {
-      project.description.split(/\n{2,}/).forEach(function (para) {
-        if (!para.trim()) return;
-        var p = el('p', 'detail-about-para'); p.textContent = para.trim(); d.appendChild(p);
-      });
-    }
-    descCard.appendChild(d);
-    section.appendChild(descCard);
-  }
-  section.appendChild(renderInfoPanel(project));
+  section.appendChild(renderAboutCard(project));
+  section.appendChild(renderTokenPanel(project));
+  section.appendChild(renderOtherInfoPanel(project));
   return section;
 }
 
-// Left column: identity / links / owner/operator (all onchain), no fabricated pay flow.
-function renderInfoPanel(project) {
+// Unified project profile — everything the "Edit project" modal writes, stacked, with a single Edit CTA.
+function renderAboutCard(project) {
   var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title');
-  title.textContent = 'Info';
-  card.appendChild(title);
+  var t = el('div', 'detail-card-title'); t.textContent = 'About'; card.appendChild(t);
+  var body = el('div', 'detail-card-body');
 
+  if (project.logoUri) {
+    var logo = document.createElement('img'); logo.className = 'detail-about-logo'; logo.src = project.logoUri; logo.alt = project.name || '';
+    logo.addEventListener('error', function () { logo.style.display = 'none'; });
+    body.appendChild(logo);
+  }
+  if (project.tagline) {
+    var tag = el('div', 'detail-about-tagline'); tag.textContent = project.tagline; body.appendChild(tag);
+  }
+  var d = el('div', 'detail-about-desc');
+  if (project.descriptionHtml) {
+    renderRichTextInto(d, project.descriptionHtml);
+  } else if (project.description) {
+    project.description.split(/\n{2,}/).forEach(function (para) {
+      if (!para.trim()) return;
+      var p = el('p', 'detail-about-para'); p.textContent = para.trim(); d.appendChild(p);
+    });
+  } else {
+    var empty = el('p', 'detail-about-para detail-about-empty'); empty.textContent = 'No description yet.'; d.appendChild(empty);
+  }
+  body.appendChild(d);
+
+  var links = renderProjectLinks(project);
+  if (links) body.appendChild(links);
+  card.appendChild(body);
+
+  var foot = el('div', 'detail-about-foot');
+  var edit = el('a', 'operator-cta'); edit.textContent = 'Edit'; edit.href = '#';
+  edit.title = 'Edit the project — logo, tagline, description, links (operator only)';
+  edit.addEventListener('click', function (e) { e.preventDefault(); openEditProjectModal(project); });
+  foot.appendChild(edit);
+  card.appendChild(foot);
+  return card;
+}
+
+// Website + socials as a row of small underlined links. Returns null when none are set.
+function renderProjectLinks(project) {
+  var entries = [];
+  if (project.infoUri) entries.push(['Website', project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri)]);
+  if (project.twitter) { var h = String(project.twitter).replace(/^@/, ''); entries.push(['X', /^https?:/.test(h) ? h : ('https://x.com/' + h)]); }
+  if (project.discord) entries.push(['Discord', /^https?:/.test(project.discord) ? project.discord : ('https://' + String(project.discord).replace(/^\/+/, ''))]);
+  if (project.telegram) { var tg = String(project.telegram); entries.push(['Telegram', /^https?:/.test(tg) ? tg : (tg.indexOf('t.me') === 0 ? 'https://' + tg : 'https://t.me/' + tg.replace(/^@/, ''))]); }
+  if (!entries.length) return null;
+  var row = el('div', 'detail-about-links');
+  entries.forEach(function (e) {
+    var a = document.createElement('a'); a.className = 'detail-about-link'; a.href = e[1]; a.target = '_blank'; a.rel = 'noopener'; a.textContent = e[0];
+    row.appendChild(a);
+  });
+  return row;
+}
+
+// Token card — name / symbol / address, with its own operator Edit (deploy or rename the ERC-20).
+function renderTokenPanel(project) {
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Token'; card.appendChild(title);
+  var grid = el('div', 'detail-info-grid');
+  var tnVal = el('span', 'info-token-name'); tnVal.textContent = project.tokenName || '—';
+  grid.appendChild(infoItem('Token name', tnVal));
+  var tsVal = el('span', 'info-token-symbol'); tsVal.textContent = project.tokenSymbol || 'credits';
+  grid.appendChild(infoItem('Symbol', tsVal));
+  if (project.tokenAddress) grid.appendChild(infoItem('Address', fullAddressNode(project.tokenAddress)));
+  card.appendChild(grid);
+  var foot = el('div', 'detail-about-foot');
+  var edit = el('a', 'operator-cta'); edit.textContent = 'Edit'; edit.href = '#';
+  edit.title = 'Edit the token name & symbol (operator only)';
+  edit.addEventListener('click', function (e) { e.preventDefault(); openEditTokenModal(project); });
+  foot.appendChild(edit);
+  card.appendChild(foot);
+  return card;
+}
+
+// Other info — per-chain project IDs + the operator/owner address. Read-only.
+function renderOtherInfoPanel(project) {
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Other info'; card.appendChild(title);
   var grid = el('div', 'detail-info-grid');
 
-  // Per-chain project IDs (a project can have a different ID per chain) — chain logo + name / #id,
-  // the whole cell routes to the project on that chain.
   var idChains = (project.chains && project.chains.length)
     ? project.chains
     : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('chain ' + project.chainId) }];
@@ -2374,16 +3076,388 @@ function renderInfoPanel(project) {
     grid.appendChild(item);
   });
 
-  grid.appendChild(infoItem(projectAuthorityLabel(project), fullAddressNode(projectAuthorityAddress(project))));
-  if (project.tokenAddress) grid.appendChild(infoItem('Token', fullAddressNode(project.tokenAddress)));
-  if (project.infoUri) {
-    var href = project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri);
-    var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = project.infoUri.replace(/^https?:\/\//, '');
-    grid.appendChild(infoItem('Website', a));
+  // Operator/owner — ENS-resolved, with a transfer CTA below (revnets only — REVOwner.setOperatorOf).
+  var opItem = el('div', 'detail-info-item');
+  var opLbl = el('div', 'detail-info-label'); opLbl.textContent = projectAuthorityLabel(project); opItem.appendChild(opLbl);
+  var opVal = el('div', 'detail-info-value info-operator-val'); opVal.appendChild(fullAddressNode(projectAuthorityAddress(project), true, project.chainId)); opItem.appendChild(opVal);
+  if (project.isRevnet) {
+    var opEdit = el('a', 'operator-cta operator-transfer-cta'); opEdit.href = '#'; opEdit.textContent = 'Edit';
+    opEdit.title = 'Transfer the operator role (operator only)';
+    opEdit.addEventListener('click', function (e) { e.preventDefault(); openTransferOperatorModal(project); });
+    opItem.appendChild(opEdit);
   }
+  grid.appendChild(opItem);
   card.appendChild(grid);
   return card;
+}
+
+// Operator-only: rotate the revnet's operator on the chosen chains, via relayr (REVOwner.setOperatorOf).
+function openTransferOperatorModal(project) {
+  var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
+  var operatorAddr = projectAuthorityAddress(project);
+  var allChains = (project.chains && project.chains.length)
+    ? project.chains
+    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+
+  var content = el('div', 'modal-body operator-edit');
+  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to transfer the operator role.'));
+
+  var warn = el('div', 'operator-edit-across');
+  warn.textContent = 'Hands over operator control on the selected chains. Use the zero address to relinquish operator powers permanently. This does not move funds or change the rulesets.';
+  content.appendChild(warn);
+
+  var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = 'New operator'; content.appendChild(nlbl);
+  var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new operator address'; content.appendChild(addrInput);
+
+  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '12px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
+  var chainBox = el('div', 'splits-edit-chains');
+  var chainChecks = allChains.map(function (c) {
+    var row = el('label', 'splits-edit-chain');
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.value = String(c.id);
+    row.appendChild(cb);
+    row.appendChild(chainLogo(c.id, c.name));
+    var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); row.appendChild(nm);
+    chainBox.appendChild(row);
+    return { chain: c, cb: cb };
+  });
+  content.appendChild(chainBox);
+
+  var status = el('div', 'operator-edit-status'); content.appendChild(status);
+  var actions = el('div', 'operator-edit-actions');
+  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Transfer operator';
+  actions.appendChild(submit);
+  content.appendChild(actions);
+
+  var modal = openModal('Transfer operator', content);
+  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var busy = false;
+  submit.addEventListener('click', function (e) {
+    e.preventDefault();
+    if (busy) return;
+    var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
+    submitTransferOperator(project, selected, operatorAddr, addrInput.value, setStatus, modal).catch(function (err) {
+      busy = false; setStatus((err && (err.shortMessage || err.message)) || 'Transfer failed', 'error');
+    });
+    busy = true;
+  });
+}
+
+async function submitTransferOperator(project, selectedChains, operatorAddr, newOperator, setStatus, modal) {
+  newOperator = (newOperator || '').trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(newOperator)) { setStatus('Enter a valid 0x operator address', 'error'); return; }
+  if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
+  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  if (!account) return;
+
+  await runRelayrAcrossChains(selectedChains, account, function (cid) {
+    var revOwner = getAddress('REVOwner', cid);
+    if (!revOwner) throw new Error('No REVOwner on ' + (CHAINS[cid] && CHAINS[cid].name || cid));
+    return { to: revOwner, data: encodeFunctionData({ abi: setOperatorOfAbi, functionName: 'setOperatorOf', args: [BigInt(project.id), newOperator] }) };
+  }, 500000n, setStatus);
+
+  setStatus('Operator transferred on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + ' ✓', 'success');
+  project.operator = newOperator;
+  var liveOp = document.querySelector('.info-operator-val'); if (liveOp) { liveOp.innerHTML = ''; liveOp.appendChild(fullAddressNode(newOperator, true, project.chainId)); }
+  setTimeout(function () { modal.close(); }, 1400);
+}
+
+// Operator-only: edit the project's identity metadata — name, tagline, logo, description, website and
+// socials — then push the new IPFS URI to every chain via relayr (one ERC-2771 `setUriOf` per chain).
+function openEditProjectModal(project) {
+  var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
+  var operatorAddr = projectAuthorityAddress(project);
+  var chains = (project.chains && project.chains.length)
+    ? project.chains
+    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+
+  var content = el('div', 'modal-body operator-edit');
+
+  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to edit the project.'));
+
+  function field(label, placeholder, value, topGap) {
+    var l = el('div', 'operator-edit-label'); l.style.marginTop = (topGap == null ? 10 : topGap) + 'px'; l.textContent = label; content.appendChild(l);
+    var i = el('input', 'operator-edit-jwt'); i.type = 'text'; i.placeholder = placeholder || ''; i.value = value || '';
+    content.appendChild(i);
+    return i;
+  }
+
+  var nameInput = field('Name', 'Project name', project.name || '', 0);
+  var taglineInput = field('Tagline', 'One-line summary', project.tagline || '');
+
+  // Logo — current preview + replace-with-file. Pinned on submit only if a new file is chosen.
+  var logoLbl = el('div', 'operator-edit-label'); logoLbl.style.marginTop = '10px'; logoLbl.textContent = 'Logo'; content.appendChild(logoLbl);
+  var logoRow = el('div', 'operator-edit-logo');
+  var logoPrev = document.createElement('img'); logoPrev.className = 'operator-edit-logo-prev';
+  if (project.logoUri) logoPrev.src = project.logoUri; else logoPrev.style.visibility = 'hidden';
+  logoRow.appendChild(logoPrev);
+  var logoFile = document.createElement('input'); logoFile.type = 'file'; logoFile.accept = 'image/*'; logoFile.className = 'operator-edit-logo-file';
+  logoFile.addEventListener('change', function () {
+    var f = logoFile.files && logoFile.files[0];
+    if (f) { logoPrev.style.visibility = 'visible'; logoPrev.src = URL.createObjectURL(f); }
+  });
+  logoRow.appendChild(logoFile);
+  content.appendChild(logoRow);
+
+  var dlbl = el('div', 'operator-edit-label'); dlbl.style.marginTop = '10px'; dlbl.textContent = 'Description'; content.appendChild(dlbl);
+  var ta = el('textarea', 'operator-edit-textarea'); ta.rows = 6; ta.value = project.description || ''; content.appendChild(ta);
+
+  var websiteInput = field('Website', 'https://…', project.infoUri || '');
+  var twitterInput = field('X / Twitter', 'handle (without @)', '');
+  var discordInput = field('Discord', 'invite or handle', '');
+  var telegramInput = field('Telegram', 'handle or link', '');
+
+  // Backfill socials/tagline from the live metadata (project.* doesn't carry them) so we don't wipe values.
+  var loadedMeta = null;
+  (function () {
+    var pc = (chains[0] && chains[0].id) || project.chainId;
+    clientFor(pc).readContract({ address: getAddress('JBController', pc), abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)] })
+      .then(function (uri) { return uri ? fetchMetadata(uri) : null; })
+      .then(function (m) {
+        if (!m) return; loadedMeta = m;
+        if (!twitterInput.value) twitterInput.value = m.twitter || '';
+        if (!discordInput.value) discordInput.value = m.discord || '';
+        if (!telegramInput.value) telegramInput.value = m.telegram || '';
+        if (!taglineInput.value) taglineInput.value = m.projectTagline || m.tagline || '';
+      }).catch(function () {});
+  })();
+
+  var across = el('div', 'operator-edit-across'); across.style.marginTop = '12px';
+  across.textContent = 'Saves across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '')
+    + ': ' + chains.map(function (c) { return c.name || ('Chain ' + c.id); }).join(', ') + '.';
+  content.appendChild(across);
+
+  var jwtInput = null;
+  if (!hasPinata()) {
+    var jlbl = el('div', 'operator-edit-label'); jlbl.style.marginTop = '12px';
+    jlbl.innerHTML = 'Pinata JWT <span class="operator-edit-hint">— to pin the updated metadata to IPFS. '
+      + '<a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.</span>';
+    content.appendChild(jlbl);
+    jwtInput = el('input', 'operator-edit-jwt');
+    jwtInput.type = 'password'; jwtInput.placeholder = 'pinata JWT'; jwtInput.autocomplete = 'off'; jwtInput.spellcheck = false;
+    content.appendChild(jwtInput);
+  }
+
+  var status = el('div', 'operator-edit-status'); content.appendChild(status);
+  var actions = el('div', 'operator-edit-actions');
+  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Save changes';
+  actions.appendChild(submit);
+  content.appendChild(actions);
+
+  var modal = openModal('Edit project', content);
+  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var busy = false;
+  submit.addEventListener('click', function (e) {
+    e.preventDefault();
+    if (busy) return;
+    if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
+    var form = {
+      name: nameInput.value, tagline: taglineInput.value, description: ta.value, website: websiteInput.value,
+      twitter: twitterInput.value, discord: discordInput.value, telegram: telegramInput.value,
+      logoFile: (logoFile.files && logoFile.files[0]) || null, preloadedMeta: loadedMeta,
+    };
+    submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal).catch(function (err) {
+      busy = false;
+      setStatus((err && (err.shortMessage || err.message)) || 'Edit failed', 'error');
+    });
+    busy = true;
+  });
+}
+
+// Shared operator-gate banner: "You must be the operator (ens-or-0x…) <action>." Resolves the ENS
+// name asynchronously, falling back to the truncated address.
+function operatorGateNode(authorityLabel, operatorAddr, actionText) {
+  var gate = el('div', 'operator-gate');
+  gate.appendChild(document.createTextNode('You must be the ' + authorityLabel + ' ('));
+  var addrSpan = el('span', 'operator-gate-addr'); addrSpan.textContent = operatorAddr ? truncAddr(operatorAddr) : '…';
+  if (operatorAddr) {
+    addrSpan.title = operatorAddr;
+    ensNameOf(operatorAddr).then(function (n) { if (n) addrSpan.textContent = n; }).catch(function () {});
+  }
+  gate.appendChild(addrSpan);
+  gate.appendChild(document.createTextNode(') ' + actionText));
+  return gate;
+}
+
+// Plain text -> minimal rich-text HTML (paragraphs), matching the format other Juicebox clients render.
+function descriptionTextToHtml(text) {
+  var esc = function (s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  var paras = String(text || '').split(/\n{2,}/).map(function (p) { return p.trim(); }).filter(Boolean);
+  if (!paras.length) return '';
+  return paras.map(function (p) { return '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>'; }).join('');
+}
+
+// Shared: require a connected wallet equal to the project's operator/owner. Returns the account or null.
+async function ensureOperatorAccount(project, operatorAddr, setStatus) {
+  var account = getAccount();
+  if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
+  if (!account) { setStatus('Connect a wallet to continue', 'error'); return null; }
+  if (operatorAddr && account.toLowerCase() !== operatorAddr.toLowerCase()) {
+    setStatus('Connected wallet is not the ' + (projectAuthorityLabel(project) || 'operator').toLowerCase() + '. Switch to ' + truncAddr(operatorAddr) + '.', 'error');
+    return null;
+  }
+  return account;
+}
+
+// Shared: sign one ERC-2771 call per chain, quote the relayr bundle, take one payment, poll to completion.
+// buildCall(chainId) -> { to, data }. Resolves when every chain reports Success.
+async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus) {
+  setStatus('Sign the change for ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
+  var txs = [];
+  for (var i = 0; i < chains.length; i++) {
+    var cid = chains[i].id;
+    var call = buildCall(cid);
+    if (!call || !call.to) throw new Error('No target contract on ' + (chains[i].name || cid));
+    txs.push(await buildForwardedTx(cid, account, call.to, call.data, gas || 400000n));
+  }
+  setStatus('Requesting relayr quote…', 'pending');
+  var bundle = await relayrPostBundle(txs);
+  var payments = bundle.payment_info || [];
+  if (!payments.length) throw new Error('relayr returned no payment option');
+  var connectedChainId = await getWalletClient().getChainId().catch(function () { return null; });
+  var payment = payments.filter(function (p) { return p.chain === connectedChainId; })[0] || payments[0];
+  if (payment.chain !== connectedChainId) {
+    setStatus('Switch your wallet to ' + (CHAINS[payment.chain] && CHAINS[payment.chain].name || payment.chain) + ' to pay…', 'pending');
+    await switchChain(payment.chain);
+  }
+  setStatus('Confirm the relayr payment…', 'pending');
+  await relayrPay(payment);
+  setStatus('Payment sent — relaying to ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
+  await relayrPoll(bundle.bundle_uuid, function (records) {
+    var done = records.filter(function (t) { return t.status && t.status.state === 'Success'; }).length;
+    setStatus('Relaying… ' + done + '/' + records.length + ' chains confirmed', 'pending');
+  });
+}
+
+async function submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal) {
+  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  if (!account) return;
+  if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin the updated metadata.', 'error'); return; }
+
+  // Start from the live metadata so every field we don't edit (tags, payDisclosure, version, …) is preserved.
+  var primaryChain = (chains[0] && chains[0].id) || project.chainId;
+  var meta = form.preloadedMeta;
+  if (!meta) {
+    setStatus('Reading current metadata…', 'pending');
+    var curUri = await clientFor(primaryChain).readContract({
+      address: getAddress('JBController', primaryChain), abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)],
+    }).catch(function () { return null; });
+    meta = curUri ? (await fetchMetadata(curUri)) : null;
+  }
+  meta = meta ? Object.assign({}, meta) : {};
+
+  // New logo (if chosen) is pinned first, then referenced by the metadata JSON.
+  var newLogoUri = null;
+  if (form.logoFile) {
+    setStatus('Pinning logo…', 'pending');
+    newLogoUri = await pinFile(form.logoFile, (form.name || project.name || 'logo'));
+    meta.logoUri = newLogoUri;
+  }
+  var trim = function (s) { return (s || '').trim(); };
+  meta.name = trim(form.name);
+  meta.projectTagline = trim(form.tagline);
+  meta.description = descriptionTextToHtml(form.description);
+  meta.infoUri = trim(form.website);
+  meta.twitter = trim(form.twitter);
+  meta.discord = trim(form.discord);
+  meta.telegram = trim(form.telegram);
+
+  setStatus('Pinning updated metadata…', 'pending');
+  var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
+
+  await runRelayrAcrossChains(chains, account, function (cid) {
+    return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
+  }, 400000n, setStatus);
+
+  setStatus('Project updated across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + ' ✓', 'success');
+  // Reflect changes in memory + the live card without a reload.
+  project.name = meta.name; project.tagline = meta.projectTagline;
+  project.descriptionHtml = meta.description || null; project.description = htmlToText(meta.description);
+  project.infoUri = meta.infoUri || null;
+  if (newLogoUri) project.logoUri = ipfsToHttp(newLogoUri);
+  var liveDesc = document.querySelector('.detail-about-desc');
+  if (liveDesc) { liveDesc.innerHTML = ''; renderRichTextInto(liveDesc, meta.description); }
+  var liveName = document.querySelector('.detail-name'); if (liveName && meta.name) liveName.textContent = meta.name;
+  var liveLogo = document.querySelector('img.detail-logo'); if (liveLogo && project.logoUri) liveLogo.src = project.logoUri;
+  setTimeout(function () { modal.close(); }, 1400);
+}
+
+// Operator-only: set the project token's name & symbol on every chain, via relayr. If the ERC-20 is
+// already deployed it's renamed (setTokenMetadataOf → JBERC20.setMetadata — name/symbol ARE mutable);
+// if the project still uses credits, the ERC-20 is deployed (deployERC20For) with the chosen name/symbol.
+function openEditTokenModal(project) {
+  var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
+  var operatorAddr = projectAuthorityAddress(project);
+  var chains = (project.chains && project.chains.length)
+    ? project.chains
+    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+  var deployed = !!project.tokenAddress;
+
+  var content = el('div', 'modal-body operator-edit');
+  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to edit the token.'));
+
+  var nlbl = el('div', 'operator-edit-label'); nlbl.textContent = 'Token name'; content.appendChild(nlbl);
+  var nameInput = el('input', 'operator-edit-jwt'); nameInput.type = 'text'; nameInput.placeholder = 'e.g. My Project Token';
+  nameInput.value = project.tokenName || project.name || '';
+  content.appendChild(nameInput);
+
+  var slbl = el('div', 'operator-edit-label'); slbl.style.marginTop = '10px'; slbl.textContent = 'Symbol'; content.appendChild(slbl);
+  var symInput = el('input', 'operator-edit-jwt'); symInput.type = 'text'; symInput.placeholder = 'e.g. TOKEN'; symInput.maxLength = 11;
+  symInput.value = project.tokenSymbol || '';
+  content.appendChild(symInput);
+
+  var across = el('div', 'operator-edit-across');
+  across.textContent = deployed
+    ? 'Renames the ERC-20 on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '')
+      + ': ' + chains.map(function (c) { return c.name || ('Chain ' + c.id); }).join(', ') + '.'
+    : 'Deploys one ERC-20 (same address) across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '')
+      + ': ' + chains.map(function (c) { return c.name || ('Chain ' + c.id); }).join(', ') + '.';
+  content.appendChild(across);
+
+  var status = el('div', 'operator-edit-status'); content.appendChild(status);
+  var actions = el('div', 'operator-edit-actions');
+  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = deployed ? 'Save token' : 'Deploy token';
+  actions.appendChild(submit);
+  content.appendChild(actions);
+
+  var modal = openModal(deployed ? 'Edit token name & symbol' : 'Set token name & symbol', content);
+  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var busy = false;
+  submit.addEventListener('click', function (e) {
+    e.preventDefault();
+    if (busy) return;
+    submitTokenEdit(project, chains, operatorAddr, deployed, nameInput.value, symInput.value, setStatus, modal).catch(function (err) {
+      busy = false;
+      setStatus((err && (err.shortMessage || err.message)) || (deployed ? 'Edit failed' : 'Deploy failed'), 'error');
+    });
+    busy = true;
+  });
+}
+
+async function submitTokenEdit(project, chains, operatorAddr, deployed, name, symbol, setStatus, modal) {
+  name = (name || '').trim(); symbol = (symbol || '').trim();
+  if (!name || !symbol) { setStatus('Enter a token name and symbol', 'error'); return; }
+  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  if (!account) return;
+
+  if (deployed) {
+    // Rename the existing ERC-20 on every chain.
+    await runRelayrAcrossChains(chains, account, function (cid) {
+      return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setTokenMetadataAbi, functionName: 'setTokenMetadataOf', args: [BigInt(project.id), name, symbol] }) };
+    }, 300000n, setStatus);
+  } else {
+    // Deploy the ERC-20. Deterministic salt → same address on every chain (same operator + salt).
+    var salt = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [BigInt(project.id), symbol]));
+    await runRelayrAcrossChains(chains, account, function (cid) {
+      return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: deployErc20Abi, functionName: 'deployERC20For', args: [BigInt(project.id), name, symbol, salt] }) };
+    }, 1500000n, setStatus);
+  }
+
+  setStatus((deployed ? 'Token renamed on ' : 'Token deployed across ') + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + ' ✓', 'success');
+  project.tokenName = name; project.tokenSymbol = symbol;
+  var liveName = document.querySelector('.info-token-name'); if (liveName) liveName.textContent = name;
+  var liveSym = document.querySelector('.info-token-symbol'); if (liveSym) liveSym.textContent = symbol;
+  var headSym = document.querySelector('.detail-sym'); if (headSym) headSym.textContent = symbol;
+  setTimeout(function () { modal.close(); }, 1400);
 }
 
 // A label-over-value cell for the onchain info grid.
@@ -3575,8 +4649,8 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
   var nowShow = past || (now > t0 && now < t1);
   var nearRight = nowX > W - padR - 40;
   var nowLine = nowShow
-    ? '<line x1="' + nowX.toFixed(1) + '" y1="' + padT + '" x2="' + nowX.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#c43550" stroke-width="1.5" stroke-dasharray="4 3"/>'
-      + '<text x="' + (nearRight ? nowX - 4 : nowX + 4).toFixed(1) + '" y="' + (padT + 12) + '" font-size="10" fill="#c43550"' + (nearRight ? ' text-anchor="end"' : '') + '>Today</text>'
+    ? '<line x1="' + nowX.toFixed(1) + '" y1="' + padT + '" x2="' + nowX.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#1a8a8a" stroke-width="1.5" stroke-dasharray="4 3"/>'
+      + '<text x="' + (nearRight ? nowX - 4 : nowX + 4).toFixed(1) + '" y="' + (padT + 12) + '" font-size="10" fill="#1a8a8a"' + (nearRight ? ' text-anchor="end"' : '') + '>Today</text>'
     : '';
   // AMM gets a Bendystraw historical trade line (swapEvents) when indexed; otherwise the
   // current pool price is a flat reference line.
@@ -3586,12 +4660,12 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     for (var ai = 1; ai < ammSeries.length; ai++) {
       ammLine += ' L' + X(ammSeries[ai].timestamp).toFixed(1) + ' ' + Y(ammSeries[ai].value).toFixed(1);
     }
-    ammLine = '<path d="' + ammLine + '" fill="none" stroke="#1a8a8a" stroke-width="1.7"/>';
+    ammLine = '<path d="' + ammLine + '" fill="none" stroke="#b8602e" stroke-width="1.7"/>';
     for (var ad = 0; ad < ammSeries.length; ad++) {
-      ammLine += '<circle cx="' + X(ammSeries[ad].timestamp).toFixed(1) + '" cy="' + Y(ammSeries[ad].value).toFixed(1) + '" r="1.8" fill="#1a8a8a"/>';
+      ammLine += '<circle cx="' + X(ammSeries[ad].timestamp).toFixed(1) + '" cy="' + Y(ammSeries[ad].value).toFixed(1) + '" r="1.8" fill="#b8602e"/>';
     }
   } else if (ammPrice && ammPrice > 0) {
-    ammLine = '<line x1="' + padL + '" y1="' + Y(ammPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(ammPrice).toFixed(1) + '" stroke="#1a8a8a" stroke-width="1.5" stroke-dasharray="5 4"/>';
+    ammLine = '<line x1="' + padL + '" y1="' + Y(ammPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(ammPrice).toFixed(1) + '" stroke="#b8602e" stroke-width="1.5" stroke-dasharray="5 4"/>';
   }
   var cashLine = '';
   if (cashSeries.length) {
@@ -3642,7 +4716,7 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
       }
       var html = '<div class="chart-tip-date">' + formatDate(t) + '</div>' + row('Issuance', issP, '#6ec4c4');
       var ammVal = seriesValueAt(ch.ammHistory || [], t) || ch.amm;
-      if (ammVal) html += row('AMM', ammVal, '#1a8a8a');
+      if (ammVal) html += row('AMM', ammVal, '#b8602e');
       var floor = seriesValueAt(ch.cashoutHistory || [], t) || ch.cashout;
       if (floor) html += row('Cash out', floor, '#c43550');
       wrap._tip.innerHTML = html;
@@ -5127,7 +6201,177 @@ function renderOwnersSplits(project) {
   var curIdx = 0;
   for (var i = 0; i < stages.length; i++) if (String(stages[i].id) === currentId) { curIdx = i; break; }
   showStage(curIdx);
+
+  // Operator CTA — edit the current stage's split recipients (subtle underlined, bottom of the section,
+  // above "Latest distributions" which the caller appends after this wrap).
+  var foot = el('div', 'detail-about-foot');
+  var edit = el('a', 'operator-cta'); edit.textContent = 'Edit splits'; edit.href = '#';
+  edit.title = 'Edit the current stage’s split recipients (operator only)';
+  edit.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project); });
+  foot.appendChild(edit);
+  wrap.appendChild(foot);
   return wrap;
+}
+
+// One split-recipient row. The recipient is either a 0x address OR a project ID — when it's a project,
+// a second "token beneficiary" input appears (who receives that project's minted tokens). Pushes a record
+// into `rows`; record.parse() -> { projectId: bigint, beneficiary: address } (throws on bad input).
+function addSplitRecipientRow(rowsBox, rows, opts) {
+  opts = opts || {};
+  var row = el('div', 'splits-edit-row');
+  var recip = el('input', 'splits-edit-addr'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
+  var pct = el('input', 'splits-edit-pct'); pct.type = 'number'; pct.placeholder = '%'; pct.step = 'any'; pct.min = '0';
+  var sign = el('span', 'splits-edit-pctsign'); sign.textContent = '%';
+  var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
+  row.appendChild(recip); row.appendChild(pct); row.appendChild(sign); row.appendChild(rm);
+  var benefRow = el('div', 'splits-edit-benef'); benefRow.style.display = 'none';
+  var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… token beneficiary for that project';
+  benefRow.appendChild(benef);
+  function refresh() { benefRow.style.display = /^[0-9]+$/.test((recip.value || '').trim()) ? '' : 'none'; }
+  var rec = {
+    pct: pct, orig: (opts.prefill && opts.prefill.orig) || null,
+    isEmpty: function () { return !(recip.value || '').trim() && !(pct.value || '').trim(); },
+    parse: function () {
+      var v = (recip.value || '').trim();
+      if (/^0x[0-9a-fA-F]{40}$/.test(v)) return { projectId: 0n, beneficiary: v };
+      if (/^[0-9]+$/.test(v) && Number(v) > 0) {
+        var b = (benef.value || '').trim();
+        if (!/^0x[0-9a-fA-F]{40}$/.test(b)) throw new Error('Project #' + v + ' recipient needs a token beneficiary address');
+        return { projectId: BigInt(v), beneficiary: b };
+      }
+      throw new Error('Enter a 0x address or a project ID');
+    },
+  };
+  recip.addEventListener('input', refresh);
+  if (opts.onChange) pct.addEventListener('input', opts.onChange);
+  rm.addEventListener('click', function (e) { e.preventDefault(); var i = rows.indexOf(rec); if (i >= 0) rows.splice(i, 1); row.remove(); benefRow.remove(); if (opts.onChange) opts.onChange(); });
+  rowsBox.appendChild(row); rowsBox.appendChild(benefRow); rows.push(rec);
+  if (opts.prefill) {
+    var pf = opts.prefill;
+    if (Number(pf.projectId) > 0) { recip.value = String(pf.projectId); benef.value = pf.beneficiary || ''; }
+    else if (pf.beneficiary && pf.beneficiary !== ZERO_ADDRESS) recip.value = pf.beneficiary;
+    if (pf.pct != null) pct.value = pf.pct;
+    refresh();
+  }
+  return rec;
+}
+
+// Operator-only: edit the current ruleset's reserved-token split recipients on the chains the operator
+// picks, via relayr. Each selected chain's CURRENT ruleset id is read fresh (it can differ per chain).
+function openEditSplitsModal(project) {
+  var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
+  var operatorAddr = projectAuthorityAddress(project);
+  var allChains = (project.chains && project.chains.length)
+    ? project.chains
+    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+
+  var content = el('div', 'modal-body operator-edit');
+  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to edit splits.'));
+
+  var note = el('div', 'operator-edit-across');
+  note.textContent = 'Edits the current stage’s split recipients. Percentages are shares of the reserved group; the remainder (if any) goes to ' + projectOwnerRecipientLabel(project) + '.';
+  content.appendChild(note);
+
+  // Chain checkboxes — which chains to apply the change on.
+  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '12px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
+  var chainBox = el('div', 'splits-edit-chains');
+  var chainChecks = allChains.map(function (c) {
+    var row = el('label', 'splits-edit-chain');
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.value = String(c.id);
+    row.appendChild(cb);
+    row.appendChild(chainLogo(c.id, c.name));
+    var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); row.appendChild(nm);
+    chainBox.appendChild(row);
+    return { chain: c, cb: cb };
+  });
+  content.appendChild(chainBox);
+
+  // Recipients editor — prefilled from the current ruleset's reserved splits.
+  var rlbl = el('div', 'operator-edit-label'); rlbl.style.marginTop = '12px'; rlbl.textContent = 'Recipients'; content.appendChild(rlbl);
+  var rowsBox = el('div', 'splits-edit-rows'); content.appendChild(rowsBox);
+  var totalLine = el('div', 'splits-edit-total'); content.appendChild(totalLine);
+
+  var rows = [];
+  function recalcTotal() {
+    var sum = rows.reduce(function (a, r) { return a + (parseFloat(r.pct.value) || 0); }, 0);
+    totalLine.textContent = 'Total: ' + (Math.round(sum * 100) / 100) + '%' + (sum > 100 ? ' — over 100%' : (sum < 100 ? ' — ' + (Math.round((100 - sum) * 100) / 100) + '% to ' + projectOwnerRecipientLabel(project) : ''));
+    totalLine.className = 'splits-edit-total' + (sum > 100 ? ' error' : '');
+  }
+  (project.reservedSplits || []).forEach(function (sp) {
+    addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal, prefill: { projectId: sp.projectId, beneficiary: sp.beneficiary, pct: Math.round(Number(sp.percent) / 1e9 * 1e4) / 100, orig: sp } });
+  });
+  if (!rows.length) addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal });
+  recalcTotal();
+
+  var addLink = el('a', 'operator-cta splits-edit-add'); addLink.href = '#'; addLink.textContent = '+ Add recipient';
+  addLink.addEventListener('click', function (e) { e.preventDefault(); addSplitRecipientRow(rowsBox, rows, { onChange: recalcTotal }); recalcTotal(); });
+  content.appendChild(addLink);
+
+  var status = el('div', 'operator-edit-status'); content.appendChild(status);
+  var actions = el('div', 'operator-edit-actions');
+  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Save splits';
+  actions.appendChild(submit);
+  content.appendChild(actions);
+
+  var modal = openModal('Edit splits', content);
+  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var busy = false;
+  submit.addEventListener('click', function (e) {
+    e.preventDefault();
+    if (busy) return;
+    var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
+    submitSplitsEdit(project, selected, operatorAddr, rows, setStatus, modal).catch(function (err) {
+      busy = false; setStatus((err && (err.shortMessage || err.message)) || 'Edit failed', 'error');
+    });
+    busy = true;
+  });
+}
+
+async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, setStatus, modal) {
+  if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
+  // Build the JBSplit[] (percent is a share of SPLITS_TOTAL_PERCENT = 1e9).
+  var splits = [];
+  var sumPct = 0;
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].isEmpty()) continue;
+    var pct = parseFloat(rows[i].pct.value);
+    if (!(pct > 0)) { setStatus('Row ' + (i + 1) + ': enter a percentage above 0', 'error'); return; }
+    var parsed;
+    try { parsed = rows[i].parse(); } catch (e) { setStatus('Row ' + (i + 1) + ': ' + e.message, 'error'); return; }
+    sumPct += pct;
+    var orig = rows[i].orig;
+    splits.push({
+      percent: Math.round(pct / 100 * 1e9),
+      projectId: parsed.projectId,
+      beneficiary: parsed.beneficiary,
+      preferAddToBalance: orig ? !!orig.preferAddToBalance : false,
+      lockedUntil: orig && orig.lockedUntil ? Number(orig.lockedUntil) : 0,
+      hook: (orig && orig.hook && orig.hook !== ZERO_ADDRESS) ? orig.hook : ZERO_ADDRESS,
+    });
+  }
+  if (!splits.length) { setStatus('Add at least one recipient', 'error'); return; }
+  if (sumPct > 100.0001) { setStatus('Percentages add up to ' + (Math.round(sumPct * 100) / 100) + '% — must be 100% or less', 'error'); return; }
+
+  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  if (!account) return;
+
+  // Each chain can have a different current ruleset id — read them up front.
+  setStatus('Reading current rulesets…', 'pending');
+  var ridMap = {};
+  for (var j = 0; j < selectedChains.length; j++) {
+    var cid = selectedChains[j].id;
+    var rs = await read(cid, 'JBController', currentRulesetAbi, 'currentRulesetOf', [BigInt(project.id)]).catch(function () { return null; });
+    if (!rs || !rs[0] || !rs[0].id) throw new Error('No current ruleset on ' + (selectedChains[j].name || cid));
+    ridMap[cid] = rs[0].id;
+  }
+  var groups = [{ groupId: RESERVED_TOKEN_SPLIT_GROUP, splits: splits }];
+
+  await runRelayrAcrossChains(selectedChains, account, function (cid) {
+    return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [BigInt(project.id), BigInt(ridMap[cid]), groups] }) };
+  }, 600000n, setStatus);
+
+  setStatus('Splits updated on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + ' ✓', 'success');
+  setTimeout(function () { modal.close(); }, 1400);
 }
 
 // Append one chain block: an unboxed [chain name … Distribute] row sitting atop a bordered table of
@@ -5143,7 +6387,6 @@ function appendChainSplitBlock(container, splits, md, project, sym, isCurrent, p
   name.appendChild(chainLogo(pc.id, pc.name));
   name.appendChild(document.createTextNode(pc.name));
   chainrow.appendChild(name);
-  chainrow.appendChild(makeChainDistribute(project, pc, hasPending, isCurrent));
   block.appendChild(chainrow);
 
   var table = el('div', 'splits-table');
@@ -5154,7 +6397,7 @@ function appendChainSplitBlock(container, splits, md, project, sym, isCurrent, p
     var row = el('div', 'splits-row');
     var acct = el('span', 'splits-acct');
     if (Number(sp.projectId) > 0) acct.textContent = 'Project #' + sp.projectId;
-    else if (sp.beneficiary && sp.beneficiary !== ZERO_ADDRESS) acct.appendChild(addressNode(sp.beneficiary));
+    else if (sp.beneficiary && sp.beneficiary !== ZERO_ADDRESS) acct.appendChild(addressNode(sp.beneficiary, pc.id));
     else acct.textContent = projectOwnerRecipientLabel(project);
     row.appendChild(acct);
     var pct = el('span', 'splits-pct');
@@ -5167,6 +6410,10 @@ function appendChainSplitBlock(container, splits, md, project, sym, isCurrent, p
     table.appendChild(row);
   });
   block.appendChild(table);
+  // Distribute button below the table, right-aligned.
+  var distFoot = el('div', 'splits-chain-foot');
+  distFoot.appendChild(makeChainDistribute(project, pc, hasPending, isCurrent));
+  block.appendChild(distFoot);
   container.appendChild(block);
 }
 
