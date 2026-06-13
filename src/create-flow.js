@@ -370,7 +370,7 @@ function renderFooter(state, render, close) {
   foot.appendChild(back);
 
   if (state.step < STEPS.length - 1) {
-    var next = el('button', 'create-btn primary');
+    var next = el('button', 'create-btn');
     next.textContent = 'Next →';
     next.addEventListener('click', function () { state.step++; render(); });
     foot.appendChild(next);

@@ -4919,6 +4919,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .create-label { display: block; font-size: 12px; font-weight: bold; color: var(--c-black); margin-bottom: 6px; }
 .create-optional { font-weight: normal; color: var(--muted-2); }
 .create-input, .create-textarea { width: 100%; }
+.create-input, .create-textarea, .create-amount-input, .create-amount-cur { border-radius: 0; }
 .create-textarea { min-height: 90px; resize: vertical; }
 .create-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .create-hint { font-size: 11px; color: var(--muted-2); margin-top: 4px; line-height: 1.5; }
@@ -4960,13 +4961,15 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .create-toggle-label { font-size: 13px; font-weight: bold; color: var(--c-black); }
 
 /* Collapsibles */
-.create-collapse { border-top: 1px solid var(--c-orange-light); margin-top: 10px; }
+.create-collapse { margin-top: 14px; }
 .create-collapse-head {
-  width: 100%; text-align: left; font-family: inherit; font-size: 13px; font-weight: bold;
-  color: var(--c-black); background: none; border: none; cursor: pointer; padding: 12px 0;
-  display: flex; align-items: center; justify-content: space-between;
+  font-family: inherit; font-size: 11px; font-weight: normal;
+  color: var(--muted-2); text-decoration: underline; text-underline-offset: 2px;
+  background: none; border: none; cursor: pointer; padding: 4px 0;
+  display: inline-flex; align-items: center; gap: 6px;
 }
-.create-collapse-caret { color: var(--muted-2); }
+.create-collapse-head:hover { color: var(--c-teal); }
+.create-collapse-caret { color: inherit; }
 
 /* Image picker */
 
