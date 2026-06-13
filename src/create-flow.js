@@ -919,12 +919,12 @@ function recipientRow(rec, right, onRemove) {
 
 // Inline reserved-token split row: "Split [%] to [0x / project ID]". A project ID reveals a
 // "token beneficiary" field (who receives that project's tokens). Edits `rec` in place.
-function reservedSplitRow(t, rec, render) {
+function reservedSplitRow(t, rec, idx, render, onTotal) {
   var wrap = el('div', 'create-split-wrap');
   var row = el('div', 'create-split-row');
-  var lead = el('span', 'create-split-lead'); lead.textContent = 'Split'; row.appendChild(lead);
+  var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Split' : '… and'; row.appendChild(lead);
   var pct = el('input', 'field create-split-pct'); pct.type = 'number'; pct.min = '0'; pct.max = '100'; pct.step = 'any'; pct.placeholder = '10';
-  pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; }); row.appendChild(pct);
+  pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; if (onTotal) onTotal(); }); row.appendChild(pct);
   var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
   var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
   var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
@@ -973,20 +973,21 @@ function tokenSection(stage, render) {
       return row;
     })());
 
-    var rp = el('div', 'create-field'); rp.style.marginTop = '14px';
-    var rpl = el('label', 'create-label'); rpl.textContent = 'Reserved'; rp.appendChild(rpl);
-    rp.appendChild(infoNote('Set aside this share of every token issuance for wallets / projects you choose.'));
-    rp.appendChild(pctSlider(t.reservedPercent, function (v) { t.reservedPercent = v; render(); }));
-    card.appendChild(rp);
-
-    // Reserved splits — divide the reserved share among recipients: "Split [%] to [0x / project ID]".
-    if (t.reservedPercent > 0) {
-      t.reservedRecipients.forEach(function (rec) { card.appendChild(reservedSplitRow(t, rec, render)); });
-      if (!t.reservedRecipients.length) card.appendChild(infoNote('No splits yet — the reserved tokens go to the project owner.'));
-      var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = 'add split +';
-      addSplit.addEventListener('click', function (e) { e.preventDefault(); t.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
-      card.appendChild(addSplit);
+    // Reserved splits — each "Split [%] to [recipient]" reserves that share of issuance; the payer gets
+    // the rest. The percentages sum to the project's reserved rate (shown in the summary below).
+    var rlbl = el('div', 'create-label'); rlbl.style.marginTop = '14px'; rlbl.textContent = 'Reserved'; card.appendChild(rlbl);
+    card.appendChild(infoNote('Reserve a share of every token issuance for wallets / projects you choose.'));
+    var sumNote = el('div', 'create-hint');
+    function updateReservedSummary() {
+      var tot = Math.round(t.reservedRecipients.reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0) * 100) / 100;
+      sumNote.textContent = 'Total split limit of ' + tot + '%, payer always receives ' + (Math.round((100 - tot) * 100) / 100) + '% of issuance.';
+      sumNote.className = 'create-hint' + (tot > 100 ? ' warn' : '');
     }
+    t.reservedRecipients.forEach(function (rec, i) { card.appendChild(reservedSplitRow(t, rec, i, render, updateReservedSummary)); });
+    var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = 'add split +';
+    addSplit.addEventListener('click', function (e) { e.preventDefault(); t.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
+    card.appendChild(addSplit);
+    if (t.reservedRecipients.length) { updateReservedSummary(); card.appendChild(sumNote); }
 
     card.appendChild(collapse(t, 'tokenAdvancedOpen', 'Advanced', false, render, function () {
       var c = el('div', '');
@@ -1434,8 +1435,10 @@ function assembleRuleset(stage, chainId, isFirst) {
   rs.durationPreset = -1; rs.durationCustom = String(stage.durationSeconds || 0); // exact seconds via custom path
 
   var custom = stage.tokenMode === 'custom';
+  // Reserved rate = sum of the split-row percentages (each is a % of issuance reserved for that recipient).
+  var reservedTotalPct = (stage.reservedRecipients || []).reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0);
   rs.weight = custom ? (stage.weight || '0') : '0';
-  rs.reservedPercent = custom ? stage.reservedPercent : 0;
+  rs.reservedPercent = custom ? Math.min(100, reservedTotalPct) : 0;
   rs.weightCutPercent = custom ? stage.weightCutPercent : 0;
   rs.cashOutTaxRate = (custom && stage.cashOutEnabled) ? stage.cashOutTaxRate : 100; // 100% = cash outs off
   rs.allowOwnerMinting = custom ? stage.allowOwnerMinting : false;
@@ -1457,10 +1460,12 @@ function assembleRuleset(stage, chainId, isFirst) {
       splits: stage.payoutRecipients.map(function (x) { return splitState(x, Math.round(((Number(x.amountEth) || 0) / total) * SPLITS_TOTAL)); }),
     });
   }
-  if (custom && stage.reservedRecipients.length) {
+  if (custom && reservedTotalPct > 0) {
+    // Each recipient's share of the reserved group = its row % ÷ the total reserved %.
     rs.splitGroups.push({
       groupId: '1',
-      splits: stage.reservedRecipients.map(function (x) { return splitState(x, Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL)); }),
+      splits: stage.reservedRecipients.filter(function (x) { return (Number(x.percent) || 0) > 0; })
+        .map(function (x) { return splitState(x, Math.round((Number(x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL)); }),
     });
   }
 

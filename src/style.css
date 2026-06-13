@@ -4920,9 +4920,16 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .create-optional { font-weight: normal; color: var(--muted-2); }
 .create-input, .create-textarea { width: 100%; }
 .create-input, .create-textarea, .create-amount-input, .create-amount-cur { border-radius: 0; }
+/* Native <select>s: suppress the default arrow and draw a custom caret with symmetric padding. */
+select.create-input, .create-amount-cur {
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237d5a4e' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; background-size: 10px 6px; padding-right: 26px;
+}
 .create-textarea { min-height: 90px; resize: vertical; }
 .create-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .create-hint { font-size: 11px; color: var(--muted-2); margin-top: 4px; line-height: 1.5; }
+.create-hint.warn { color: var(--c-pink); }
 .create-note {
   font-size: 12px; color: var(--muted-2); background: var(--depth-bg-1); padding: 10px 12px;
   margin: 10px 0; line-height: 1.5; border-left: 3px solid var(--c-orange-light);
@@ -5113,7 +5120,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* Inline "Issues [x] tokens per [unit]" row */
 .create-inline-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--c-black); }
 .create-inline-num { width: 90px; flex: 0 0 auto; border-radius: 0; }
-.create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); }
+.create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 8px; font-size: 12px; }
 /* Inline reserved-split rows: "Split [%] to [recipient]" */
 .create-split-wrap { margin-top: 8px; }
 .create-split-row { display: flex; align-items: center; gap: 6px; }
