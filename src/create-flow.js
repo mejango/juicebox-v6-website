@@ -24,7 +24,7 @@ import { pinFile, pinJson, hasPinata, encodeIpfsUriToBytes32 } from './ipfs-pin.
 // Constants
 // ---------------------------------------------------------------------------
 
-var STEPS = ['Details', 'Rulesets', 'NFTs', 'Deploy'];
+var STEPS = ['Details', 'Rulesets', 'Shop', 'Deploy'];
 
 var CHAIN_OPTIONS = [
   { id: 1, name: 'Ethereum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
@@ -634,29 +634,25 @@ function renderDetails(state, render) {
   return wrap;
 }
 
+// Standard image uploader, matching the project page: a square preview thumb + native "Choose File",
+// pinned to IPFS on pick. `busy` shows an inline "Uploading…" hint.
 function renderImagePicker(uri, busy, onChange) {
-  var w = el('div', 'create-imgpicker');
-  if (uri) {
-    var img = el('img', 'create-img-preview');
-    img.src = ipfsHttp(uri);
-    w.appendChild(img);
-  }
-  var btn = el('button', 'create-upload');
-  btn.textContent = busy ? 'Uploading…' : (uri ? 'Replace' : '⬆ Upload');
-  btn.disabled = busy;
-  var file = el('input', '');
-  file.type = 'file'; file.accept = 'image/*'; file.style.display = 'none';
+  var w = el('div', 'operator-edit-logo');
+  var prev = el('img', 'operator-edit-logo-prev');
+  if (uri) { prev.src = ipfsHttp(uri); } else { prev.style.display = 'none'; }
+  w.appendChild(prev);
+  var file = el('input', 'operator-edit-logo-file');
+  file.type = 'file'; file.accept = 'image/*';
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
-    if (!f) return;
+    if (!f) { onChange('', false); return; } // picker dismissed → clear
     if (!hasPinata()) { alert('Add a Pinata JWT in DATA → settings to upload images.'); return; }
     onChange(uri, true);
     pinFile(f, f.name).then(function (ipfs) { onChange(ipfs, false); })
       .catch(function (e) { alert('Upload failed: ' + (e && e.message || e)); onChange(uri, false); });
   });
-  btn.addEventListener('click', function () { file.click(); });
-  w.appendChild(btn);
   w.appendChild(file);
+  if (busy) { var hint = el('span', 'operator-edit-hint'); hint.textContent = 'Uploading…'; w.appendChild(hint); }
   return w;
 }
 
@@ -959,7 +955,7 @@ function tokenSection(stage, render) {
 
 function renderNfts(state, render) {
   var wrap = el('div', '');
-  var head = stepHead('NFTs', 'Reward your supporters with custom NFTs. You can modify an NFT’s image later, but not its price or supply after launch.');
+  var head = stepHead('Shop', 'Sell items that supporters mint by paying your project. You can change an item’s image later, but not its price or how many exist after launch.');
   var badge = el('span', 'create-step-badge'); badge.textContent = 'OPTIONAL';
   head.querySelector('.create-step-title').appendChild(badge);
   wrap.appendChild(head);
@@ -968,8 +964,8 @@ function renderNfts(state, render) {
     var row = el('div', 'create-nft-row');
     if (nft.imageUri) { var im = el('img', 'create-nft-thumb'); im.src = ipfsHttp(nft.imageUri); row.appendChild(im); }
     var meta = el('div', 'create-nft-meta');
-    var nm = el('div', 'create-nft-name'); nm.textContent = nft.name || 'Untitled NFT'; meta.appendChild(nm);
-    var pr = el('div', 'create-nft-price'); pr.textContent = (nft.priceEth || '0') + ' ETH' + (nft.limited ? (' · ' + (nft.supply || '0') + ' supply') : ' · unlimited'); meta.appendChild(pr);
+    var nm = el('div', 'create-nft-name'); nm.textContent = nft.name || 'Untitled item'; meta.appendChild(nm);
+    var pr = el('div', 'create-nft-price'); pr.textContent = (nft.priceEth || '0') + ' ETH' + (nft.limited ? (' · ' + (nft.supply || '0') + ' for sale') : ' · unlimited'); meta.appendChild(pr);
     row.appendChild(meta);
     var ed = el('button', 'create-btn small ghost'); ed.textContent = 'Edit';
     ed.addEventListener('click', function () { openNftModal(nft, function (updated) { state.nfts[idx] = updated; render(); }); });
@@ -981,7 +977,7 @@ function renderNfts(state, render) {
   });
 
   var add = el('button', 'create-add-nft');
-  add.textContent = '＋ Add NFT';
+  add.textContent = '＋ Add item for sale';
   add.addEventListener('click', function () { openNftModal(null, function (nft) { state.nfts.push(nft); render(); }); });
   wrap.appendChild(add);
   return wrap;
@@ -1130,7 +1126,7 @@ function reviewSummary(state) {
   c.appendChild(row('Stages', String(state.stages.length) + (needsStandby(state.stages) ? ' (+ standby)' : '')));
   state.stages.forEach(function (s, i) { c.appendChild(row('Stage ' + (i + 1), stageSummary(s, i, state))); });
   if (needsStandby(state.stages)) c.appendChild(row('Stage 2', 'standby · after Stage 1 · no expiry · paused, no issuance'));
-  c.appendChild(row('NFTs', state.nfts.length ? (state.nfts.length + ' tier(s)') : 'None'));
+  c.appendChild(row('Shop', state.nfts.length ? (state.nfts.length + ' item(s)') : 'None'));
   c.appendChild(row('Chains', state.chainIds.map(chainName).join(', ')));
   return c;
 }
@@ -1232,27 +1228,28 @@ function openNftModal(existing, onSave) {
 
   function body() {
     dlg.innerHTML = '';
-    var title = el('div', 'create-modal-title'); title.textContent = 'Add NFT'; dlg.appendChild(title);
-    dlg.appendChild(fieldBlock('File', false, renderImagePicker(nft.imageUri, nft.imageUploading, function (uri, busy) { nft.imageUri = uri; nft.imageUploading = busy; body(); })));
-    dlg.appendChild(fieldBlock('Name', false, textInput(nft.name, 'NFT name', function (v) { nft.name = v; })));
+    var title = el('div', 'create-modal-title'); title.textContent = existing ? 'Edit item' : 'Add item for sale'; dlg.appendChild(title);
+    dlg.appendChild(fieldBlock('Name', false, textInput(nft.name, 'My juicy thing', function (v) { nft.name = v; })));
+    dlg.appendChild(fieldBlock('Image', false, renderImagePicker(nft.imageUri, nft.imageUploading, function (uri, busy) { nft.imageUri = uri; nft.imageUploading = busy; body(); })));
     dlg.appendChild(fieldBlock('Description', true, textArea(nft.description, '', function (v) { nft.description = v; })));
     dlg.appendChild(fieldBlock('Price (ETH)', false, textInput(nft.priceEth, '0.0', function (v) { nft.priceEth = v.trim(); })));
-    dlg.appendChild(toggleRow('Limited supply', '', nft.limited, function (v) { nft.limited = v; body(); }));
-    if (nft.limited) dlg.appendChild(fieldBlock('Supply', false, textInput(nft.supply, '100', function (v) { nft.supply = v.trim(); })));
-    dlg.appendChild(collapse(nft, 'advOpen', 'Advanced options', true, body, function () {
+    // Inventory — unlimited by default; uncheck to cap how many can be sold (mirrors the project page).
+    dlg.appendChild(toggleRow('Unlimited inventory', '', !nft.limited, function (v) { nft.limited = !v; body(); }));
+    if (nft.limited) dlg.appendChild(fieldBlock('Quantity', false, textInput(nft.supply, '100', function (v) { nft.supply = v.trim(); })));
+    dlg.appendChild(collapse(nft, 'advOpen', 'Extra options', true, body, function () {
       var c = el('div', '');
-      c.appendChild(fieldBlock('Reserve 1 NFT of every N minted', true, textInput(nft.reserveFrequency, '0 = none', function (v) { nft.reserveFrequency = v.trim(); })));
-      c.appendChild(fieldBlock('Reserved NFT beneficiary', true, textInput(nft.reserveBeneficiary, '0x…', function (v) { nft.reserveBeneficiary = v.trim(); })));
+      c.appendChild(fieldBlock('Set aside 1 of every N sold', true, textInput(nft.reserveFrequency, '0 = none', function (v) { nft.reserveFrequency = v.trim(); })));
+      c.appendChild(fieldBlock('Send set-aside items to', true, textInput(nft.reserveBeneficiary, '0x… address', function (v) { nft.reserveBeneficiary = v.trim(); })));
       c.appendChild(fieldBlock('External link', true, textInput(nft.externalLink, 'https://', function (v) { nft.externalLink = v.trim(); })));
       return c;
     }));
     var foot = el('div', 'create-modal-foot');
     var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel'; cancel.addEventListener('click', close);
-    var ok = el('button', 'create-btn primary'); ok.textContent = 'Add NFT';
+    var ok = el('button', 'create-btn primary'); ok.textContent = existing ? 'Save item' : 'Add item';
     ok.addEventListener('click', function () {
       if (!nft.name) { alert('Name required.'); return; }
       if (!nft.priceEth) { alert('Price required.'); return; }
-      if (!nft.imageUri) { alert('Upload an image (needs Pinata JWT).'); return; }
+      if (!nft.imageUri) { alert('Add an image (needs Pinata JWT).'); return; }
       onSave(nft); close();
     });
     foot.appendChild(cancel); foot.appendChild(ok);
