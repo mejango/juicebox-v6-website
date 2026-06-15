@@ -1429,10 +1429,11 @@ function payoutRow(stage, rec, idx, mode, render) {
 
   var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
   var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
-  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… who receives that project’s tokens';
+  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… or name.eth';
   benef.value = rec.type === 'project' ? (rec.address || '') : '';
   benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
-  benefRow.appendChild(benef); wrap.appendChild(benefRow);
+  var benefHint = attachEns(benef, function () {}); // resolves on Ethereum mainnet; populates the global ENS cache resolvedStr reads
+  benefRow.appendChild(recipBoxWith(benef, benefHint)); wrap.appendChild(benefRow);
   function refresh() {
     var v = (recip.value || '').trim();
     if (/^[0-9]+$/.test(v) && Number(v) > 0) { rec.type = 'project'; rec.projectId = Number(v); benefRow.style.display = ''; }
@@ -1535,10 +1536,11 @@ function reservedSplitRow(t, rec, idx, render, onTotal) {
   // Project-ID beneficiary line — "with beneficiary [0x…]" (who receives that project's tokens).
   var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
   var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
-  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… who receives that project’s tokens';
+  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… or name.eth';
   benef.value = rec.type === 'project' ? (rec.address || '') : '';
   benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
-  benefRow.appendChild(benef); wrap.appendChild(benefRow);
+  var benefHint = attachEns(benef, function () {}); // resolves on Ethereum mainnet; populates the global ENS cache resolvedStr reads
+  benefRow.appendChild(recipBoxWith(benef, benefHint)); wrap.appendChild(benefRow);
   function refresh() {
     var v = (recip.value || '').trim();
     if (/^[0-9]+$/.test(v) && Number(v) > 0) { rec.type = 'project'; rec.projectId = Number(v); benefRow.style.display = ''; }
@@ -1959,9 +1961,10 @@ function itemEditor(state, nft, idx, render) {
       var fInp = el('input', 'field create-split-pct'); fInp.type = 'number'; fInp.min = '1'; fInp.step = '1'; fInp.placeholder = '10'; fInp.value = nft.reserveFrequency || '';
       fInp.addEventListener('input', function () { nft.reserveFrequency = fInp.value.trim(); });
       rRow.appendChild(fInp); rRow.appendChild(document.createTextNode(' sold to '));
-      var bInp = el('input', 'field'); bInp.type = 'text'; bInp.placeholder = '0x… address'; bInp.value = nft.reserveBeneficiary || ''; bInp.style.flex = '1';
-      bInp.addEventListener('input', function () { nft.reserveBeneficiary = bInp.value.trim(); render(); });
-      rRow.appendChild(bInp); a.appendChild(rRow);
+      var bInp = el('input', 'field'); bInp.type = 'text'; bInp.placeholder = '0x… or name.eth'; bInp.value = nft.reserveBeneficiary || ''; bInp.style.flex = '1';
+      bInp.addEventListener('input', function () { nft.reserveBeneficiary = bInp.value.trim(); });
+      var bHint = attachEns(bInp, function () { render(); }); // resolves on mainnet; populates the global ENS cache resolvedStr reads
+      rRow.appendChild(recipBoxWith(bInp, bHint)); a.appendChild(rRow);
       // Reserving requires a beneficiary, or the deploy reverts (JB721TiersHookStore_MissingReserveBeneficiary).
       if (Number(nft.reserveFrequency) > 0 && !/^0x[0-9a-fA-F]{40}$/.test(resolvedStr(nft.reserveBeneficiary))) {
         a.appendChild(warnNote('Add the address that receives the reserved set-aside, or this item will fail to deploy.'));
@@ -1996,9 +1999,10 @@ function itemSplitRow(nft, rec, idx, render) {
   row.appendChild(recipBoxWith(recip, ensHint)); row.appendChild(rm); wrap.appendChild(row);
   var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
   var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
-  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… who receives that project’s tokens'; benef.value = rec.benef || '';
+  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… or name.eth'; benef.value = rec.benef || '';
   benef.addEventListener('input', function () { rec.benef = benef.value.trim(); });
-  benefRow.appendChild(benef); wrap.appendChild(benefRow);
+  var benefHint = attachEns(benef, function () {}); // resolves on Ethereum mainnet; populates the global ENS cache
+  benefRow.appendChild(recipBoxWith(benef, benefHint)); wrap.appendChild(benefRow);
   function refresh() { var v = (recip.value || '').trim(); rec.recip = v; benefRow.style.display = (/^[0-9]+$/.test(v) && Number(v) > 0) ? '' : 'none'; }
   recip.addEventListener('input', refresh); refresh();
   return wrap;
@@ -2516,7 +2520,7 @@ function itemSplits(d, state, chainId, itemIdx) {
     return {
       percent: Math.round(Number(r.pct) / tot * 1e9),
       projectId: isProj ? BigInt(v) : 0n,
-      beneficiary: isProj ? ((r.benef && /^0x[0-9a-fA-F]{40}$/.test(r.benef)) ? r.benef : ZERO) : ((benef && /^0x[0-9a-fA-F]{40}$/.test(benef)) ? benef : ZERO),
+      beneficiary: isProj ? ((resolvedStr(r.benef) && /^0x[0-9a-fA-F]{40}$/.test(resolvedStr(r.benef))) ? resolvedStr(r.benef) : ZERO) : ((benef && /^0x[0-9a-fA-F]{40}$/.test(benef)) ? benef : ZERO),
       preferAddToBalance: false, lockedUntil: 0, hook: ZERO,
     };
   });
@@ -2875,7 +2879,7 @@ function buildRevStage(state, stage, idx, chainId, start) {
     // exactly SPLITS_TOTAL (1e9) so rounding drift can't exceed it and revert.
     var shares = fillSplits(rows.map(function (e) { return Math.round((Number(e.x.percent) || 0) / totalPct * SPLITS_TOTAL); }));
     splits = rows.map(function (e, k) {
-      var benef = e.x.type === 'project' ? null : pickResolved(e.x.address, e.x);
+      var benef = e.x.type === 'project' ? resolvedStr(e.x.address) : pickResolved(e.x.address, e.x);
       return splitState(e.x, shares[k], benef);
     });
   }
@@ -2910,8 +2914,9 @@ function buildRevStage(state, stage, idx, chainId, start) {
 function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn) {
   // Per-chain overrides (amount + beneficiary), keyed by user-stage + recipient index; fall back to defaults.
   var amtAt = function (x, idx) { return chainPayoutAmount(state, chainId, userStageIdx, idx); };
-  var payoutBenef = function (x, idx) { return x.type === 'project' ? null : chainAddr(state, chainId, 'p:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
-  var reservedBenef = function (x, idx) { return x.type === 'project' ? null : chainAddr(state, chainId, 'r:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
+  // For project recipients, the token beneficiary is held in x.address and resolved via the global ENS cache.
+  var payoutBenef = function (x, idx) { return x.type === 'project' ? resolvedStr(x.address) : chainAddr(state, chainId, 'p:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
+  var reservedBenef = function (x, idx) { return x.type === 'project' ? resolvedStr(x.address) : chainAddr(state, chainId, 'r:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
   var rs = createDefaultRuleset();
   rs.baseCurrency = stage.baseCurrency || 1;
   rs.mustStartAtOrAfter = (isFirst && stage.schedule) ? Number(stage.schedule) : 0;
