@@ -43,10 +43,10 @@ export var launchProjectAbi = [{
       { name: 'splitGroups', type: 'tuple[]', components: [
         { name: 'groupId', type: 'uint256' },
         { name: 'splits', type: 'tuple[]', components: [
-          { name: 'preferAddToBalance', type: 'bool' },
           { name: 'percent', type: 'uint32' },
           { name: 'projectId', type: 'uint64' },
           { name: 'beneficiary', type: 'address' },
+          { name: 'preferAddToBalance', type: 'bool' },
           { name: 'lockedUntil', type: 'uint48' },
           { name: 'hook', type: 'address' },
         ]},

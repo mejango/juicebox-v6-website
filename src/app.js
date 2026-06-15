@@ -10,6 +10,7 @@ import { buildEmbedUrl, getAccount, connect, onWalletChange, eagerConnect, trunc
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute } from './discover.js';
 import { renderDataTab } from './data-tab.js';
+import { mountFontSelector, applySavedFont } from './font-selector.js';
 
 // Component renderers for pretty mode
 import { renderPayComponent } from './pay-component.js';
@@ -826,7 +827,9 @@ function buildTransactionSection(getForm) {
 // --- Init ---
 
 function init() {
+  applySavedFont(); // apply the saved monospace font before first paint to avoid a flash
   updateFooterIpfsCid();
+  mountFontSelector();
   initTabs();
   initAuditPrompt();
   renderDiscoverTab();

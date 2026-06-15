@@ -35,18 +35,21 @@ var FORWARDER_ABI = [
 
 // Sign an ERC-2771 ForwardRequest for `to`/`data` on `chainId` and return the relayr transaction entry.
 // The EIP-712 domain (name/version) is read from the forwarder at runtime (EIP-5267) so we never guess it.
-export async function buildForwardedTx(chainId, from, to, data, gasHint) {
+// `value` is the ETH forwarded to the target (e.g. a project-creation fee); the relayer sends it with
+// `execute`, so it appears as the bundle tx's `value` and Relayr's quote covers it.
+export async function buildForwardedTx(chainId, from, to, data, gasHint, value) {
   var forwarder = getAddress('ERC2771Forwarder', chainId);
   if (!forwarder) throw new Error('No ERC2771Forwarder on ' + (CHAINS[chainId] && CHAINS[chainId].name || chainId));
   var pub = createPublicClientForChain(chainId);
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
+  var val = value || 0n;
 
   var domTuple = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'eip712Domain', args: [] });
   var domainName = domTuple[1], domainVersion = domTuple[2];
   var nonce = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [from] });
 
-  var deadline = Math.floor(Date.now() / 1000) + 3600; // uint48 seconds
+  var deadline = Math.floor(Date.now() / 1000) + 47 * 3600; // uint48 seconds (< 48h Relayr max)
   var gas = gasHint || 500000n;
 
   var signature = await wallet.signTypedData({
@@ -57,12 +60,12 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint) {
       { name: 'gas', type: 'uint256' }, { name: 'nonce', type: 'uint256' },
       { name: 'deadline', type: 'uint48' }, { name: 'data', type: 'bytes' } ] },
     primaryType: 'ForwardRequest',
-    message: { from: from, to: to, value: 0n, gas: gas, nonce: nonce, deadline: deadline, data: data },
+    message: { from: from, to: to, value: val, gas: gas, nonce: nonce, deadline: deadline, data: data },
   });
 
-  var requestData = { from: from, to: to, value: 0n, gas: gas, deadline: deadline, data: data, signature: signature };
+  var requestData = { from: from, to: to, value: val, gas: gas, deadline: deadline, data: data, signature: signature };
   var execData = encodeFunctionData({ abi: FORWARDER_ABI, functionName: 'execute', args: [requestData] });
-  return { chain: Number(chainId), target: forwarder, data: execData, value: '0' };
+  return { chain: Number(chainId), target: forwarder, data: execData, value: val.toString() };
 }
 
 // POST the bundle and return { bundle_uuid, payment_info:[{chain,amount,calldata,target,token,payment_deadline}], ... }.

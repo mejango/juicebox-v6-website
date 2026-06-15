@@ -1,10 +1,10 @@
 // src/ipfs-pin.js
 // IPFS pinning for the project-create flow, via Pinata.
 //
-// The JWT is supplied by the user and stored in localStorage ('jb-pinata-jwt') — it is NEVER baked
-// into the bundle. The settings field (see app/data settings) writes it; everything here reads it at
-// call time. With no JWT set, the create flow falls back to letting the user paste a pre-pinned
-// ipfs:// hash by hand.
+// A default JWT is baked in at build time from `.env` (injected as `__PINATA_JWT__` by esbuild) so the
+// site can pin without the user supplying one. A user's own JWT in localStorage ('jb-pinata-jwt') still
+// takes precedence. NOTE: the published bundle is public, so the baked-in JWT is publicly extractable —
+// use a scoped, rotatable Pinata key.
 //
 // Endpoints (classic Pinata API, scoped-key friendly):
 //   POST https://api.pinata.cloud/pinning/pinFileToIPFS   (multipart, for logo / NFT images)
@@ -14,11 +14,16 @@
 import { bytesToHex } from 'viem';
 
 var JWT_KEY = 'jb-pinata-jwt';
-var PIN_FILE_URL = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
-var PIN_JSON_URL = 'https://api.pinata.cloud/pinning/pinJSONToIPFS';
+// v3 uploads API (the only one a scoped `pinataKey`/JWT works on — the legacy /pinning endpoints return
+// 403 NO_SCOPES_FOUND for these keys). Multipart `file` + `network: public`; response is { data: { cid } }.
+var UPLOAD_URL = 'https://uploads.pinata.cloud/v3/files';
+
+// Build-time default (injected from .env via esbuild `define`). The user's own JWT takes precedence.
+var BUILTIN_JWT = (typeof __PINATA_JWT__ === 'string' && __PINATA_JWT__) ? __PINATA_JWT__ : '';
 
 export function getPinataJwt() {
-  try { return localStorage.getItem(JWT_KEY) || ''; } catch (_) { return ''; }
+  try { var v = localStorage.getItem(JWT_KEY); if (v) return v; } catch (_) { /* private mode — fall through */ }
+  return BUILTIN_JWT;
 }
 
 export function setPinataJwt(value) {
@@ -64,38 +69,38 @@ export function renderPinataSettings() {
 export async function pinFile(file, name) {
   var jwt = getPinataJwt();
   if (!jwt) throw new Error('No Pinata JWT set — add one in settings, or paste an ipfs:// hash.');
+  var fname = (file && file.name) || name || 'upload';
   var form = new FormData();
-  form.append('file', file, (file && file.name) || name || 'upload');
-  form.append('pinataMetadata', JSON.stringify({ name: name || (file && file.name) || 'upload' }));
-  var res = await fetch(PIN_FILE_URL, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + jwt },
-    body: form,
-  });
+  form.append('file', file, fname);
+  form.append('network', 'public');
+  form.append('name', name || fname);
+  var res = await fetch(UPLOAD_URL, { method: 'POST', headers: { Authorization: 'Bearer ' + jwt }, body: form });
   return await readPinResponse(res);
 }
 
-// Pin a JSON object. Returns "ipfs://<cid>".
+// Pin a JSON object. Returns "ipfs://<cid>". (v3 is file-based, so the JSON is uploaded as a .json file.)
 export async function pinJson(obj, name) {
   var jwt = getPinataJwt();
   if (!jwt) throw new Error('No Pinata JWT set — add one in settings, or paste an ipfs:// hash.');
-  var res = await fetch(PIN_JSON_URL, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pinataContent: obj, pinataMetadata: { name: name || obj.name || 'metadata' } }),
-  });
+  var base = name || obj.name || 'metadata';
+  var blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
+  var form = new FormData();
+  form.append('file', blob, base + '.json');
+  form.append('network', 'public');
+  form.append('name', base);
+  var res = await fetch(UPLOAD_URL, { method: 'POST', headers: { Authorization: 'Bearer ' + jwt }, body: form });
   return await readPinResponse(res);
 }
 
 async function readPinResponse(res) {
-  if (!res.ok) {
-    var detail = '';
-    try { detail = (await res.text()) || ''; } catch (_) { detail = ''; }
-    throw new Error('Pinata HTTP ' + res.status + (detail ? (': ' + detail.slice(0, 200)) : ''));
-  }
-  var body = await res.json();
-  if (!body || !body.IpfsHash) throw new Error('Pinata returned no IpfsHash');
-  return 'ipfs://' + body.IpfsHash;
+  var text = '';
+  try { text = (await res.text()) || ''; } catch (_) { text = ''; }
+  if (!res.ok) throw new Error('Pinata HTTP ' + res.status + (text ? (': ' + text.slice(0, 200)) : ''));
+  var body; try { body = JSON.parse(text); } catch (_) { body = null; }
+  // v3 uploads API returns { data: { cid } }; tolerate the legacy { IpfsHash } shape too.
+  var cid = body && ((body.data && body.data.cid) || body.IpfsHash);
+  if (!cid) throw new Error('Pinata returned no CID');
+  return 'ipfs://' + cid;
 }
 
 // --- CID helpers ---

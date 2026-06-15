@@ -11,20 +11,40 @@
 // Project metadata (name/logo/description/links) is pinned to IPFS via Pinata (src/ipfs-pin.js); the
 // JWT lives in localStorage only.
 
-import { keccak256, stringToHex, parseEther } from 'viem';
+import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, createPublicClient, http } from 'viem';
+import { mainnet } from 'viem/chains';
+import { normalize as ensNormalize } from 'viem/ens';
 import {
-  el, executeTransaction, getAddress, getAccount, connect, NATIVE_TOKEN,
+  el, executeTransaction, simulateTransaction, getAddress, getAccount, connect, NATIVE_TOKEN,
+  createPublicClientForChain, getWalletClient, switchChain, truncAddr,
 } from './component-base.js';
 import {
   launchProjectAbi, buildRulesetConfigs, createDefaultRuleset, ZERO,
 } from './launch-component.js';
-import { pinFile, pinJson, hasPinata, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
+import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
+import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-var STEPS = ['Details', 'Rulesets', 'Shop', 'Deploy'];
+// Steps depend on the chosen project type (defaults to Custom). Type is always the first step.
+// Revnet is a reduced flow (no Shop/Settlement — ETH-only, single canonical terminal, suckers on Deploy).
+function stepsFor(state) {
+  if (state.projectType === 'revnet') return ['Type', 'Details', 'Stages', 'Shop', 'Settlement', 'Deploy'];
+  return ['Type', 'Details', 'Rulesets', 'Shop', 'Settlement', 'Deploy'];
+}
+
+// The chain selector shows canonical (mainnet) names; the mainnet/testnet toggle (at Deploy) maps each to
+// the actual chain to deploy on. Per-chain overrides are keyed by `canon` so they survive a network switch.
+var CHAIN_PAIRS = [
+  { canon: 1, name: 'Ethereum', testnet: 11155111 },
+  { canon: 10, name: 'Optimism', testnet: 11155420 },
+  { canon: 42161, name: 'Arbitrum', testnet: 421614 },
+  { canon: 8453, name: 'Base', testnet: 84532 },
+];
+function actualChainId(canon, network) { var p = CHAIN_PAIRS.find(function (x) { return x.canon === canon; }); return p ? (network === 'mainnet' ? p.canon : p.testnet) : canon; }
+function canonChainId(id) { var p = CHAIN_PAIRS.find(function (x) { return x.canon === id || x.testnet === id; }); return p ? p.canon : id; }
 
 var CHAIN_OPTIONS = [
   { id: 1, name: 'Ethereum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
@@ -51,11 +71,11 @@ var DURATION_PRESETS = [
 ];
 
 var DEADLINE_OPTIONS = [
-  { key: '3hours', label: '3-hour deadline', contract: 'JBDeadline3Hours' },
-  { key: '1day', label: '1-day deadline', contract: 'JBDeadline1Day' },
-  { key: '3days', label: '3-day deadline', contract: 'JBDeadline3Days', def: true },
-  { key: '7days', label: '7-day deadline', contract: 'JBDeadline7Days' },
-  { key: 'none', label: 'No deadline', contract: null },
+  { key: '3hours', label: '3-hour deadline', short: '3h', contract: 'JBDeadline3Hours' },
+  { key: '1day', label: '1-day deadline', short: '1 day', contract: 'JBDeadline1Day', def: true },
+  { key: '3days', label: '3-day deadline', short: '3 days', contract: 'JBDeadline3Days' },
+  { key: '7days', label: '7-day deadline', short: '7 days', contract: 'JBDeadline7Days' },
+  { key: 'none', label: 'No deadline', short: '', contract: null },
 ];
 
 var TAG_OPTIONS = ['AI', 'Art', 'Brand', 'Business', 'Charity', 'Climate', 'Collectibles', 'Community',
@@ -70,11 +90,13 @@ var SPLITS_TOTAL = 1000000000; // 1e9
 // ABI building blocks (shared struct components)
 // ---------------------------------------------------------------------------
 
+// Field order MUST match the on-chain JBSplit struct exactly (the selector hashes the tuple types in
+// order): percent, projectId, beneficiary, preferAddToBalance, lockedUntil, hook.
 var SPLIT_COMPONENTS = [
-  { name: 'preferAddToBalance', type: 'bool' },
   { name: 'percent', type: 'uint32' },
   { name: 'projectId', type: 'uint64' },
   { name: 'beneficiary', type: 'address' },
+  { name: 'preferAddToBalance', type: 'bool' },
   { name: 'lockedUntil', type: 'uint48' },
   { name: 'hook', type: 'address' },
 ];
@@ -166,6 +188,87 @@ var SUCKER_CONFIG_COMPONENTS = [
   { name: 'salt', type: 'bytes32' },
 ];
 
+// ---- Revnet (REVDeployer.deployFor) — structs from revnet-core-v6/src/structs, encoding verified
+// against test/REVLifecycle.t.sol. The 4-arg overload deploys a revnet with a default empty 721 hook. ----
+var JBCONSTANTS = { MAX_WEIGHT_CUT_PERCENT: 1000000000, MAX_CASH_OUT_TAX_RATE: 10000, MAX_RESERVED_PERCENT: 10000 };
+// Revnets price issuance in the native token's own currency id (uint32(uint160(NATIVE_TOKEN)) = 61166) so
+// no JBPrices feed is needed — base currency == accounting-context currency. Matches the lifecycle test.
+var NATIVE_CURRENCY = Number(BigInt(NATIVE_TOKEN) % (1n << 32n));
+var ACCOUNTING_CONTEXT_COMPONENTS = [
+  { name: 'token', type: 'address' }, { name: 'decimals', type: 'uint8' }, { name: 'currency', type: 'uint32' },
+];
+var REV_AUTOISSUANCE_COMPONENTS = [
+  { name: 'chainId', type: 'uint32' }, { name: 'count', type: 'uint104' }, { name: 'beneficiary', type: 'address' },
+];
+var REV_STAGE_COMPONENTS = [
+  { name: 'startsAtOrAfter', type: 'uint48' },
+  { name: 'autoIssuances', type: 'tuple[]', components: REV_AUTOISSUANCE_COMPONENTS },
+  { name: 'splitPercent', type: 'uint16' },
+  { name: 'splits', type: 'tuple[]', components: SPLIT_COMPONENTS },
+  { name: 'initialIssuance', type: 'uint112' },
+  { name: 'issuanceCutFrequency', type: 'uint32' },
+  { name: 'issuanceCutPercent', type: 'uint32' },
+  { name: 'cashOutTaxRate', type: 'uint16' },
+  { name: 'extraMetadata', type: 'uint16' },
+];
+var REV_CONFIG_COMPONENTS = [
+  { name: 'description', type: 'tuple', components: [
+    { name: 'name', type: 'string' }, { name: 'ticker', type: 'string' },
+    { name: 'uri', type: 'string' }, { name: 'salt', type: 'bytes32' }] },
+  { name: 'baseCurrency', type: 'uint32' },
+  { name: 'operator', type: 'address' },
+  { name: 'scopeCashOutsToLocalBalances', type: 'bool' },
+  { name: 'stageConfigurations', type: 'tuple[]', components: REV_STAGE_COMPONENTS },
+];
+// REVDeployer.deployFor — the 4-arg overload (default empty 721 hook).
+var revDeployAbi = [{
+  type: 'function', name: 'deployFor', stateMutability: 'payable',
+  inputs: [
+    { name: 'revnetId', type: 'uint256' },
+    { name: 'configuration', type: 'tuple', components: REV_CONFIG_COMPONENTS },
+    { name: 'accountingContextsToAccept', type: 'tuple[]', components: ACCOUNTING_CONTEXT_COMPONENTS },
+    { name: 'suckerDeploymentConfiguration', type: 'tuple', components: SUCKER_CONFIG_COMPONENTS },
+  ],
+  outputs: [{ name: 'revnetId', type: 'uint256' }, { name: 'hook', type: 'address' }],
+}];
+
+// REVDeployer.deployFor — the 6-arg overload (with a tiered ERC-721 hook for store items + Croptop posts).
+var REV721_FLAGS = [
+  { name: 'noNewTiersWithReserves', type: 'bool' }, { name: 'noNewTiersWithVotes', type: 'bool' },
+  { name: 'noNewTiersWithOwnerMinting', type: 'bool' }, { name: 'preventOverspending', type: 'bool' },
+];
+var REV_BASELINE_721_COMPONENTS = [
+  { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'baseUri', type: 'string' },
+  { name: 'tokenUriResolver', type: 'address' }, { name: 'contractUri', type: 'string' },
+  { name: 'tiersConfig', type: 'tuple', components: [
+    { name: 'tiers', type: 'tuple[]', components: TIER_COMPONENTS },
+    { name: 'currency', type: 'uint32' }, { name: 'decimals', type: 'uint8' }] },
+  { name: 'flags', type: 'tuple', components: REV721_FLAGS },
+];
+var REV_DEPLOY_721_COMPONENTS = [
+  { name: 'baseline721HookConfiguration', type: 'tuple', components: REV_BASELINE_721_COMPONENTS },
+  { name: 'salt', type: 'bytes32' },
+  { name: 'preventOperatorAdjustingTiers', type: 'bool' }, { name: 'preventOperatorUpdatingMetadata', type: 'bool' },
+  { name: 'preventOperatorMinting', type: 'bool' }, { name: 'preventOperatorIncreasingDiscountPercent', type: 'bool' },
+];
+var REV_CROPTOP_POST_COMPONENTS = [
+  { name: 'category', type: 'uint24' }, { name: 'minimumPrice', type: 'uint104' },
+  { name: 'minimumTotalSupply', type: 'uint32' }, { name: 'maximumTotalSupply', type: 'uint32' },
+  { name: 'maximumSplitPercent', type: 'uint32' }, { name: 'allowedAddresses', type: 'address[]' },
+];
+var revDeploy721Abi = [{
+  type: 'function', name: 'deployFor', stateMutability: 'payable',
+  inputs: [
+    { name: 'revnetId', type: 'uint256' },
+    { name: 'configuration', type: 'tuple', components: REV_CONFIG_COMPONENTS },
+    { name: 'accountingContextsToAccept', type: 'tuple[]', components: ACCOUNTING_CONTEXT_COMPONENTS },
+    { name: 'suckerDeploymentConfiguration', type: 'tuple', components: SUCKER_CONFIG_COMPONENTS },
+    { name: 'tiered721HookConfiguration', type: 'tuple', components: REV_DEPLOY_721_COMPONENTS },
+    { name: 'allowedPosts', type: 'tuple[]', components: REV_CROPTOP_POST_COMPONENTS },
+  ],
+  outputs: [{ name: 'revnetId', type: 'uint256' }, { name: 'hook', type: 'address' }],
+}];
+
 // JB721TiersHookProjectDeployer.launchProjectFor (single-chain + NFTs)
 var deployer721Abi = [{
   type: 'function', name: 'launchProjectFor', stateMutability: 'payable',
@@ -216,61 +319,65 @@ var omnichain721Abi = [{
 // Sucker deployer selection (per local->remote pair)
 // ---------------------------------------------------------------------------
 
-// Returns the sucker-deployer contract NAME to use on `localId` for bridging to `remoteId`.
-// L1 (Ethereum/Sepolia) <-> rollup uses that rollup's native bridge deployer; rollup<->rollup uses CCIP.
-function suckerDeployerName(localId, remoteId) {
-  var fam = function (id) {
-    if (id === 1 || id === 11155111) return 'eth';
-    if (id === 10 || id === 11155420) return 'op';
-    if (id === 8453 || id === 84532) return 'base';
-    if (id === 42161 || id === 421614) return 'arb';
-    return '';
-  };
-  var a = fam(localId), b = fam(remoteId);
-  if (a === 'eth' || b === 'eth') {
-    var rollup = a === 'eth' ? b : a;
-    if (rollup === 'op') return 'JBOptimismSuckerDeployer';
-    if (rollup === 'base') return 'JBBaseSuckerDeployer';
-    if (rollup === 'arb') return 'JBArbitrumSuckerDeployer';
-  }
-  // Neither side is L1 -> CCIP. The deployed CCIP deployers are route-keyed by remote chain; resolve by
-  // scanning the registry for a JBCCIPSuckerDeployer* present on the local chain (best-effort).
-  return 'JBCCIPSuckerDeployer';
+function chainFam(id) {
+  if (id === 1 || id === 11155111) return 'eth';
+  if (id === 10 || id === 11155420) return 'op';
+  if (id === 8453 || id === 84532) return 'base';
+  if (id === 42161 || id === 421614) return 'arb';
+  return '';
 }
+function isL1Chain(id) { return chainFam(id) === 'eth'; }
 
-// Resolve a sucker deployer address on localId for a remote chain. Returns null if not deployable.
-function suckerDeployerAddress(localId, remoteId) {
-  var name = suckerDeployerName(localId, remoteId);
-  var addr = getAddress(name, localId);
-  if (addr) return addr;
-  // CCIP fallback: try common route-suffixed names for this local chain.
-  if (name === 'JBCCIPSuckerDeployer') {
-    var suffixes = ['', '__ETH', '__OP', '__BASE', '__ARB', '__ETH_SEP', '__OP_SEP', '__BASE_SEP', '__ARB_SEP'];
-    for (var i = 0; i < suffixes.length; i++) {
-      var a = getAddress('JBCCIPSuckerDeployer' + suffixes[i], localId);
-      if (a) return a;
-    }
+// Resolve a sucker-deployer address on `localId` for one bridge kind to `remoteId`. Native bridges only
+// connect Ethereum (L1) with an L2 — null for L2↔L2. CCIP connects any pair. Returns null if undeployable.
+function suckerDeployerForBridge(localId, remoteId, bridge) {
+  if (bridge === 'native') {
+    if (!(isL1Chain(localId) || isL1Chain(remoteId))) return null; // native is Ethereum↔L2 only
+    var rollup = isL1Chain(localId) ? chainFam(remoteId) : chainFam(localId);
+    var name = rollup === 'op' ? 'JBOptimismSuckerDeployer' : rollup === 'base' ? 'JBBaseSuckerDeployer' : rollup === 'arb' ? 'JBArbitrumSuckerDeployer' : null;
+    return name ? (getAddress(name, localId) || null) : null;
   }
+  // CCIP — deployers are route-keyed; scan common suffixes on the local chain.
+  var a = getAddress('JBCCIPSuckerDeployer', localId);
+  if (a) return a;
+  var suffixes = ['', '__ETH', '__OP', '__BASE', '__ARB', '__ETH_SEP', '__OP_SEP', '__BASE_SEP', '__ARB_SEP'];
+  for (var i = 0; i < suffixes.length; i++) { var x = getAddress('JBCCIPSuckerDeployer' + suffixes[i], localId); if (x) return x; }
   return null;
 }
 
-function suckerConfigFor(localId, otherChainIds, salt) {
-  var deployerConfigurations = [];
-  for (var i = 0; i < otherChainIds.length; i++) {
-    var remoteId = otherChainIds[i];
-    var deployer = suckerDeployerAddress(localId, remoteId);
-    if (!deployer) continue; // skip unsupported pair (surfaced in status)
-    deployerConfigurations.push({
-      deployer: deployer,
-      peer: '0x0000000000000000000000000000000000000000000000000000000000000000',
-      mappings: [{
-        localToken: NATIVE_TOKEN,
-        minGas: 200000,
-        remoteToken: '0x000000000000000000000000' + NATIVE_TOKEN.slice(2).toLowerCase(),
-      }],
-    });
+function bridgesForType(suckerType) { return suckerType === 'both' ? ['native', 'ccip'] : [suckerType || 'native']; }
+
+// address → bytes32 (left-padded) for a sucker token mapping's remoteToken.
+function addrToBytes32(a) { return '0x000000000000000000000000' + String(a).slice(2).toLowerCase(); }
+
+// The token mapping for one (local→remote) sucker: bridge the accounting token. Native ETH by default;
+// USDC when the project's accounting token is USDC (uses each chain's own USDC address).
+function tokenMappingFor(localId, remoteId, accepts) {
+  if ((accepts && accepts[0]) === 'usdc') {
+    var local = USDC_BY_CHAIN[localId], remote = USDC_BY_CHAIN[remoteId];
+    if (local && remote) return { localToken: local, minGas: 200000, remoteToken: addrToBytes32(remote) };
   }
-  return { deployerConfigurations: deployerConfigurations, salt: salt };
+  return { localToken: NATIVE_TOKEN, minGas: 200000, remoteToken: addrToBytes32(NATIVE_TOKEN) };
+}
+
+function suckerConfigFor(localId, otherChainIds, salt, suckerType, accepts) {
+  var deployerConfigurations = [];
+  var covered = {};
+  otherChainIds.forEach(function (remoteId) {
+    bridgesForType(suckerType).forEach(function (bridge) {
+      var deployer = suckerDeployerForBridge(localId, remoteId, bridge);
+      if (!deployer) return; // bridge not available for this pair
+      covered[remoteId] = true;
+      deployerConfigurations.push({
+        deployer: deployer,
+        peer: '0x0000000000000000000000000000000000000000000000000000000000000000',
+        mappings: [tokenMappingFor(localId, remoteId, accepts)],
+      });
+    });
+  });
+  // A remote is "missing" if NONE of the requested bridges could connect it.
+  var missing = otherChainIds.filter(function (r) { return !covered[r]; });
+  return { deployerConfigurations: deployerConfigurations, salt: salt, missing: missing };
 }
 
 // ---------------------------------------------------------------------------
@@ -280,17 +387,33 @@ function suckerConfigFor(localId, otherChainIds, salt) {
 function initState() {
   return {
     step: 0,
+    projectType: 'custom',           // 'custom' | 'revnet' — chosen on the Type step; defaults to Custom
     details: {
-      name: '', tagline: '', description: '', logoUri: '', logoUploading: false,
+      name: '', ticker: '', tagline: '', description: '', logoUri: '', logoUploading: false,
       website: '', twitter: '', discord: '', telegram: '', tags: [],
       coverImageUri: '', payDisclosure: '', owner: '', immutable: false,
       linksOpen: false, ownerOpen: false, tagsOpen: false, customOpen: false,
     },
+    revOperator: '',                 // revnet operator (receives splits, can reassign) — blank => owner/wallet
+    revBaseCurrency: 1,              // revnet issuance-pricing currency: 1=ETH (native, 61166) | 2=USD
     accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth' and/or 'usdc'
     swapRouter: true,                // include the router terminal (any token auto-converts) — on by default
     stages: [createStage()],         // ordered rulesets queued at launch (revnet-style stages)
     afterMode: 'wait',               // what happens after a single timed ruleset: wait | terminal | cycle (custom adds a 2nd stage)
-    nfts: [], // {name,description,priceEth,imageUri,imageUploading,limited,supply,reserveFrequency,reserveBeneficiary,externalLink}
+    shopEnabled: false, // off by default — the Shop step starts as a single opt-in checkbox
+    storePricingCurrency: 1, // store-item price denomination (1=ETH / 2=USD) — JB721 tiersConfig.currency
+    network: 'testnet', // mainnet | testnet — chosen at Deploy; maps the selected canonical chains to actual ids
+    suckerType: 'native', // bridge between chains: native (Ethereum↔L2 only) | ccip (any pair) | both
+    nfts: [], // item drafts — see itemDraft() for shape
+    perChain: {}, // multichain overrides: { [chainId]: { payouts:{[stageIdx]:{[recipIdx]:amtStr}}, items:{[itemIdx]:{include,supply}} } }
+    storeCategories: [], // {id, name} named categories the user adds locally in the Shop step
+    collection: { // top-level JB721 hook config (name/symbol auto-derive from the project until edited)
+      name: '', symbol: '', nameTouched: false, symbolTouched: false, extrasOpen: false,
+      preventOverspending: false, noNewTiersWithReserves: false, noNewTiersWithVotes: false,
+      noNewTiersWithOwnerMinting: false, issueTokensForSplits: false,
+      // revnet-only: extra 721 permissions the operator gets (default on — REVDeployer grants all four).
+      opCanAdjustTiers: true, opCanUpdateMetadata: true, opCanMint: true, opCanIncreaseDiscount: true,
+    },
     chainIds: [11155111],
     tos: false,
     deploying: false, statusLines: [], done: false,
@@ -304,7 +427,8 @@ function initState() {
 export function openCreateFlow() {
   var state = initState();
   var pre = getAccount && getAccount();
-  if (pre) state.details.owner = ''; // leave blank => connected wallet
+  // Owner/operator are required and explicit — prefill the connected wallet so it's populated but editable.
+  if (pre) { state.details.owner = pre; state.revOperator = pre; }
 
   var overlay = el('div', 'create-overlay');
   var sheet = el('div', 'create-sheet');
@@ -348,7 +472,7 @@ function renderHeader(state, close) {
 
 function renderStepper(state, render) {
   var row = el('div', 'create-stepper');
-  STEPS.forEach(function (label, i) {
+  stepsFor(state).forEach(function (label, i) {
     if (i > 0) row.appendChild(el('div', 'create-step-conn' + (i <= state.step ? ' done' : '')));
     var item = el('button', 'create-step-dot' + (i === state.step ? ' active' : (i < state.step ? ' done' : '')));
     var dot = el('span', 'create-dot');
@@ -370,7 +494,7 @@ function renderFooter(state, render, close) {
   back.addEventListener('click', function () { if (state.step > 0) { state.step--; render(); } });
   foot.appendChild(back);
 
-  if (state.step < STEPS.length - 1) {
+  if (state.step < stepsFor(state).length - 1) {
     var next = el('button', 'create-btn');
     next.textContent = 'Next →';
     next.addEventListener('click', function () { state.step++; render(); });
@@ -384,13 +508,68 @@ function renderFooter(state, render, close) {
 // ---------------------------------------------------------------------------
 
 function renderStep(state, render) {
-  switch (state.step) {
-    case 0: return renderDetails(state, render);
-    case 1: return renderStages(state, render);
-    case 2: return renderNfts(state, render);
-    case 3: return renderDeploy(state, render);
+  switch (stepsFor(state)[state.step]) {
+    case 'Type': return renderType(state, render);
+    case 'Details': return renderDetails(state, render);
+    case 'Rulesets': return renderStages(state, render);
+    case 'Stages': return renderRevnetStages(state, render);
+    case 'Shop': return renderNfts(state, render);
+    case 'Settlement': return renderSettlement(state, render);
+    case 'Deploy': return renderDeploy(state, render);
   }
   return el('div');
+}
+
+// ---- Step 0: project type ----
+function renderType(state, render) {
+  var isRev = state.projectType === 'revnet';
+  var wrap = el('div', '');
+  wrap.appendChild(stepHead('Project type', 'Follow a preset, or design your project from scratch.'));
+
+  var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
+  [['custom', 'Custom'], ['revnet', 'Revnet']].forEach(function (o) {
+    var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (state.projectType === o[0]) op.selected = true; sel.appendChild(op);
+  });
+  sel.addEventListener('change', function () {
+    state.projectType = sel.value;
+    state.step = Math.min(state.step, stepsFor(state).length - 1); // clamp if the new flow has fewer steps
+    render();
+  });
+  wrap.appendChild(fieldBlock('Type', false, sel));
+
+  var desc = el('div', 'create-hint');
+  desc.textContent = isRev
+    ? 'Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability.'
+    : 'Full control and customizability.';
+  desc.style.marginBottom = '18px';
+  wrap.appendChild(desc);
+
+  // Owner (custom) or operator (revnet) is collected here.
+  wrap.appendChild(isRev ? operatorSection(state, render) : ownerSection(state, render));
+  return wrap;
+}
+
+// Project-owner field (custom flow) — required. We confirm it exists on each chain at the Settlement step.
+function ownerSection(state, render) {
+  var d = state.details;
+  var ownerInput = textInput(d.owner, '0x…', function (v) { d.owner = v.trim(); });
+  var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; });
+  var box = el('div', ''); box.appendChild(recipBoxWith(ownerInput, ownerHint));
+  var wrap = el('div', '');
+  wrap.appendChild(fieldBlock('Project owner', false, box));
+  wrap.appendChild(infoNote('The address that can make changes around the configured rulesets.'));
+  return wrap;
+}
+
+// Revnet operator field — required. We confirm it exists on each chain at the Settlement step.
+function operatorSection(state, render) {
+  var wrap = el('div', '');
+  var opInput = textInput(state.revOperator, '0x…', function (v) { state.revOperator = v.trim(); });
+  var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; });
+  var box = el('div', ''); box.appendChild(recipBoxWith(opInput, opHint));
+  wrap.appendChild(fieldBlock('Operator', false, box));
+  wrap.appendChild(infoNote('The address that operates the few controls available in revnets.'));
+  return wrap;
 }
 
 // ---- small shared field helpers (create-flow look) ----
@@ -468,17 +647,24 @@ function pctSlider(value, onChange) {
   return row;
 }
 
+// desc may be a string or a function(checked) → string, so the subtext reflects the toggle's state and
+// updates in place when toggled.
+// State-reflective subtext: prefix "On:"/"Off:" so the sentence reads as the current checkbox state.
+function dz(on, off) { return function (checked) { return checked ? 'On: ' + on : 'Off: ' + off; }; }
 function toggleRow(label, desc, checked, onChange) {
   var w = el('div', 'create-toggle-row');
   var lbl = el('label', 'create-toggle');
   var cb = el('input', '');
   cb.type = 'checkbox'; cb.checked = !!checked;
-  cb.addEventListener('change', function () { onChange(cb.checked); });
+  function descAt(state) { return typeof desc === 'function' ? desc(state) : desc; }
+  var d = null;
+  cb.addEventListener('change', function () { if (d) d.textContent = descAt(cb.checked); onChange(cb.checked); });
   lbl.appendChild(cb);
   var t = el('span', 'create-toggle-label'); t.textContent = label;
   lbl.appendChild(t);
   w.appendChild(lbl);
-  if (desc) { var d = el('div', 'create-hint'); d.textContent = desc; w.appendChild(d); }
+  var hasDesc = (typeof desc === 'function') ? (descAt(true) || descAt(false)) : desc;
+  if (hasDesc) { d = el('div', 'create-hint'); d.textContent = descAt(!!checked); w.appendChild(d); }
   return w;
 }
 
@@ -570,6 +756,12 @@ function renderDetails(state, render) {
   wrap.appendChild(stepHead('Project Details', 'You can edit these at any time.'));
 
   wrap.appendChild(fieldBlock('Name', false, textInput(d.name, 'My project', function (v) { d.name = v; })));
+  // Token ticker — required for revnets (it names the ERC-20 deployed for the token). Optional otherwise.
+  wrap.appendChild(fieldBlock('Token symbol', state.projectType !== 'revnet', (function () {
+    var n = textInput(d.ticker, 'TOKEN', function (v) { d.ticker = v.trim().toUpperCase().slice(0, 11); });
+    n.addEventListener('input', function () { n.value = n.value.toUpperCase(); });
+    return n;
+  })()));
   wrap.appendChild(fieldBlock('Tagline', true, (function () {
     var n = textInput(d.tagline, 'A brief one-sentence summary of your project.', function (v) { d.tagline = v; });
     return n;
@@ -581,28 +773,6 @@ function renderDetails(state, render) {
     d.logoUri = uri; d.logoUploading = busy; render();
   })));
 
-  // Accounting token — what the project HOLDS in its treasury. The router terminal (any-token
-  // auto-convert) is always part of the tx and toggled via an inline enable/disable in the description.
-  wrap.appendChild(fieldBlock('Accounting', false, (function () {
-    var w = el('div', '');
-    w.appendChild(choiceCardsInline([{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }], state.accepts[0] || 'eth', function (k) {
-      state.accepts = [k]; render();
-    }));
-    var note = el('div', 'create-hint');
-    note.textContent = 'The token that makes up your project’s balance.';
-    w.appendChild(note);
-    var line2 = el('div', 'create-hint');
-    line2.appendChild(document.createTextNode(state.swapRouter
-      ? 'Other payment tokens auto-swap to your chosen accounting token as they’re paid in. '
-      : 'Payers can only pay in your accounting token. '));
-    var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
-    toggle.textContent = state.swapRouter ? 'Disable giving payers this option' : 'Enable giving payers this option';
-    toggle.addEventListener('click', function (e) { e.preventDefault(); state.swapRouter = !state.swapRouter; render(); });
-    line2.appendChild(toggle);
-    w.appendChild(line2);
-    return w;
-  })()));
-
   // Project links
   wrap.appendChild(collapse(d, 'linksOpen', 'Project links', true, render, function () {
     var g = el('div', 'create-grid2');
@@ -613,18 +783,7 @@ function renderDetails(state, render) {
     return g;
   }));
 
-  // Owner
-  wrap.appendChild(collapse(d, 'ownerOpen', 'Project owner', true, render, function () {
-    var c = el('div', '');
-    c.appendChild(infoNote('Leave blank to make your connected wallet the owner. Enter an address to assign ownership to it. Ensure the address exists on every chain you deploy to.'));
-    c.appendChild(toggleRow('Make immutable after deploy', 'Burns ownership to a dead address so the project’s rules can never be changed by anyone.', d.immutable, function (v) { d.immutable = v; render(); }));
-    if (!d.immutable) {
-      var ownerField = fieldBlock(null, false, textInput(d.owner, '0x0000000000000000000000000000000000000000', function (v) { d.owner = v.trim(); }));
-      ownerField.style.marginTop = '10px';
-      c.appendChild(ownerField);
-    }
-    return c;
-  }));
+  // (Project owner / operator is collected on the Type step.)
 
   // Tags
   wrap.appendChild(collapse(d, 'tagsOpen', 'Project tags', true, render, function () {
@@ -694,16 +853,19 @@ function createStage() {
     baseCurrency: 1,         // issuance-rate denomination (ETH=1 / USD=2) — metadata.baseCurrency
     payoutCurrency: 1,       // payout-limit denomination (ETH=1 / USD=2) — JBCurrencyAmount.currency
     // token — by default the project issues 10,000 tokens per ETH/USD
-    tokenMode: 'custom', weight: '10000', reservedPercent: 0, weightCutPercent: 0,
+    tokenMode: 'custom', weight: '10000', reservedPercent: 0, weightCutPercent: 0, issuanceCutOn: false,
     cashOutEnabled: false, cashOutTaxRate: 0, allowOwnerMinting: false, pauseTransfers: false,
     reservedRecipients: [], tokenAdvancedOpen: false,
+    // revnet-only stage fields (ignored by the custom flow)
+    cutFreqDays: '30', autoIssuances: [], startDaysAfter: '30',
     // payouts
     payoutMode: 'none', payoutRecipients: [],
     // surplus allowance — owner can withdraw from surplus (beyond payouts) up to a cap each ruleset
     surplusAllowanceOn: false, surplusAllowanceUnlimited: false, surplusAllowanceAmount: '', surplusAllowanceCurrency: 1,
     // deadline + rules
-    deadline: '3days', pausePay: false, holdFees: false,
-    allowSetTerminals: true, allowSetController: true, allowTerminalMigration: false, otherOpen: false,
+    deadline: '1day', pausePay: false, holdFees: false,
+    allowSetTerminals: false, allowSetController: false, allowTerminalMigration: false,
+    allowSetCustomToken: false, allowAddAccountingContext: false, allowAddPriceFeed: false, otherOpen: false,
     // editor section collapses
     tokenOpen: true, payoutsOpen: false, deadlineOpen: false,
   };
@@ -746,9 +908,55 @@ function renderStages(state, render) {
       cycle: 'Ruleset #1 repeats its cycle over and over until you change it. Changes will only be able to be made once a cycled ruleset ends.',
     };
     wrap.appendChild(infoNote(notes[state.afterMode] || ''));
+
+    // Issuance cut only makes sense for a cycling ruleset — opt-in here, applied to the cycling stage.
+    if (state.afterMode === 'cycle') {
+      var cyStage = state.stages[0];
+      wrap.appendChild(toggleRow('Issuance cuts per cycle', dz('The issuance rate drops by a set amount at the end of each cycle.', 'The issuance rate stays the same each cycle.'), !!cyStage.issuanceCutOn, function (v) {
+        cyStage.issuanceCutOn = v; if (!v) cyStage.weightCutPercent = 0; render();
+      }));
+      if (cyStage.issuanceCutOn) {
+        var cutRow = el('div', 'create-inline-row');
+        var cinp = el('input', 'field create-split-pct'); cinp.type = 'number'; cinp.min = '0'; cinp.max = '100'; cinp.step = '0.5';
+        cinp.value = String(cyStage.weightCutPercent || 0);
+        cinp.addEventListener('input', function () { cyStage.weightCutPercent = Math.max(0, Math.min(100, Number(cinp.value) || 0)); });
+        cutRow.appendChild(cinp);
+        cutRow.appendChild(document.createTextNode('% every ' + secondsLabel(cyStage.durationSeconds)));
+        wrap.appendChild(cutRow);
+      }
+    }
   }
   // A flexible (no-duration) last ruleset is terminal — owner-managed, nothing scheduled after it.
+
+  // Edit deadline — project-wide, at the bottom of the tab. Only shown when a future ruleset edit can
+  // actually happen, so the deadline has something to govern (see deadlineApplies).
+  if (deadlineApplies(state)) {
+    var cur = (state.stages[0] && state.stages[0].deadline) || '3days';
+    var dField = el('div', 'create-field'); dField.style.marginTop = '22px';
+    var dLab = el('label', 'create-label'); dLab.textContent = 'Edit deadline'; dField.appendChild(dLab);
+    dField.appendChild(infoNote('Owner edits must be queued this far ahead of the next ruleset, giving token holders time to review changes before they take effect.'));
+    var dSel = el('select', 'field create-input'); dSel.style.marginTop = '6px';
+    DEADLINE_OPTIONS.forEach(function (o) {
+      var op = el('option', ''); op.value = o.key; op.textContent = o.label + (o.def ? ' (default)' : '');
+      if (cur === o.key) op.selected = true; dSel.appendChild(op);
+    });
+    dSel.addEventListener('change', function () { state.stages.forEach(function (s) { s.deadline = dSel.value; }); render(); });
+    dField.appendChild(dSel);
+    if (cur === 'none') dField.appendChild(warnNote('⚠ No deadline lets the owner make last-second edits before a ruleset takes effect, which supporters may see as risky.'));
+    wrap.appendChild(dField);
+  }
   return wrap;
+}
+
+// The edit deadline governs how far ahead owner edits to a FUTURE ruleset must be queued. It's only
+// meaningful when such a boundary exists: not for a forever-duration last ruleset, and not for a single
+// timed ruleset set to Terminate (which just continues on the same terms).
+function deadlineApplies(state) {
+  var last = state.stages[state.stages.length - 1];
+  if (!last) return false;
+  if (last.durationSeconds === FOREVER_SECONDS) return false;
+  if (state.stages.length === 1 && afterApplies(state) && state.afterMode === 'terminal') return false;
+  return true;
 }
 
 function renderStageCard(stage, idx, state, render) {
@@ -770,25 +978,314 @@ function renderStageCard(stage, idx, state, render) {
   return card;
 }
 
+// ---------------------------------------------------------------------------
+// Revnet Stages (REVStageConfig[]) — a reduced, revnet-oriented stage editor.
+// ---------------------------------------------------------------------------
+
+function tickerLabel(state) { return state.details.ticker || 'TOKEN'; }
+
+function renderRevnetStages(state, render) {
+  var wrap = el('div', '');
+  wrap.appendChild(stepHead('Stages', 'Issuance and cash out rules evolve over time automatically in stages. Staged rules can’t be edited once deployed.'));
+
+  state.stages.forEach(function (stage, idx) {
+    wrap.appendChild(revStageCard(stage, idx, state, render));
+  });
+
+  var add = el('button', 'create-add-btn');
+  add.textContent = '+ Add stage';
+  add.addEventListener('click', function () {
+    var prev = state.stages[state.stages.length - 1];
+    var s = createStage();
+    s.weight = ''; // later stages inherit issuance (with the cut applied) unless set
+    if (prev) { s.cashOutTaxRate = prev.cashOutTaxRate; s.cutFreqDays = prev.cutFreqDays; }
+    state.stages.forEach(function (x) { x.expanded = false; });
+    s.expanded = true;
+    state.stages.push(s);
+    render();
+  });
+  wrap.appendChild(add);
+  return wrap;
+}
+
+function revStageCard(stage, idx, state, render) {
+  var card = el('div', 'create-stage-card');
+  var head = el('div', 'create-stage-head');
+  head.addEventListener('click', function (e) { if (e.target.closest('.create-stage-remove')) return; stage.expanded = !stage.expanded; render(); });
+  var left = el('div', 'create-stage-headtext');
+  var title = el('div', 'create-stage-title'); title.textContent = 'Stage #' + (idx + 1); left.appendChild(title);
+  var sum = el('div', 'create-stage-sum'); sum.textContent = revStageSummary(stage, idx, state); left.appendChild(sum);
+  head.appendChild(left);
+  if (idx > 0) {
+    var rm = el('button', 'create-stage-remove'); rm.textContent = '✕';
+    rm.addEventListener('click', function () { state.stages.splice(idx, 1); render(); });
+    head.appendChild(rm);
+  }
+  var caret = el('span', 'create-stage-caret'); caret.textContent = stage.expanded ? '▴' : '▾'; head.appendChild(caret);
+  card.appendChild(head);
+  if (stage.expanded) card.appendChild(revStageEditor(stage, idx, state, render));
+  return card;
+}
+
+function revStageSummary(stage, idx, state) {
+  var tk = tickerLabel(state);
+  var unit = state.revBaseCurrency === 2 ? 'USD' : 'ETH';
+  var parts = [];
+  if (idx === 0 || stage.weight) parts.push((stage.weight || '0') + ' $' + tk + '/' + unit);
+  else parts.push('inherits issuance');
+  if (stage.issuanceCutOn && Number(stage.weightCutPercent) > 0) parts.push('−' + round2(stage.weightCutPercent) + '%/' + (stage.cutFreqDays || '30') + 'd');
+  var splitTotal = revSplitTotalPct(stage);
+  if (splitTotal > 0) parts.push(round2(splitTotal) + '% to splits');
+  parts.push(round2(Number(stage.cashOutTaxRate)) + '% cash-out tax');
+  return parts.join(' · ');
+}
+
+function revSplitTotalPct(stage) {
+  return (stage.reservedRecipients || []).reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0);
+}
+
+function revStageEditor(stage, idx, state, render) {
+  var tk = tickerLabel(state);
+  var w = el('div', 'create-stage-editor');
+
+  // 1. Issuance
+  var s1 = el('div', 'create-rev-sec');
+  var h1 = el('div', 'create-rev-h'); h1.textContent = '1. $' + tk + ' issuance'; s1.appendChild(h1);
+  var d1 = el('div', 'create-hint'); d1.textContent = 'How many $' + tk + ' to issue when receiving ETH.'; s1.appendChild(d1);
+  // Issuance row: "[10000] $TOKEN / ETH"
+  var issRow = el('div', 'create-inline-row');
+  var issIn = el('input', 'field create-inline-num'); issIn.type = 'number'; issIn.min = '0'; issIn.step = 'any';
+  issIn.placeholder = idx === 0 ? '10000' : 'inherit'; issIn.value = stage.weight || '';
+  issIn.addEventListener('input', function () { stage.weight = issIn.value.trim(); });
+  issRow.appendChild(issIn);
+  issRow.appendChild(document.createTextNode(' $' + tk + ' per '));
+  // Base currency (revnet-wide): issue per ETH or per USD. Small inline dropdown (no full-width `field`).
+  var curSel = el('select', 'create-amount-cur');
+  [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option'); op.value = String(o[1]); op.textContent = o[0]; if ((state.revBaseCurrency || 1) === o[1]) op.selected = true; curSel.appendChild(op); });
+  curSel.addEventListener('change', function () { state.revBaseCurrency = Number(curSel.value); render(); });
+  issRow.appendChild(curSel);
+  // "add auto cuts?" prompt + checkbox sit to the right of the currency selector (kept even when checked).
+  var cutPrompt = el('span', 'create-inline-prompt'); cutPrompt.textContent = 'add auto cuts?'; issRow.appendChild(cutPrompt);
+  var cutCb = el('input', 'create-inline-check'); cutCb.type = 'checkbox'; cutCb.checked = !!stage.issuanceCutOn;
+  cutCb.addEventListener('change', function () { stage.issuanceCutOn = cutCb.checked; if (!cutCb.checked) stage.weightCutPercent = 0; render(); });
+  issRow.appendChild(cutCb);
+  s1.appendChild(issRow);
+  if (idx > 0) s1.appendChild(infoNote('Leave blank to inherit the previous stage’s issuance (with any cut applied).'));
+
+  // When cuts are on, the "[N] % every [D] days" controls reveal on their own line.
+  if (stage.issuanceCutOn) {
+    var cutRow = el('div', 'create-inline-row');
+    var cinp = el('input', 'field create-split-pct'); cinp.type = 'number'; cinp.min = '0'; cinp.max = '100'; cinp.step = '0.5';
+    cinp.value = String(stage.weightCutPercent || 0);
+    cinp.addEventListener('input', function () { stage.weightCutPercent = Math.max(0, Math.min(100, Number(cinp.value) || 0)); });
+    cutRow.appendChild(document.createTextNode('cut'));
+    cutRow.appendChild(cinp);
+    cutRow.appendChild(document.createTextNode('% every'));
+    var freq = el('input', 'field create-split-pct'); freq.type = 'number'; freq.min = '1'; freq.step = '1';
+    freq.value = String(stage.cutFreqDays || '30');
+    freq.addEventListener('input', function () { stage.cutFreqDays = freq.value.trim(); });
+    cutRow.appendChild(freq);
+    cutRow.appendChild(document.createTextNode('days'));
+    s1.appendChild(cutRow);
+  }
+
+  // Splits — inline rows (no box), directly after the issuance fields.
+  var splitHead = el('div', 'create-hint');
+  function setSplitHead() {
+    var tot = revSplitTotalPct(stage);
+    splitHead.textContent = tot > 0
+      ? ('Total split limit of ' + round2(tot) + '%, payer always receives ' + round2(Math.max(0, 100 - tot)) + '% of issuance.')
+      : 'Without splits, the payer always receives 100% of issuance.';
+  }
+  setSplitHead();
+  (stage.reservedRecipients || []).forEach(function (rec, i) { s1.appendChild(reservedSplitRow(stage, rec, i, render, setSplitHead)); });
+  var addSplit = el('button', 'create-add-btn'); addSplit.textContent = '+ Add split';
+  addSplit.addEventListener('click', function (e) { e.preventDefault(); stage.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
+  s1.appendChild(addSplit);
+  s1.appendChild(splitHead);
+
+  // Auto-issuance — inline rows (no box).
+  var aiHint = el('div', 'create-hint'); aiHint.textContent = 'Optionally, auto-issue $' + tk + ' when the stage starts.'; aiHint.style.marginTop = '22px'; s1.appendChild(aiHint);
+  (stage.autoIssuances || []).forEach(function (ai, i) { s1.appendChild(autoIssuanceRow(stage, ai, i, tk, render)); });
+  var addAi = el('button', 'create-add-btn'); addAi.textContent = '+ Add auto issuance';
+  addAi.addEventListener('click', function (e) { e.preventDefault(); stage.autoIssuances.push({ count: '', address: '' }); render(); });
+  s1.appendChild(addAi);
+  var aiTotal = (stage.autoIssuances || []).reduce(function (s, a) { return s + (Number(a.count) || 0); }, 0);
+  if (aiTotal > 0) { var aiSum = el('div', 'create-hint'); aiSum.textContent = 'Total auto issuance of ' + round2(aiTotal) + ' $' + tk + '.'; s1.appendChild(aiSum); }
+  w.appendChild(s1);
+
+  // 2. Cash outs (always on for a revnet — the only exit besides loans)
+  var acctSym = (state.accepts[0] || 'eth') === 'usdc' ? 'USDC' : 'ETH';
+  var s2 = el('div', 'create-rev-sec');
+  var h2 = el('div', 'create-rev-h'); h2.textContent = '2. $' + tk + ' cash outs'; s2.appendChild(h2);
+  var d2 = el('div', 'create-hint'); d2.textContent = 'The only way to access the ' + acctSym + ' used to issue $' + tk + ' is by cashing out or taking a loan. A tax makes cashing out and loans more expensive, rewarding $' + tk + ' holders who stick around.'; s2.appendChild(d2);
+  stage.cashOutEnabled = true; // revnets always allow cash outs
+  s2.appendChild(cashOutTaxCard(stage, render, acctSym, tk, true));
+  w.appendChild(s2);
+
+  // 3. Start time
+  var s3 = el('div', 'create-rev-sec');
+  var h3 = el('div', 'create-rev-h'); h3.textContent = '3. Start time'; s3.appendChild(h3);
+  s3.appendChild(revStageTiming(state, stage, idx, render));
+  w.appendChild(s3);
+
+  return w;
+}
+
+// The previous stage's autocut interval in days (0 if it has none) — the cycle boundary the next stage snaps to.
+function revPrevCutFreqDays(state, idx) {
+  var prev = state.stages[idx - 1];
+  return (prev && prev.issuanceCutOn && Number(prev.cutFreqDays) > 0) ? Math.max(1, Math.round(Number(prev.cutFreqDays))) : 0;
+}
+// Stage idx's "days after the previous stage", snapped to a positive multiple of the previous stage's cut interval.
+function revStageDaysAfter(state, idx) {
+  var freq = revPrevCutFreqDays(state, idx);
+  var d = Math.max(1, Math.round(Number(state.stages[idx].startDaysAfter) || 30));
+  if (freq > 0) d = Math.max(freq, Math.round(d / freq) * freq);
+  return d;
+}
+
+// Revnet stage timing. Stage 0 starts ~10 min after deploy (or a scheduled future time); later stages
+// start a number of days after the previous stage's start. (No "duration" — revnets run forever.)
+function revStageTiming(state, stage, idx, render) {
+  var w = el('div', '');
+  if (idx === 0) {
+    var hint = el('div', 'create-hint'); hint.textContent = 'By default, the revnet starts ~10 minutes after deployment.'; w.appendChild(hint);
+    w.appendChild(toggleRow('Start the revnet in the future', '', !!stage.scheduleOn, function (v) {
+      stage.scheduleOn = v; if (!v) stage.schedule = ''; render();
+    }));
+    if (stage.scheduleOn) {
+      var i = el('input', 'field create-input'); i.type = 'datetime-local'; i.style.marginTop = '6px';
+      if (stage.schedule) i.value = tsToLocal(stage.schedule);
+      i.addEventListener('input', function () {
+        if (!i.value) { stage.schedule = ''; return; }
+        var dt = new Date(i.value); stage.schedule = isNaN(dt.getTime()) ? '' : Math.floor(dt.getTime() / 1000);
+      });
+      w.appendChild(i);
+      var tz = el('div', 'create-hint'); tz.textContent = localTimezoneLabel(); w.appendChild(tz);
+    }
+  } else {
+    // If the previous stage has autocuts, its ruleset cycles every `freq` days, so this stage can only begin
+    // on a cycle boundary — constrain the input to a positive multiple of that interval.
+    var freq = revPrevCutFreqDays(state, idx);
+    var hint2 = el('div', 'create-hint');
+    hint2.textContent = freq > 0
+      ? ('How many days after the last stage’s start time should this stage start? Must be a multiple of the previous stage’s ' + freq + '-day cut interval.')
+      : 'How many days after the last stage’s start time should this stage start?';
+    w.appendChild(hint2);
+    var row = el('div', 'create-inline-row');
+    var n = el('input', 'field create-inline-num'); n.type = 'number';
+    n.min = String(freq > 0 ? freq : 1); n.step = String(freq > 0 ? freq : 1);
+    n.value = String(revStageDaysAfter(state, idx)); // shows the snapped value
+    n.addEventListener('input', function () { stage.startDaysAfter = n.value.trim(); });
+    n.addEventListener('change', function () { stage.startDaysAfter = String(revStageDaysAfter(state, idx)); render(); }); // snap on blur/enter
+    row.appendChild(n); row.appendChild(document.createTextNode('days'));
+    w.appendChild(row);
+  }
+  return w;
+}
+
+function autoIssuanceRow(stage, ai, idx, tk, render) {
+  var row = el('div', 'create-split-row');
+  var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Issue' : '… and'; row.appendChild(lead);
+  // Amount box with a "$TOKEN" suffix inside, mirroring the issuance field.
+  var amtWrap = el('div', 'create-amt-suffix');
+  var cnt = el('input', ''); cnt.type = 'number'; cnt.min = '0'; cnt.step = 'any';
+  cnt.value = ai.count || ''; cnt.addEventListener('input', function () { ai.count = cnt.value.trim(); });
+  amtWrap.appendChild(cnt);
+  var suf = el('span', 'create-amt-suffix-label'); suf.textContent = '$' + tk; amtWrap.appendChild(suf);
+  row.appendChild(amtWrap);
+  row.appendChild((function () { var t = el('span', 'create-split-to'); t.textContent = 'to'; return t; })());
+  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x…';
+  recip.value = ai.address || '';
+  var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; });
+  recip.addEventListener('input', function () { ai.address = recip.value.trim(); });
+  row.appendChild(recipBoxWith(recip, ensHint));
+  var rm = el('button', 'create-split-rm'); rm.textContent = '🗑'; rm.title = 'Remove';
+  rm.addEventListener('click', function () { var i = stage.autoIssuances.indexOf(ai); if (i >= 0) stage.autoIssuances.splice(i, 1); render(); });
+  row.appendChild(rm);
+  return row;
+}
+
+function recipLabel(rec) {
+  if (rec.type === 'project' && rec.projectId) return 'project #' + rec.projectId;
+  if (rec.address) return shortAddr(rec.address);
+  return 'owner';
+}
+
+// Capitalized bullet strings for a stage (no leading "• "). stageSummary joins them for the card head.
+function stageSummaryParts(stage, idx, state) {
+  return stageSummaryRaw(stage, idx, state).map(function (p) { return p ? p.charAt(0).toUpperCase() + p.slice(1) : p; });
+}
 function stageSummary(stage, idx, state) {
+  return stageSummaryParts(stage, idx, state).map(function (p) { return '• ' + p; }).join('\n');
+}
+
+function stageSummaryRaw(stage, idx, state) {
   var parts = [];
   parts.push(idx === 0 ? ((stage.scheduleOn && stage.schedule) ? 'Starts at a set time' : 'Starts at launch') : 'Starts after Ruleset #' + idx);
   parts.push(!stage.durationSeconds ? 'lasts until changed by owner'
     : (stage.durationSeconds === FOREVER_SECONDS ? 'lasts forever' : 'lasts ' + secondsLabel(stage.durationSeconds)));
+
+  // Issuance — weight, reserved split, issuance cut.
   if (stage.tokenMode === 'custom') {
     parts.push('issues ' + (stage.weight || '0') + ' tokens / ' + (stage.baseCurrency === 2 ? 'USD' : 'ETH'));
+    var reservedPct = (stage.reservedRecipients || []).reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0);
+    if (reservedPct > 0) {
+      var rLine = round2(reservedPct) + '% reserved';
+      var rNamed = (stage.reservedRecipients || []).filter(function (x) { return Number(x.percent) > 0; });
+      if (rNamed.length) rLine += ' (' + rNamed.map(function (x) { return round2(Number(x.percent)) + '% → ' + recipLabel(x); }).join(', ') + ')';
+      parts.push(rLine);
+    }
+    if (stage.issuanceCutOn && Number(stage.weightCutPercent) > 0) parts.push('issuance cuts ' + round2(Number(stage.weightCutPercent)) + '% each cycle');
   } else parts.push('no issuance');
-  if (stage.payoutMode && stage.payoutMode !== 'none') parts.push(stage.payoutMode + ' payouts');
-  if (stage.surplusAllowanceOn) parts.push('surplus allowance');
-  return parts.join(' · ');
+
+  // Cash outs.
+  if (stage.cashOutEnabled && stage.payoutMode !== 'unlimited') parts.push('cash outs on, ' + round2(Number(stage.cashOutTaxRate)) + '% tax');
+
+  // Payouts — list each recipient's share.
+  if (stage.payoutMode === 'unlimited') {
+    parts.push('pays out all funds');
+    (stage.payoutRecipients || []).filter(function (r) { return Number(r.percent) > 0; }).forEach(function (r) {
+      parts.push(round2(Number(r.percent)) + '% → ' + recipLabel(r));
+    });
+    parts.push('remainder → owner');
+  } else if (stage.payoutMode === 'limited') {
+    var pc = stage.payoutCurrency === 2 ? 'USD' : 'ETH';
+    var named = (stage.payoutRecipients || []).filter(function (r) { return Number(r.amountEth) > 0; });
+    if (named.length) named.forEach(function (r) { parts.push('pays ' + r.amountEth + ' ' + pc + ' → ' + recipLabel(r)); });
+    else parts.push('payouts set, no recipients yet');
+  }
+
+  // Surplus allowance.
+  if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
+    if (stage.surplusAllowanceUnlimited) parts.push('owner can withdraw all surplus');
+    else if (Number(stage.surplusAllowanceAmount) > 0) parts.push('owner can withdraw ' + stage.surplusAllowanceAmount + ' ' + (stage.surplusAllowanceCurrency === 2 ? 'USD' : 'ETH') + ' of surplus');
+    else parts.push('surplus allowance on');
+  }
+
+  // Noteworthy flags.
+  if (stage.allowOwnerMinting) parts.push('owner can mint tokens');
+  if (stage.pauseTransfers) parts.push('token credit transfers paused');
+  if (stage.pausePay) parts.push('payments paused');
+  if (stage.holdFees) parts.push('fees held');
+  if (stage.allowTerminalMigration) parts.push('terminal migration allowed');
+  if (deadlineApplies(state)) {
+    var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === stage.deadline; });
+    parts.push(dl && dl.key !== 'none' ? 'edits locked ' + dl.short + ' before changes' : 'no edit deadline');
+  }
+
+  return parts;
 }
+
+function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
 function renderStageEditor(stage, idx, state, render) {
   var c = el('div', 'create-stage-body');
   c.appendChild(stageTiming(stage, idx, idx === state.stages.length - 1, render));
   c.appendChild(tokenSection(stage, render));
-  c.appendChild(collapse(stage, 'payoutsOpen', 'Payouts', false, render, function () { return payoutsSection(stage, render); }));
-  c.appendChild(collapse(stage, 'deadlineOpen', 'Edit deadline & rules', false, render, function () { return deadlineSection(stage, render); }));
+  c.appendChild(payoutsSection(stage, render)); // Schedule payouts + Surplus allowance — top-level, no disclosure
+  c.appendChild(collapse(stage, 'otherOpen', 'Other rules', true, render, function () { return otherRulesSection(stage, render); }));
   return c;
 }
 
@@ -848,6 +1345,8 @@ function stageTiming(stage, idx, isLast, render) {
   } else {
     w.appendChild(infoNote('Stage ' + (idx + 1) + ' begins automatically when Stage ' + idx + ' ends.'));
   }
+  // Accept payments — first thing after timing. Pausing payments idles token issuance (see tokenSection).
+  w.appendChild(toggleRow('Accept payments', dz('The project can receive payments.', 'The project can’t receive payments.'), !stage.pausePay, function (v) { stage.pausePay = !v; render(); }));
   // A non-final stage with no duration would never advance — the next stage would start at the same
   // instant and immediately clobber it. Require a duration on every non-final stage.
   if (!isLast && !stage.durationSeconds) {
@@ -869,70 +1368,115 @@ function choiceCardsInline(opts, current, onPick) {
 
 
 // Payouts section for a stage (folded into the stage editor).
-function payoutsSection(stage, render) {
-  var wrap = el('div', '');
-  wrap.appendChild(infoNote('Anyone can pay this project. Optionally route a portion to wallets or other Juicebox projects. Unpaid ETH stays for cash outs / later stages. Payouts reset each ruleset.'));
+function payoutRow(stage, rec, idx, mode, render) {
+  var wrap = el('div', 'create-split-wrap');
+  if (idx > 0) wrap.style.marginTop = '18px'; // separate each recipient block
+  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
+  recip.value = rec.type === 'project' ? String(rec.projectId || '') : (rec.address || '');
+  var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
+  rm.addEventListener('click', function () { var i = stage.payoutRecipients.indexOf(rec); if (i >= 0) stage.payoutRecipients.splice(i, 1); render(); });
+  // A specific (limited) payout needs at least one entry — don't let the user remove the last one.
+  var lockLast = mode === 'amount' && stage.payoutRecipients.length <= 1;
+  // Resolve an ENS recipient (wallet path only — project IDs are numeric); the address shows under the field.
+  var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
 
-  wrap.appendChild(choiceCards([
-    { key: 'none', title: 'None', sub: 'No ETH can be paid out. All ETH stays for cash outs / future stages.', icon: '⦸' },
-    { key: 'limited', title: 'Limited', sub: 'A fixed amount of ETH can be paid out each ruleset.', icon: '◎' },
-    { key: 'unlimited', title: 'Unlimited', sub: 'All ETH can be paid out at any time.', icon: '∞' },
-  ], stage.payoutMode, function (k) { stage.payoutMode = k; render(); }));
-
-  if (stage.payoutMode !== 'none') {
-    var unit = stage.payoutCurrency === 2 ? 'USD' : 'ETH';
-
-    var card = el('div', 'create-subcard');
-    var head = el('div', 'create-subcard-head');
-    var t = el('div', 'create-subcard-title'); t.textContent = 'Payout recipients';
-    head.appendChild(t);
-    var add = el('button', 'create-btn small');
-    add.textContent = '+ Add recipient';
-    add.addEventListener('click', function () {
-      openRecipientModal('payout', function (rec) { stage.payoutRecipients.push(rec); render(); }, stage);
-    });
-    head.appendChild(add);
-    card.appendChild(head);
-
-    if (!stage.payoutRecipients.length) {
-      var empty = el('div', 'create-empty'); empty.textContent = 'No payout recipients';
-      card.appendChild(empty);
-    } else {
-      stage.payoutRecipients.forEach(function (rec, idx) {
-        card.appendChild(recipientRow(rec, stage.payoutMode === 'limited' ? (rec.amountEth + ' ' + unit) : 'share', function () {
-          stage.payoutRecipients.splice(idx, 1); render();
-        }));
-      });
-    }
-    wrap.appendChild(card);
-    wrap.appendChild(infoNote(stage.payoutMode === 'limited'
-      ? 'Limited: this ruleset can pay out the sum of the recipients’ amounts (in ' + unit + '). Remaining funds stay in the project.'
-      : 'Unlimited: recipients receive their relative share of payouts; any remainder is withdrawable by the owner.'));
+  if (mode === 'percent') {
+    var row = el('div', 'create-split-row');
+    var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Split' : '… and'; row.appendChild(lead);
+    var pct = el('input', 'field create-split-pct'); pct.type = 'number'; pct.min = '0'; pct.max = '100'; pct.step = 'any'; pct.placeholder = '10';
+    pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; }); row.appendChild(pct);
+    var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
+    var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
+    row.appendChild(recipBoxWith(recip, ensHint)); row.appendChild(rm);
+    wrap.appendChild(row);
+  } else {
+    // Two lines: "Payout [amount] [ETH/USD] to" then the recipient field, left-aligned under the amount
+    // (line 2's lead is an invisible copy of line 1's so the inputs line up in the monospace grid).
+    var leadText = idx === 0 ? 'Payout' : '… and';
+    var l1 = el('div', 'create-split-row');
+    var lead1 = el('span', 'create-split-lead'); lead1.textContent = leadText; l1.appendChild(lead1);
+    var amt = el('input', 'field create-inline-num'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
+    amt.value = rec.amountEth || ''; amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); }); l1.appendChild(amt);
+    var cur = el('select', 'create-amount-cur');
+    [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0]; if ((stage.payoutCurrency || 1) === o[1]) op.selected = true; cur.appendChild(op); });
+    cur.addEventListener('change', function () { stage.payoutCurrency = Number(cur.value); render(); });
+    l1.appendChild(cur);
+    var toEnd = el('span', 'create-split-to'); toEnd.textContent = 'to'; l1.appendChild(toEnd);
+    wrap.appendChild(l1);
+    var l2 = el('div', 'create-split-row payout-line2');
+    var lead2 = el('span', 'create-split-lead'); lead2.textContent = leadText; lead2.style.visibility = 'hidden'; l2.appendChild(lead2);
+    l2.appendChild(recipBoxWith(recip, ensHint)); if (!lockLast) l2.appendChild(rm);
+    wrap.appendChild(l2);
   }
 
-  // Surplus allowance — separate from payouts: the owner can withdraw from the project's surplus
-  // (anything beyond payout limits) up to this cap each ruleset. Off by default.
-  wrap.appendChild(toggleRow('Surplus allowance', 'Let the owner withdraw from the project’s surplus (funds beyond payouts) each ruleset, up to a cap you set. Off by default.', stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; render(); }));
-  if (stage.surplusAllowanceOn) {
-    var saCard = el('div', 'create-subcard');
-    saCard.appendChild(toggleRow('Unlimited', '', stage.surplusAllowanceUnlimited, function (v) { stage.surplusAllowanceUnlimited = v; render(); }));
-    if (!stage.surplusAllowanceUnlimited) {
-      saCard.appendChild(fieldBlock('Allowance per ruleset', false, (function () {
-        var rowEl = el('div', 'create-amount-row');
-        var amt = el('input', 'field create-amount-input'); amt.type = 'text'; amt.placeholder = '0.0'; amt.value = stage.surplusAllowanceAmount;
-        amt.addEventListener('input', function () { stage.surplusAllowanceAmount = amt.value.trim(); });
-        var curSel = el('select', 'create-amount-cur');
-        [['ETH', 1], ['USD', 2]].forEach(function (o) {
-          var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0];
-          if (stage.surplusAllowanceCurrency === o[1]) op.selected = true;
-          curSel.appendChild(op);
-        });
-        curSel.addEventListener('change', function () { stage.surplusAllowanceCurrency = Number(curSel.value); });
-        rowEl.appendChild(amt); rowEl.appendChild(curSel);
-        return rowEl;
-      })()));
+  var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
+  var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
+  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… who receives that project’s tokens';
+  benef.value = rec.type === 'project' ? (rec.address || '') : '';
+  benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
+  benefRow.appendChild(benef); wrap.appendChild(benefRow);
+  function refresh() {
+    var v = (recip.value || '').trim();
+    if (/^[0-9]+$/.test(v) && Number(v) > 0) { rec.type = 'project'; rec.projectId = Number(v); benefRow.style.display = ''; }
+    else { rec.type = 'wallet'; rec.projectId = 0; rec.address = v; benefRow.style.display = 'none'; }
+  }
+  recip.addEventListener('input', refresh); refresh();
+  return wrap;
+}
+
+function payoutsSection(stage, render) {
+  var wrap = el('div', '');
+  wrap.appendChild(toggleRow('Payout funds', dz('Routing some of the project’s funds to other accounts or projects.', 'All funds stay in the project for cash outs / later stages.'), stage.payoutMode !== 'none', function (v) { stage.payoutMode = v ? 'unlimited' : 'none'; render(); }));
+
+  if (stage.payoutMode !== 'none') {
+    var card = el('div', 'create-subcard');
+    card.appendChild(toggleRow('Payout all received funds', dz('Paying out everything received; recipients get a percentage and the rest goes to the owner.', 'Paying out fixed amounts; anything else stays in the project.'), stage.payoutMode === 'unlimited', function (v) {
+      stage.payoutMode = v ? 'unlimited' : 'limited';
+      // A specific (limited) payout needs at least one entry to fill in.
+      if (!v && !stage.payoutRecipients.length) stage.payoutRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' });
+      render();
+    }));
+    var mode = stage.payoutMode === 'unlimited' ? 'percent' : 'amount';
+    stage.payoutRecipients.forEach(function (rec, i) { card.appendChild(payoutRow(stage, rec, i, mode, render)); });
+    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = 'add payout +';
+    add.style.marginTop = stage.payoutRecipients.length ? '14px' : '4px'; // only need the gap when there are rows above
+    add.addEventListener('click', function (e) { e.preventDefault(); stage.payoutRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); });
+    card.appendChild(add);
+    // Make the default-to-owner behavior explicit (unlimited only).
+    if (stage.payoutMode === 'unlimited') {
+      var ownerNote = el('div', 'create-hint'); ownerNote.style.marginTop = '10px';
+      ownerNote.textContent = 'Any payouts not allocated above go to the project owner.';
+      card.appendChild(ownerNote);
     }
-    wrap.appendChild(saCard);
+    wrap.appendChild(card);
+  }
+
+  // Surplus access — owner (allowance) and token holders (cash outs) both draw from surplus (funds beyond
+  // payouts). When paying out everything there's no surplus, so both are shown idle/disabled.
+  if (stage.payoutMode === 'unlimited') {
+    wrap.appendChild(idleToggle('Give owner access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus available.'));
+    wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus to cash out.'));
+  } else {
+    wrap.appendChild(toggleRow('Give owner access to surplus funds', dz('The owner can withdraw from the project’s surplus (funds beyond payouts).', 'The owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; render(); }));
+    if (stage.surplusAllowanceOn) {
+      var saCard = el('div', 'create-subcard');
+      saCard.appendChild(toggleRow('Unlimited', dz('No cap — the owner can withdraw the entire surplus.', 'Capped at the amount set below.'), stage.surplusAllowanceUnlimited, function (v) { stage.surplusAllowanceUnlimited = v; render(); }));
+      if (!stage.surplusAllowanceUnlimited) {
+        var saRow = el('div', 'create-inline-row');
+        var saAmt = el('input', 'field create-inline-num'); saAmt.type = 'text'; saAmt.placeholder = '0.0'; saAmt.value = stage.surplusAllowanceAmount;
+        saAmt.addEventListener('input', function () { stage.surplusAllowanceAmount = saAmt.value.trim(); });
+        saRow.appendChild(saAmt);
+        var saCur = el('select', 'create-amount-cur');
+        [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0]; if (stage.surplusAllowanceCurrency === o[1]) op.selected = true; saCur.appendChild(op); });
+        saCur.addEventListener('change', function () { stage.surplusAllowanceCurrency = Number(saCur.value); });
+        saRow.appendChild(saCur);
+        saRow.appendChild(document.createTextNode(' allowed.'));
+        saCard.appendChild(saRow);
+      }
+      wrap.appendChild(saCard);
+    }
+    // Token-holder cash outs live right after the owner's surplus allowance (both draw from surplus).
+    wrap.appendChild(cashOutSection(stage, render));
   }
   return wrap;
 }
@@ -963,13 +1507,16 @@ function reservedSplitRow(t, rec, idx, render, onTotal) {
   var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
   var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
   var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
-  recip.value = rec.type === 'project' ? String(rec.projectId || '') : (rec.address || ''); row.appendChild(recip);
-  var rm = el('button', 'create-split-rm'); rm.textContent = '🗑'; rm.title = 'Remove';
+  recip.value = rec.type === 'project' ? String(rec.projectId || '') : (rec.address || '');
+  var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
+  row.appendChild(recipBoxWith(recip, ensHint));
+  var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = t.reservedRecipients.indexOf(rec); if (i >= 0) t.reservedRecipients.splice(i, 1); render(); });
   row.appendChild(rm);
   wrap.appendChild(row);
-  // Project-ID beneficiary line.
+  // Project-ID beneficiary line — "with beneficiary [0x…]" (who receives that project's tokens).
   var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
+  var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
   var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… who receives that project’s tokens';
   benef.value = rec.type === 'project' ? (rec.address || '') : '';
   benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
@@ -985,12 +1532,135 @@ function reservedSplitRow(t, rec, idx, render, onTotal) {
 }
 
 // Token issuance section for a stage (folded into the stage editor).
+// Bonding-curve preview: token cash-out value vs % of tokens cashed out, at tax rate r (0..1). The
+// orange curve f(x)=x·((1−r)+r·x) bows below the straight no-tax line, meeting it at the ends.
+function cashOutCurveSvg(r) {
+  var W = 320, H = 170, padL = 30, padR = 10, padT = 10, padB = 26;
+  var x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT;
+  function X(t) { return x0 + (x1 - x0) * t; }
+  function Y(v) { return y0 + (y1 - y0) * v; }
+  var pts = [];
+  for (var i = 0; i <= 40; i++) { var t = i / 40; var f = t * ((1 - r) + r * t); pts.push(X(t).toFixed(1) + ',' + Y(f).toFixed(1)); }
+  var midY = (y0 + y1) / 2;
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" class="cashout-curve" aria-hidden="true">'
+    + '<line x1="' + x0 + '" y1="' + y1 + '" x2="' + x0 + '" y2="' + y0 + '" stroke="#7d6858" stroke-width="1"/>'
+    + '<line x1="' + x0 + '" y1="' + y0 + '" x2="' + x1 + '" y2="' + y0 + '" stroke="#7d6858" stroke-width="1"/>'
+    + '<line x1="' + X(0) + '" y1="' + Y(0) + '" x2="' + X(1) + '" y2="' + Y(1) + '" stroke="rgba(0,0,0,0.22)" stroke-width="1.2"/>'
+    + '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#b8602e" stroke-width="2"/>'
+    + '<text x="' + ((x0 + x1) / 2) + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" fill="#7d5a4e">% tokens cashed out</text>'
+    + '<text x="11" y="' + midY + '" text-anchor="middle" font-size="9" fill="#7d5a4e" transform="rotate(-90 11 ' + midY + ')">cash out value</text>'
+    + '</svg>';
+}
+
+// Hover the bonding-curve graph: show a dot + tooltip with "X% cashed out → Y% of treasury" at the cursor.
+// `holder` is the element whose innerHTML carries the SVG (redrawn on input); dot/tip are siblings in `wrap`.
+function attachCurveHover(wrap, holder, getR) {
+  wrap.style.position = 'relative';
+  var dot = el('div', 'cashout-dot'); dot.style.display = 'none';
+  var tip = el('div', 'cashout-tip'); tip.style.display = 'none';
+  wrap.appendChild(dot); wrap.appendChild(tip);
+  var W = 320, H = 170, padL = 30, padR = 10, padT = 10, padB = 26;
+  wrap.addEventListener('mousemove', function (e) {
+    var svg = holder.querySelector('svg'); if (!svg) return;
+    var rect = svg.getBoundingClientRect();
+    var plotL = rect.left + (padL / W) * rect.width, plotR = rect.left + ((W - padR) / W) * rect.width;
+    var plotT = rect.top + (padT / H) * rect.height, plotB = rect.top + ((H - padB) / H) * rect.height;
+    var x = (e.clientX - plotL) / (plotR - plotL); x = Math.max(0, Math.min(1, x));
+    var r = getR(); var f = x * ((1 - r) + r * x);
+    var cx = plotL + x * (plotR - plotL), cy = plotB - f * (plotB - plotT);
+    var wr = wrap.getBoundingClientRect();
+    dot.style.display = ''; dot.style.left = (cx - wr.left) + 'px'; dot.style.top = (cy - wr.top) + 'px';
+    tip.style.display = ''; tip.textContent = Math.round(x * 100) + '% cashed out → ' + (Math.round(f * 1000) / 10) + '% of treasury';
+    tip.style.left = Math.max(28, Math.min(cx - wr.left, wr.width - 28)) + 'px';
+    tip.style.top = (cy - wr.top - 24) + 'px';
+  });
+  wrap.addEventListener('mouseleave', function () { dot.style.display = 'none'; tip.style.display = 'none'; });
+}
+
+// A disabled, greyed toggle that always reads unchecked — used when an option is contextually moot.
+function idleToggle(label, subtext) {
+  var t = toggleRow(label, subtext, false, function () {});
+  var cb = t.querySelector('input'); if (cb) cb.disabled = true;
+  t.classList.add('create-toggle-disabled');
+  return t;
+}
+
+// Cash-out access for token holders — they reclaim a share of the project's surplus by burning tokens.
+// Lives next to the owner's surplus allowance (both draw from surplus). Tax rate shapes the bonding curve.
+function cashOutSection(stage, render) {
+  var t = stage;
+  var wrap = el('div', '');
+  var acctSym = t.baseCurrency === 2 ? 'USDC' : 'ETH';
+  wrap.appendChild(toggleRow('Give tokens cash out access to surplus funds', dz('Token holders can cash out their tokens for a share of the project’s surplus ' + acctSym + '.', 'Token holders can’t cash out their tokens.'), t.cashOutEnabled, function (v) { t.cashOutEnabled = v; render(); }));
+  if (t.cashOutEnabled) wrap.appendChild(cashOutTaxCard(t, render, acctSym));
+  return wrap;
+}
+
+// The cash-out tax chips + bonding-curve preview, shared by the custom flow's cashOutSection and the revnet
+// stage editor. Stores `stage.cashOutTaxRate` as a percent (0–100). `reclaimVerb` lets the revnet copy differ.
+function cashOutTaxCard(t, render, acctSym, reclaimVerb, bare) {
+  var coCard = el('div', bare ? '' : 'create-subcard');
+  // Named tax levels with the 0–1 value beneath; unnamed entries are the half-steps between them.
+  // A tax of 1 (100%) returns nothing — identical to disabling cash outs — so it's not offered.
+  var levels = [
+    { n: 'No tax', v: 0 }, { n: '', v: 0.1 }, { n: '', v: 0.2 }, { n: 'Light', v: 0.3 }, { n: '', v: 0.4 },
+    { n: 'Medium', v: 0.5 }, { n: '', v: 0.6 }, { n: 'Heavy', v: 0.7 }, { n: '', v: 0.8 }, { n: 'Extreme', v: 0.9 },
+  ];
+  var presetPcts = levels.map(function (l) { return l.v * 100; });
+  var isCustom = presetPcts.indexOf(Number(t.cashOutTaxRate)) === -1;
+  var chips = el('div', 'create-chip-row');
+  levels.forEach(function (l) {
+    var pct = l.v * 100;
+    var chip = el('button', 'create-chip create-chip-stack' + (!isCustom && Number(t.cashOutTaxRate) === pct ? ' active' : '')); chip.type = 'button';
+    var top = el('span', 'create-chip-top'); top.textContent = String(l.v);
+    var bot = el('span', 'create-chip-sub'); bot.textContent = l.n || '';
+    chip.appendChild(top); chip.appendChild(bot);
+    chip.addEventListener('click', function () { t.cashOutTaxRate = pct; render(); });
+    chips.appendChild(chip);
+  });
+  var customChip = el('button', 'create-chip create-chip-stack' + (isCustom ? ' active' : '')); customChip.type = 'button';
+  var ct = el('span', 'create-chip-top'); ct.textContent = 'Custom'; customChip.appendChild(ct);
+  customChip.appendChild(el('span', 'create-chip-sub'));
+  customChip.addEventListener('click', function () { if (!isCustom) { t.cashOutTaxRate = 5; render(); } });
+  chips.appendChild(customChip);
+  coCard.appendChild(chips);
+
+  var sub = el('div', 'create-hint');
+  var graphWrap = el('div', 'cashout-curve-wrap');
+  var svgHolder = el('div'); graphWrap.appendChild(svgHolder); // hover overlay (dot/tip) lives beside this, not wiped on redraw
+  var cashViz = function () {
+    var r = Math.max(0, Math.min(100, Number(t.cashOutTaxRate) || 0)) / 100;
+    var pct10 = 0.1 * ((1 - r) + r * 0.1) * 100; // % of treasury for cashing out 10% of supply
+    sub.textContent = reclaimVerb
+      ? ('Cashing out 10% of $' + reclaimVerb + ' gets ' + (Math.round(pct10 * 10) / 10) + '% of the revnet’s ' + acctSym + '.')
+      : ('Cashing out 10% of your tokens returns ' + (Math.round(pct10 * 10) / 10) + '% of the project’s surplus ' + acctSym + '.');
+    svgHolder.innerHTML = cashOutCurveSvg(r);
+  };
+  if (isCustom) {
+    var crow = el('div', 'create-inline-row');
+    var cin = el('input', 'field create-inline-num'); cin.type = 'number'; cin.min = '0'; cin.max = '1'; cin.step = '0.01'; cin.value = String(Math.round(t.cashOutTaxRate) / 100);
+    cin.addEventListener('input', function () { t.cashOutTaxRate = Math.max(0, Math.min(1, Number(cin.value) || 0)) * 100; cashViz(); });
+    crow.appendChild(document.createTextNode('Cash out tax ')); crow.appendChild(cin); crow.appendChild(document.createTextNode(' (0–1)'));
+    coCard.appendChild(crow);
+  }
+  cashViz();
+  coCard.appendChild(sub);
+  coCard.appendChild(graphWrap);
+  attachCurveHover(graphWrap, svgHolder, function () { return Math.max(0, Math.min(100, Number(t.cashOutTaxRate) || 0)) / 100; });
+  return coCard;
+}
+
 function tokenSection(stage, render) {
   var t = stage;
   var wrap = el('div', '');
-  wrap.appendChild(toggleRow('Issues tokens when paid', '', t.tokenMode === 'custom', function (v) { t.tokenMode = v ? 'custom' : 'none'; render(); }));
+  // Paused payments → no one can pay → no issuance possible; show the issuance toggle idle.
+  if (t.pausePay) {
+    wrap.appendChild(idleToggle('Issue tokens when paid', 'No tokens are issued while payments are paused.'));
+  } else {
+    wrap.appendChild(toggleRow('Issue tokens when paid', dz('Payers receive newly minted project tokens.', 'No tokens are issued when the project is paid.'), t.tokenMode === 'custom', function (v) { t.tokenMode = v ? 'custom' : 'none'; render(); }));
+  }
 
-  if (t.tokenMode === 'custom') {
+  if (t.tokenMode === 'custom' && !t.pausePay) {
     var card = el('div', 'create-subcard');
 
     // Issues [x] tokens per [ETH/USD]
@@ -1010,38 +1680,28 @@ function tokenSection(stage, render) {
 
     // Reserved splits — each "Split [%] to [recipient]" reserves that share of issuance; the payer gets
     // the rest. The percentages sum to the project's reserved rate (shown in the summary below).
-    var rlbl = el('div', 'create-label'); rlbl.style.marginTop = '14px'; rlbl.textContent = 'Reserved'; card.appendChild(rlbl);
-    card.appendChild(infoNote('Reserve a share of every token issuance for wallets / projects you choose.'));
-    var sumNote = el('div', 'create-hint');
+    var sumNote = el('div', 'create-hint'); sumNote.style.marginTop = '12px';
     function updateReservedSummary() {
       var tot = Math.round(t.reservedRecipients.reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0) * 100) / 100;
-      sumNote.textContent = 'Total split limit of ' + tot + '%, payer always receives ' + (Math.round((100 - tot) * 100) / 100) + '% of issuance.';
+      var payer = Math.round((100 - tot) * 100) / 100;
+      sumNote.textContent = tot > 0
+        ? 'Total splits of ' + tot + '%, payer receives ' + payer + '% of issuance.'
+        : 'Payer receives 100% of issuance.';
       sumNote.className = 'create-hint' + (tot > 100 ? ' warn' : '');
     }
     t.reservedRecipients.forEach(function (rec, i) { card.appendChild(reservedSplitRow(t, rec, i, render, updateReservedSummary)); });
-    var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = 'add split +';
+    var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = 'add split +'; addSplit.style.marginTop = '14px';
     addSplit.addEventListener('click', function (e) { e.preventDefault(); t.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
     card.appendChild(addSplit);
-    if (t.reservedRecipients.length) { updateReservedSummary(); card.appendChild(sumNote); }
-
-    card.appendChild(collapse(t, 'tokenAdvancedOpen', 'Advanced', false, render, function () {
-      var c = el('div', '');
-      var icl = el('label', 'create-label'); icl.textContent = 'Issuance cut'; c.appendChild(icl);
-      c.appendChild(infoNote('The issuance rate drops by this much each stage cycle. Higher = more reason to pay earlier.'));
-      c.appendChild(pctSlider(t.weightCutPercent, function (v) { t.weightCutPercent = v; }));
-      c.appendChild(toggleRow('Enable cash outs', 'When enabled, token holders can cash out their tokens for a portion of the project’s ETH.', t.cashOutEnabled, function (v) { t.cashOutEnabled = v; render(); }));
-      if (t.cashOutEnabled) {
-        var col = el('label', 'create-label'); col.textContent = 'Cash out tax'; c.appendChild(col);
-        c.appendChild(infoNote('At 0%, cash outs are 1:1. Higher rates leave relatively more ETH for those who cash out later.'));
-        c.appendChild(pctSlider(t.cashOutTaxRate, function (v) { t.cashOutTaxRate = v; }));
-      }
-      c.appendChild(toggleRow('Owner token minting', 'While enabled, the project owner can mint any amount of project tokens.', t.allowOwnerMinting, function (v) { t.allowOwnerMinting = v; }));
-      c.appendChild(toggleRow('Pause token transfers', 'While paused, project credits can’t be transferred (ERC-20s, once issued, are always transferable).', t.pauseTransfers, function (v) { t.pauseTransfers = v; }));
-      return c;
-    }));
+    updateReservedSummary(); card.appendChild(sumNote);
 
     wrap.appendChild(card);
   }
+
+  // Token options apply whether or not THIS stage issues tokens (tokens can exist from prior stages or
+  // owner mints) — always shown, each in its own container like the issuance section.
+  wrap.appendChild(toggleRow('Give owner privileged access to tokens', dz('The project owner can mint any amount of project tokens without paying.', 'The project owner can’t mint tokens without paying.'), t.allowOwnerMinting, function (v) { t.allowOwnerMinting = v; }));
+  wrap.appendChild(toggleRow('Pause token credit transfers', dz('Project credits can’t be transferred (ERC-20s, once issued, are always transferable).', 'Project credits can be transferred freely.'), t.pauseTransfers, function (v) { t.pauseTransfers = v; }));
   return wrap;
 }
 
@@ -1049,104 +1709,400 @@ function tokenSection(stage, render) {
 // Step 4: NFTs
 // ---------------------------------------------------------------------------
 
+// Collection name/symbol default to the project name set in Details (empty if none); the project owner
+// can change them on-chain later. Once the user edits a field, their value sticks.
+function collectionNameOf(state) {
+  var c = state.collection || {};
+  if (c.nameTouched) return c.name;
+  return state.details.name || '';
+}
+function collectionSymbolOf(state) {
+  var c = state.collection || {};
+  if (c.symbolTouched) return c.symbol;
+  return state.details.name || '';
+}
+
+// Everything that applies to the whole collection (not a single item) — collection name/symbol, the Pinata
+// JWT, and the top-level JB721TiersHookFlags. Lives in the "Extras" dropdown under "add item +".
+function collectionExtrasSection(state, render) {
+  var c = state.collection;
+  var f = el('div', '');
+  var ownerNote = el('div', 'create-hint'); ownerNote.textContent = 'The project owner can set or change these anytime after launch.'; ownerNote.style.marginTop = '0'; f.appendChild(ownerNote);
+  var nameField = fieldBlock('Collection name', false, textInput(collectionNameOf(state), state.details.name || 'Collection name', function (v) { c.name = v; c.nameTouched = true; }));
+  f.appendChild(nameField);
+  f.appendChild(fieldBlock('Collection symbol', false, textInput(collectionSymbolOf(state), state.details.name || 'Symbol', function (v) { c.symbol = v; c.symbolTouched = true; })));
+
+  // Pinata JWT — needed to pin item media + metadata to IPFS. Only shown when one isn't set yet.
+  if (!hasPinata()) {
+    var jwtField = el('div', 'create-field');
+    var jl = el('label', 'create-label'); jl.textContent = 'Pinata JWT'; jwtField.appendChild(jl);
+    var jh = el('div', 'create-hint'); jh.innerHTML = 'To pin item media + metadata to IPFS. <a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.'; jwtField.appendChild(jh);
+    var jwt = el('input', 'field create-input'); jwt.type = 'password'; jwt.placeholder = 'pinata JWT'; jwt.autocomplete = 'off'; jwt.spellcheck = false;
+    jwt.addEventListener('change', function () { if (jwt.value.trim()) { setPinataJwt(jwt.value.trim()); render(); } });
+    jwtField.appendChild(jwt); f.appendChild(jwtField);
+  }
+
+  f.appendChild(toggleRow('Require exact payment', dz('Payers must pay an item’s exact price — anything extra is turned away.', 'Payers can overpay; the extra is kept as spendable credit.'), c.preventOverspending, function (v) { c.preventOverspending = v; }));
+  f.appendChild(toggleRow('Lock reserved items after launch', dz('New items added after launch can’t set aside reserved inventory.', 'New items added after launch can set aside reserved inventory.'), c.noNewTiersWithReserves, function (v) { c.noNewTiersWithReserves = v; }));
+  f.appendChild(toggleRow('Lock voting items after launch', dz('New items added after launch can’t carry custom voting power.', 'New items added after launch can carry custom voting power.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
+  f.appendChild(toggleRow('Lock owner minting after launch', dz('New items added after launch can’t let the owner mint for free.', 'New items added after launch can let the owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
+  f.appendChild(toggleRow('Give split recipients project tokens', dz('Sale-split recipients also receive project tokens for their share.', 'Sale-split recipients receive funds only, no project tokens.'), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
+
+  // Revnet operator 721 permissions — REVDeployer grants the operator all four by default; these let the
+  // user revoke individual ones at deploy time (encoded as the REVDeploy721TiersHookConfig preventOperator* flags).
+  if (state.projectType === 'revnet') {
+    var opHead = el('div', 'create-label'); opHead.style.marginTop = '16px'; opHead.textContent = 'Operator store permissions'; f.appendChild(opHead);
+    var opNote = el('div', 'create-hint'); opNote.textContent = 'What the revnet operator can do to the store after launch.'; f.appendChild(opNote);
+    f.appendChild(toggleRow('Operator can add & remove items', dz('The operator can adjust the store’s item tiers.', 'The operator can’t change the store’s item tiers.'), c.opCanAdjustTiers, function (v) { c.opCanAdjustTiers = v; }));
+    f.appendChild(toggleRow('Operator can update item metadata', dz('The operator can update the store’s metadata.', 'The operator can’t update the store’s metadata.'), c.opCanUpdateMetadata, function (v) { c.opCanUpdateMetadata = v; }));
+    f.appendChild(toggleRow('Operator privileged access', dz('The operator can take from inventory for free.', 'The operator pays like everyone else.'), c.opCanMint, function (v) { c.opCanMint = v; }));
+    f.appendChild(toggleRow('Operator can increase discounts', dz('The operator can raise an item’s discount.', 'The operator can’t raise item discounts.'), c.opCanIncreaseDiscount, function (v) { c.opCanIncreaseDiscount = v; }));
+  }
+  return f;
+}
+
+// Store-item price currency (independent of the ruleset base currency).
+function storeCur(state) { return state.storePricingCurrency || 1; }
+function storeUnit(state) { return storeCur(state) === 2 ? 'USDC' : 'ETH'; }
+function storeDecimals(state) { return storeCur(state) === 2 ? 6 : 18; }
+
 function renderNfts(state, render) {
   var wrap = el('div', '');
-  var head = stepHead('Shop', 'Optional — sell items that supporters mint by paying your project. You can change an item’s image later, but not its price or how many exist after launch.');
+  var head = stepHead('Shop', 'Sell items to customers and supporters.');
   wrap.appendChild(head);
 
-  state.nfts.forEach(function (nft, idx) {
-    var row = el('div', 'create-nft-row');
-    if (nft.imageUri) { var im = el('img', 'create-nft-thumb'); im.src = ipfsHttp(nft.imageUri); row.appendChild(im); }
-    var meta = el('div', 'create-nft-meta');
-    var nm = el('div', 'create-nft-name'); nm.textContent = nft.name || 'Untitled item'; meta.appendChild(nm);
-    var pr = el('div', 'create-nft-price'); pr.textContent = (nft.priceEth || '0') + ' ETH' + (nft.limited ? (' · ' + (nft.supply || '0') + ' for sale') : ' · unlimited'); meta.appendChild(pr);
-    row.appendChild(meta);
-    var ed = el('button', 'create-btn small ghost'); ed.textContent = 'Edit';
-    ed.addEventListener('click', function () { openNftModal(nft, function (updated) { state.nfts[idx] = updated; render(); }); });
-    row.appendChild(ed);
-    var rm = el('button', 'create-recipient-x'); rm.textContent = '✕';
-    rm.addEventListener('click', function () { state.nfts.splice(idx, 1); render(); });
-    row.appendChild(rm);
-    wrap.appendChild(row);
-  });
+  // Store pricing currency — what every item's price is denominated in.
+  wrap.appendChild(fieldBlock('Store pricing currency', false, (function () {
+    var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
+    [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option'); op.value = String(o[1]); op.textContent = o[0]; if (storeCur(state) === o[1]) op.selected = true; sel.appendChild(op); });
+    sel.addEventListener('change', function () { state.storePricingCurrency = Number(sel.value); render(); });
+    return sel;
+  })()));
 
-  var add = el('button', 'create-add-nft');
-  add.textContent = '＋ Add item for sale';
-  add.addEventListener('click', function () { openNftModal(null, function (nft) { state.nfts.push(nft); render(); }); });
-  wrap.appendChild(add);
+  // Opt-in: the Shop is off by default. Ticking it on reveals the first item to fill out.
+  wrap.appendChild(toggleRow('Launch with store items in stock', dz('Your project launches with items already for sale.', 'You can add items to sell anytime after launch.'), state.shopEnabled, function (v) {
+    state.shopEnabled = v;
+    if (v && !state.nfts.length) state.nfts.push(itemDraft());
+    render();
+  }));
+
+  if (state.shopEnabled) {
+    state.nfts.forEach(function (nft, idx) { wrap.appendChild(itemCard(state, nft, idx, render)); });
+
+    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = 'add item +';
+    add.style.marginTop = state.nfts.length ? '14px' : '4px';
+    add.addEventListener('click', function (e) {
+      e.preventDefault();
+      state.nfts.forEach(function (n) { n.expanded = false; });
+      state.nfts.push(itemDraft()); render();
+    });
+    wrap.appendChild(add);
+  }
+
+  // Store Config (collection name/symbol, Pinata JWT, store-wide flags) is always available — the owner
+  // can configure the store even when launching with no items in stock.
+  var extras = collapse(state.collection, 'extrasOpen', 'Store Config', false, render, function () { return collectionExtrasSection(state, render); });
+  extras.style.marginTop = '16px';
+  wrap.appendChild(extras);
+  return wrap;
+}
+
+// One item as an expandable inline card — same head/caret/remove pattern as a ruleset card.
+function itemCard(state, nft, idx, render) {
+  var card = el('div', 'create-stage-card');
+  var head = el('div', 'create-stage-head');
+  head.addEventListener('click', function (e) { if (e.target.closest('.create-stage-remove')) return; nft.expanded = !nft.expanded; render(); });
+  var left = el('div', 'create-stage-headtext');
+  var title = el('div', 'create-stage-title'); title.textContent = nft.name || ('Item #' + (idx + 1)); left.appendChild(title);
+  var sum = el('div', 'create-stage-sum'); sum.textContent = itemSummary(state, nft); left.appendChild(sum);
+  head.appendChild(left);
+  var rm = el('button', 'create-stage-remove'); rm.textContent = '✕';
+  rm.addEventListener('click', function () { state.nfts.splice(idx, 1); if (!state.nfts.length) state.shopEnabled = false; render(); });
+  head.appendChild(rm);
+  var caret = el('span', 'create-stage-caret'); caret.textContent = nft.expanded ? '▴' : '▾'; head.appendChild(caret);
+  card.appendChild(head);
+  if (nft.expanded) card.appendChild(itemEditor(state, nft, idx, render));
+  return card;
+}
+
+function itemSummary(state, nft) {
+  var unit = storeUnit(state);
+  var parts = [];
+  parts.push((nft.priceEth ? nft.priceEth : '0') + ' ' + unit);
+  parts.push(nft.limited ? ((nft.supply || '0') + ' for sale') : 'unlimited');
+  if (Number(nft.category) > 0) {
+    var c = (state.storeCategories || []).find(function (x) { return x.id === Number(nft.category); });
+    parts.push('category ' + (c ? c.name : ('#' + nft.category)));
+  }
+  if (nft.splitOn) parts.push('split sales');
+  if (nft.discountOn && Number(nft.discountPct) > 0) parts.push(round2(Number(nft.discountPct)) + '% off');
+  if (nft.reserveOn) parts.push('reserved');
+  return parts.join(' · ');
+}
+
+// Inline media picker — pins the chosen file immediately (any type) and stores imageUri + mediaType.
+function itemMediaPicker(state, nft, render) {
+  var w = el('div', 'operator-edit-logo');
+  if (nft.imageUri && (nft.mediaType || '').indexOf('image') === 0) { var prev = el('img', 'operator-edit-logo-prev'); prev.src = ipfsHttp(nft.imageUri); w.appendChild(prev); }
+  else if (nft.imageUri) { var hint = el('span', 'operator-edit-hint'); hint.textContent = (nft.mediaType || 'file') + ' · pinned'; w.appendChild(hint); }
+  var file = el('input', 'operator-edit-logo-file'); file.type = 'file';
+  file.accept = 'image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown';
+  file.addEventListener('change', function () {
+    var f = file.files && file.files[0];
+    if (!f) return;
+    if (!hasPinata()) { alert('Add a Pinata JWT in the Collection section to upload media.'); return; }
+    if (f.size > ITEM_MAX_MEDIA_BYTES) { alert('That file is ' + itemFileSize(f.size) + ' — over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
+    nft._mediaBusy = true; render();
+    pinFile(f, nft.name || f.name).then(function (uri) { nft.imageUri = uri; nft.mediaType = (f.type || '').toLowerCase(); nft._mediaBusy = false; render(); })
+      .catch(function (e) { nft._mediaBusy = false; render(); alert('Upload failed: ' + (e && e.message || e)); });
+  });
+  w.appendChild(file);
+  if (nft._mediaBusy) { var b = el('span', 'operator-edit-hint'); b.textContent = 'Pinning…'; w.appendChild(b); }
+  if (nft.imageUri) { var clr = el('a', 'operator-edit-logo-clear'); clr.href = '#'; clr.textContent = '✕'; clr.title = 'Remove'; clr.addEventListener('click', function (e) { e.preventDefault(); nft.imageUri = ''; nft.mediaType = ''; render(); }); w.appendChild(clr); }
+  return w;
+}
+
+// Inline editor for one item — same fields as the project-page store modal, rendered inline (no popover).
+function itemEditor(state, nft, idx, render) {
+  var c = el('div', 'create-stage-body');
+  var priceUnit = storeUnit(state);
+
+  c.appendChild(fieldBlock('Name', false, textInput(nft.name, 'My juicy thing', function (v) { nft.name = v; })));
+  c.appendChild(fieldBlock('Media', false, itemMediaPicker(state, nft, render)));
+  var mediaHint = el('div', 'create-hint'); mediaHint.textContent = 'Image, gif, video, audio, PDF, text… up to ' + ITEM_MAX_MEDIA_MB + ' MB.'; c.appendChild(mediaHint);
+  c.appendChild(fieldBlock('Description', true, textArea(nft.description, '', function (v) { nft.description = v; })));
+
+  // Price — re-render on change (blur/enter) so split/discount gating updates without losing focus mid-type.
+  var priceInput = textInput(nft.priceEth, '0.0', function (v) { nft.priceEth = v.trim(); });
+  priceInput.addEventListener('change', function () { render(); });
+  c.appendChild(fieldBlock('Price (' + priceUnit + ')', false, priceInput));
+
+  // Split sales + Initial discount only make sense once there's a price — always shown, idle when free.
+  var hasPrice = parseFloat(nft.priceEth) > 0;
+  if (!hasPrice) {
+    c.appendChild(idleToggle('Split sales', 'Set a price above to split each sale.'));
+    c.appendChild(idleToggle('Initial discount', 'Set a price above to start the item at a discount.'));
+  } else {
+    c.appendChild(toggleRow('Split sales', dz('Send part of each sale to other addresses or projects; the rest goes to this project.', 'The whole sale goes to this project.'), nft.splitOn, function (v) { nft.splitOn = v; if (v && !nft.splitRecipients.length) nft.splitRecipients.push({ pct: '', recip: '', benef: '' }); render(); }));
+    if (nft.splitOn) {
+      var sc = el('div', 'create-subcard');
+      nft.splitRecipients.forEach(function (rec, i) { sc.appendChild(itemSplitRow(nft, rec, i, render)); });
+      var addS = el('a', 'operator-cta create-add-link'); addS.href = '#'; addS.textContent = 'add recipient +'; addS.style.marginTop = '12px';
+      addS.addEventListener('click', function (e) { e.preventDefault(); nft.splitRecipients.push({ pct: '', recip: '', benef: '' }); render(); });
+      sc.appendChild(addS);
+      c.appendChild(sc);
+    }
+    c.appendChild(toggleRow('Initial discount', dz('The item starts at a percent off its price.', 'The item sells at full price.'), nft.discountOn, function (v) { nft.discountOn = v; if (!v) nft.discountPct = ''; render(); }));
+    if (nft.discountOn) {
+      var dRow = el('div', 'create-inline-row');
+      var dInp = el('input', 'field create-split-pct'); dInp.type = 'number'; dInp.min = '0'; dInp.max = '100'; dInp.step = 'any'; dInp.placeholder = '10'; dInp.value = nft.discountPct || '';
+      dInp.addEventListener('input', function () { nft.discountPct = dInp.value.trim(); });
+      dRow.appendChild(dInp); dRow.appendChild(document.createTextNode(' % off the price'));
+      c.appendChild(dRow);
+    }
+  }
+
+  c.appendChild(toggleRow('Unlimited inventory', dz('Any number can be sold.', 'Only a set quantity can be sold.'), !nft.limited, function (v) { nft.limited = !v; render(); }));
+  if (nft.limited) c.appendChild(fieldBlock('Quantity', false, textInput(nft.supply, '100', function (v) { nft.supply = v.trim(); })));
+
+  // Category
+  var catField = el('div', 'create-field');
+  var catLbl = el('label', 'create-label'); catLbl.textContent = 'Category'; catField.appendChild(catLbl);
+  var catHint = el('div', 'create-hint'); catHint.textContent = 'Items being sold can be organized by category.'; catField.appendChild(catHint);
+  if (nft._catAdding) {
+    var caRow = el('div', 'create-inline-row');
+    var caInp = el('input', 'field create-input'); caInp.type = 'text'; caInp.placeholder = 'category name'; caInp.value = nft._catName || '';
+    caInp.addEventListener('input', function () { nft._catName = caInp.value; });
+    var caSave = el('a', 'operator-cta'); caSave.href = '#'; caSave.textContent = 'Save'; caSave.style.marginLeft = '8px';
+    caSave.addEventListener('click', function (e) {
+      e.preventDefault(); var nm = (nft._catName || '').trim(); if (!nm) { caInp.focus(); return; }
+      var nextId = (state.storeCategories || []).reduce(function (m, x) { return x.id > m ? x.id : m; }, 0) + 1;
+      state.storeCategories.push({ id: nextId, name: nm }); nft.category = nextId; nft._catAdding = false; nft._catName = ''; render();
+    });
+    caRow.appendChild(caInp); caRow.appendChild(caSave); catField.appendChild(caRow);
+  } else {
+    var catSel = el('select', 'field create-input');
+    var o0 = el('option'); o0.value = '0'; o0.textContent = 'Default'; catSel.appendChild(o0);
+    (state.storeCategories || []).forEach(function (x) { var o = el('option'); o.value = String(x.id); o.textContent = x.name + ' (#' + x.id + ')'; catSel.appendChild(o); });
+    var oA = el('option'); oA.value = '__add__'; oA.textContent = '+ Add category…'; catSel.appendChild(oA);
+    catSel.value = String(nft.category || 0);
+    catSel.addEventListener('change', function () { if (catSel.value === '__add__') { nft._catAdding = true; render(); } else { nft.category = Number(catSel.value) || 0; } });
+    catField.appendChild(catSel);
+  }
+  c.appendChild(catField);
+
+  // Extra options
+  c.appendChild(collapse(nft, 'advOpen', 'Extra options', true, render, function () {
+    var a = el('div', '');
+    a.appendChild(toggleRow('Reserve inventory', dz('Set aside 1 of every N sold for a chosen address.', 'No inventory is reserved.'), nft.reserveOn, function (v) { nft.reserveOn = v; render(); }));
+    if (nft.reserveOn) {
+      var rRow = el('div', 'create-inline-row');
+      rRow.appendChild(document.createTextNode('1 of '));
+      var fInp = el('input', 'field create-split-pct'); fInp.type = 'number'; fInp.min = '1'; fInp.step = '1'; fInp.placeholder = '10'; fInp.value = nft.reserveFrequency || '';
+      fInp.addEventListener('input', function () { nft.reserveFrequency = fInp.value.trim(); });
+      rRow.appendChild(fInp); rRow.appendChild(document.createTextNode(' sold to '));
+      var bInp = el('input', 'field'); bInp.type = 'text'; bInp.placeholder = '0x… address'; bInp.value = nft.reserveBeneficiary || ''; bInp.style.flex = '1';
+      bInp.addEventListener('input', function () { nft.reserveBeneficiary = bInp.value.trim(); });
+      rRow.appendChild(bInp); a.appendChild(rRow);
+    }
+    var minter = state.projectType === 'revnet' ? 'operator' : 'owner';
+    a.appendChild(toggleRow(minter.charAt(0).toUpperCase() + minter.slice(1) + ' privileged access', dz('The ' + minter + ' can take from inventory for free.', 'The ' + minter + ' pays like everyone else.'), nft.flags.allowOwnerMint, function (v) { nft.flags.allowOwnerMint = v; }));
+    a.appendChild(toggleRow('Transfers pausable per ruleset', dz('This item’s transfers can be paused during a ruleset.', 'This item’s transfers can’t be paused.'), nft.flags.transfersPausable, function (v) { nft.flags.transfersPausable = v; }));
+    a.appendChild(toggleRow('Permanent', dz('This item can never be removed from the store.', 'This item can be removed later.'), nft.flags.cantBeRemoved, function (v) { nft.flags.cantBeRemoved = v; }));
+    a.appendChild(toggleRow('Allow credit purchases', dz('Payments that don’t buy an item become credit usable on items that allow it.', 'Payments that don’t buy this item don’t earn credit toward it.'), nft.flags.allowCredits, function (v) { nft.flags.allowCredits = v; }));
+    a.appendChild(toggleRow('Owner can edit discounts', dz('The owner can change this item’s discount later.', 'This item’s discount is locked.'), nft.flags.ownerCanEditDiscount, function (v) { nft.flags.ownerCanEditDiscount = v; }));
+    a.appendChild(toggleRow('Custom voting units', dz('Give this item a specific governance weight.', 'Governance weight follows the item price.'), nft.votingOn, function (v) { nft.votingOn = v; if (!v) nft.votingUnits = ''; render(); }));
+    if (nft.votingOn) a.appendChild(fieldBlock('Voting units', false, textInput(nft.votingUnits, '0', function (v) { nft.votingUnits = v.trim(); })));
+    return a;
+  }));
+  return c;
+}
+
+function itemSplitRow(nft, rec, idx, render) {
+  var wrap = el('div', 'create-split-wrap');
+  if (idx > 0) wrap.style.marginTop = '12px';
+  var row = el('div', 'create-split-row');
+  var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Send' : '… and'; row.appendChild(lead);
+  var pct = el('input', 'field create-split-pct'); pct.type = 'number'; pct.min = '0'; pct.step = 'any'; pct.placeholder = '10'; pct.value = rec.pct || '';
+  pct.addEventListener('input', function () { rec.pct = pct.value.trim(); }); row.appendChild(pct);
+  var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
+  var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
+  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID'; recip.value = rec.recip || '';
+  var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
+  var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
+  rm.addEventListener('click', function () { var i = nft.splitRecipients.indexOf(rec); if (i >= 0) nft.splitRecipients.splice(i, 1); render(); });
+  row.appendChild(recipBoxWith(recip, ensHint)); row.appendChild(rm); wrap.appendChild(row);
+  var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
+  var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
+  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… who receives that project’s tokens'; benef.value = rec.benef || '';
+  benef.addEventListener('input', function () { rec.benef = benef.value.trim(); });
+  benefRow.appendChild(benef); wrap.appendChild(benefRow);
+  function refresh() { var v = (recip.value || '').trim(); rec.recip = v; benefRow.style.display = (/^[0-9]+$/.test(v) && Number(v) > 0) ? '' : 'none'; }
+  recip.addEventListener('input', refresh); refresh();
   return wrap;
 }
 
 // Deadline + other-rules section for a stage (folded into the stage editor).
-function deadlineSection(stage, render) {
-  var wrap = el('div', '');
-  wrap.appendChild(infoNote('Edits must be submitted before this deadline ahead of the next ruleset, giving token holders time to verify changes before they take effect.'));
+function otherRulesSection(stage, render) {
+  var c = el('div', '');
+  c.appendChild(toggleRow('Hold fees', dz('Fees are held in the project instead of processed automatically, and refunded to the project’s balance if the funds are returned. Useful for managing whole token holder refunds. After 28 days without seeing the withdrawn funds, held fees are automatically processed.', 'Fees are processed automatically.'), stage.holdFees, function (v) { stage.holdFees = v; }));
 
-  DEADLINE_OPTIONS.forEach(function (o) {
-    var card = el('button', 'create-deadline' + (stage.deadline === o.key ? ' selected' : ''));
-    var dot = el('span', 'create-radio' + (stage.deadline === o.key ? ' on' : ''));
-    card.appendChild(dot);
-    var lab = el('span', 'create-deadline-label'); lab.textContent = o.label; card.appendChild(lab);
-    if (o.def) { var bd = el('span', 'create-choice-badge'); bd.textContent = 'DEFAULT'; card.appendChild(bd); }
-    card.addEventListener('click', function () { stage.deadline = o.key; render(); });
-    wrap.appendChild(card);
-  });
-  if (stage.deadline === 'none') wrap.appendChild(infoNote('No deadline leaves this stage vulnerable to last-second edits by the owner, which may appear risky to supporters.'));
-
-  wrap.appendChild(collapse(stage, 'otherOpen', 'Other rules', true, render, function () {
-    var c = el('div', '');
-    c.appendChild(toggleRow('Pause payments', 'While paused, the project cannot receive payments (direct ETH transfers still work).', stage.pausePay, function (v) { stage.pausePay = v; }));
-    c.appendChild(toggleRow('Hold fees', 'Hold fees in the project instead of processing them automatically.', stage.holdFees, function (v) { stage.holdFees = v; }));
-    c.appendChild(toggleRow('Allow setting payment terminals', 'The owner can add/remove payment terminals at any time.', stage.allowSetTerminals, function (v) { stage.allowSetTerminals = v; }));
-    c.appendChild(toggleRow('Allow setting controller', 'The owner can change the project’s controller at any time.', stage.allowSetController, function (v) { stage.allowSetController = v; }));
-    c.appendChild(toggleRow('Allow terminal migration', 'The owner can migrate the project’s terminals to a new version.', stage.allowTerminalMigration, function (v) { stage.allowTerminalMigration = v; }));
-    return c;
-  }));
-  return wrap;
+  // Owner-power toggles — each grants the owner mid-flight control that supporters must trust. Grouped
+  // in a pink warning zone so the abuse-vector risk is unmistakable.
+  var warn = el('div', 'create-warn-zone');
+  var wh = el('div', 'create-warn-zone-head'); wh.textContent = 'Superpowers';
+  warn.appendChild(wh);
+  warn.appendChild(toggleRow('Allow setting payment terminals', dz('The owner can add/remove payment terminals at any time. This lets the project upgrade, but also lets the owner reroute where funds flow at will.', 'Payment terminals are fixed for this ruleset.'), stage.allowSetTerminals, function (v) { stage.allowSetTerminals = v; }));
+  warn.appendChild(toggleRow('Allow setting controller', dz('The owner can change the project’s controller at any time. This lets the project upgrade, but can also be used by the owner to change all the rules at will.', 'The controller is fixed for this ruleset.'), stage.allowSetController, function (v) { stage.allowSetController = v; }));
+  warn.appendChild(toggleRow('Allow terminal migration', dz('The owner can migrate the project’s terminals to a new version. This lets the project upgrade, but can also be used by the owner to move all funds to a terminal of their choosing.', 'Terminal migration is disabled.'), stage.allowTerminalMigration, function (v) { stage.allowTerminalMigration = v; }));
+  warn.appendChild(toggleRow('Allow setting a custom token', dz('The owner can replace the project’s token with a custom ERC-20 of their choosing.', 'The project token can’t be swapped for a custom one.'), stage.allowSetCustomToken, function (v) { stage.allowSetCustomToken = v; }));
+  warn.appendChild(toggleRow('Allow adding accounting tokens', dz('The owner can add new accounting tokens the project holds at any time.', 'The set of accounting tokens is fixed for this ruleset.'), stage.allowAddAccountingContext, function (v) { stage.allowAddAccountingContext = v; }));
+  warn.appendChild(toggleRow('Allow adding price feeds', dz('The owner can add price feeds the project uses to convert currencies.', 'Price feeds can’t be added during this ruleset.'), stage.allowAddPriceFeed, function (v) { stage.allowAddPriceFeed = v; }));
+  c.appendChild(warn);
+  return c;
 }
 
 // ---------------------------------------------------------------------------
 // Step 6: Deploy
 // ---------------------------------------------------------------------------
 
-function renderDeploy(state, render) {
+// Settlement — how/where the project settles: accounting token, chains, and per-chain refinements.
+function renderSettlement(state, render) {
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Review & Deploy', 'Pick the chains to deploy on, review, and launch.'));
+  wrap.appendChild(stepHead('Settlement', 'Decide where you can receive payments and how money settles.'));
 
-  // Chain select
-  var net = networkOf(state.chainIds[0]);
-  var label = el('div', 'create-label'); label.textContent = 'Select chains:'; wrap.appendChild(label);
-  var netRow = el('div', 'create-pills');
-  ['mainnet', 'testnet'].forEach(function (n) {
-    var p = el('button', 'create-pill' + (net === n ? ' selected' : ''));
-    p.textContent = n;
-    p.addEventListener('click', function () {
-      if (n === net) return;
-      var first = CHAIN_OPTIONS.find(function (c) { return (n === 'testnet') === c.testnet; });
-      state.chainIds = first ? [first.id] : []; render();
-    });
-    netRow.appendChild(p);
-  });
-  wrap.appendChild(netRow);
+  // Accounting token — what the project HOLDS in its treasury. The router terminal (any-token
+  // auto-convert) is always part of the tx and toggled via an inline enable/disable in the description.
+  // Revnets are ETH-only (fixed native accounting context), so the accounting card is hidden for them.
+  wrap.appendChild(fieldBlock('Accounting', false, (function () {
+    var w = el('div', '');
+    w.appendChild(choiceCardsInline([{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }], state.accepts[0] || 'eth', function (k) {
+      state.accepts = [k]; render();
+    }));
+    var note = el('div', 'create-hint');
+    note.textContent = state.projectType === 'revnet'
+      ? ('Pick which reserve asset will back the value of $' + tickerLabel(state) + '.')
+      : 'The token that makes up your project’s balance.';
+    w.appendChild(note);
+    // The router terminal (any-token auto-swap) is a custom-flow feature; revnets use only the canonical terminal.
+    if (state.projectType !== 'revnet') {
+      var line2 = el('div', 'create-hint');
+      line2.appendChild(document.createTextNode(state.swapRouter
+        ? 'Other payment tokens auto-swap to your chosen accounting token as they’re paid in. '
+        : 'Payers can only pay in your accounting token. '));
+      var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
+      toggle.textContent = state.swapRouter ? 'Disable giving payers this option' : 'Enable giving payers this option';
+      toggle.addEventListener('click', function (e) { e.preventDefault(); state.swapRouter = !state.swapRouter; render(); });
+      line2.appendChild(toggle);
+      w.appendChild(line2);
+    }
+    return w;
+  })()));
 
+  // Chain + bridge selection (shared with the revnet Deploy step).
+  wrap.appendChild(chainBridgeBlock(state, render));
+
+  // Per-chain overrides (multichain only) — confirm/adapt amounts, items, and addresses per chain.
+  if (state.chainIds.length > 1) wrap.appendChild(perChainSection(state, render));
+  return wrap;
+}
+
+// Chain multi-select (canonical names) + the bridge selector shown when >1 chain is chosen. Shared by the
+// custom Settlement step and the revnet Deploy step.
+function chainBridgeBlock(state, render) {
+  var wrap = el('div', '');
+  var label = el('div', 'create-label'); label.style.marginTop = '18px'; label.textContent = 'Select chains:'; wrap.appendChild(label);
   var chainRow = el('div', 'create-chain-row');
-  CHAIN_OPTIONS.filter(function (c) { return c.testnet === (net === 'testnet'); }).forEach(function (c) {
-    var on = state.chainIds.indexOf(c.id) !== -1;
+  CHAIN_PAIRS.forEach(function (p) {
+    var actual = actualChainId(p.canon, state.network);
+    var on = state.chainIds.indexOf(actual) !== -1;
     var pill = el('button', 'create-chain-pill' + (on ? ' selected' : ''));
-    pill.textContent = c.name;
+    pill.textContent = p.name;
     pill.addEventListener('click', function () {
       var ids = state.chainIds.slice();
-      if (on) ids = ids.filter(function (x) { return x !== c.id; });
-      else ids.push(c.id);
-      state.chainIds = ids.length ? ids : [c.id];
+      if (on) ids = ids.filter(function (x) { return x !== actual; });
+      else ids.push(actual);
+      state.chainIds = ids.length ? ids : [actual];
       render();
     });
     chainRow.appendChild(pill);
   });
   wrap.appendChild(chainRow);
   wrap.appendChild(infoNote(state.chainIds.length > 1
-    ? 'Deploys on ' + state.chainIds.length + ' chains, linked so your token and balances can move between them. You’ll sign one transaction per chain.'
+    ? 'Deploys on ' + state.chainIds.length + ' chains, linked so your token and balances can move between them. You sign once per chain and pay gas once (via Relayr).'
     : 'Deploys on a single chain. You can add more chains here before launching.'));
+
+  if (state.chainIds.length > 1) {
+    var bField = el('div', 'create-field'); bField.style.marginTop = '16px';
+    var bl = el('label', 'create-label'); bl.textContent = 'Connect chains via'; bField.appendChild(bl);
+    var bsel = el('select', 'field create-input'); bsel.style.width = 'auto'; bsel.style.minWidth = '0';
+    [['native', 'Native bridges'], ['ccip', 'CCIP'], ['both', 'Both']].forEach(function (o) {
+      var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((state.suckerType || 'native') === o[0]) op.selected = true; bsel.appendChild(op);
+    });
+    bsel.addEventListener('change', function () { state.suckerType = bsel.value; render(); });
+    bField.appendChild(bsel);
+    var bh = el('div', 'create-hint'); bh.textContent = 'Native bridges connect Ethereum with L2s (strongest guarantees). CCIP (Chainlink) connects any chains.'; bField.appendChild(bh);
+    wrap.appendChild(bField);
+    var unc = uncoveredPairs(state);
+    if (unc.length) wrap.appendChild(warnNote('⚠ ' + unc.length + ' chain pair' + (unc.length > 1 ? 's' : '') + ' can’t connect with native bridges (they only link Ethereum↔L2). Choose CCIP or Both to link L2↔L2 pairs.'));
+  }
+  return wrap;
+}
+
+// Selected-chain pairs that won't link under the chosen sucker type (e.g. L2↔L2 under native bridges).
+function uncoveredPairs(state) {
+  var ids = state.chainIds, out = [];
+  for (var i = 0; i < ids.length; i++) for (var j = i + 1; j < ids.length; j++) {
+    var ok = bridgesForType(state.suckerType).some(function (br) { return suckerDeployerForBridge(ids[i], ids[j], br); });
+    if (!ok) out.push([ids[i], ids[j]]);
+  }
+  return out;
+}
+
+function renderDeploy(state, render) {
+  var isRev = state.projectType === 'revnet';
+  var wrap = el('div', '');
+  wrap.appendChild(stepHead('Review & Deploy', isRev ? 'Review, then deploy your revnet.' : 'Review your project, then launch.'));
 
   // Review summary
   wrap.appendChild(reviewSummary(state));
@@ -1154,7 +2110,7 @@ function renderDeploy(state, render) {
   // The exact transaction for each chain is shown in a confirmation screen (with a copy-able LLM audit
   // prompt) right before you sign it — no need to re-review raw calldata here.
   wrap.appendChild(infoNote(state.chainIds.length > 1
-    ? 'You’ll sign one transaction per chain. Each one’s exact data is shown for review before you sign it.'
+    ? 'Each chain’s exact transaction is shown for review before you sign it.'
     : 'The exact transaction data is shown for review before you sign it.'));
 
   // ToS + launch
@@ -1177,18 +2133,197 @@ function renderDeploy(state, render) {
     wrap.appendChild(log);
   }
 
-  var bad = badStageIndex(state);
+  var bad = isRev ? -1 : badStageIndex(state); // revnets have no per-stage durations to validate
+
+  // Mainnet/testnet — chosen here, just before launching. Remaps the selected chains to that network.
+  var netField = el('div', 'create-field'); netField.style.marginTop = '14px';
+  var netLbl = el('label', 'create-label'); netLbl.textContent = 'Deploy to'; netField.appendChild(netLbl);
+  var netSel = el('select', 'field create-input'); netSel.style.width = 'auto'; netSel.style.minWidth = '0';
+  [['mainnet', 'Mainnet'], ['testnet', 'Testnet']].forEach(function (o) { var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (state.network === o[0]) op.selected = true; netSel.appendChild(op); });
+  netSel.addEventListener('change', function () {
+    state.network = netSel.value;
+    state.chainIds = state.chainIds.map(function (id) { return actualChainId(canonChainId(id), state.network); });
+    render();
+  });
+  netField.appendChild(netSel);
+  wrap.appendChild(netField);
+
+  var needTicker = isRev && !state.details.ticker;
+  var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
+  var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
+  var needOwner = !isRev && !/^0x[0-9a-fA-F]{40}$/.test(ownerRaw);
+  var needOperator = isRev && !/^0x[0-9a-fA-F]{40}$/.test(opRaw);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || bad !== -1;
   }
-  launch.textContent = state.done ? 'Launched √' : (state.deploying ? 'Launching…' : 'Launch project');
+  launch.textContent = state.done ? (isRev ? 'Deployed ✓' : 'Launched ✓') : (state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project'));
   launch.addEventListener('click', function () { deploy(state, render); });
   updateLaunch();
   wrap.appendChild(launch);
-  if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to launch.'));
+  if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to ' + (isRev ? 'deploy.' : 'launch.')));
+  if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
+  if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Type step to launch.'));
+  if (needOperator) wrap.appendChild(infoNote('Set an operator on the Type step to deploy your revnet.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
 
+  return wrap;
+}
+
+// ---- Per-chain overrides (multichain): limited payout amounts + store-item inclusion/quantity ----
+
+function stageHasLimitedPayouts(s) {
+  return s.payoutMode === 'limited' && (s.payoutRecipients || []).some(function (r) { return Number(r.amountEth) > 0 || r.recip || r.address || r.projectId; });
+}
+function anyLimitedPayouts(state) { return state.stages.some(stageHasLimitedPayouts); }
+// Per-chain overrides are keyed by canonical chain id (1/10/42161/8453) so they survive a mainnet↔testnet switch.
+function perChainOf(state, chainId) {
+  var k = canonChainId(chainId);
+  if (!state.perChain[k]) state.perChain[k] = { payouts: {}, items: {}, addr: {} };
+  var pc = state.perChain[k];
+  if (!pc.payouts) pc.payouts = {}; if (!pc.items) pc.items = {}; if (!pc.addr) pc.addr = {};
+  return pc;
+}
+function perChainPeek(state, chainId) { return state.perChain[canonChainId(chainId)]; }
+// Per-chain address override store, keyed by a stable field key (e.g. 'p:0:1' = payout stage0 recipient1).
+function pcAddrGet(state, chainId, key, def) {
+  var pc = perChainPeek(state, chainId);
+  var ov = pc && pc.addr && pc.addr[key];
+  return (ov != null && ov !== '') ? ov : def;
+}
+function pcAddrSet(state, chainId, key, val) { var pc = perChainOf(state, chainId); pc.addr[key] = val; }
+// The resolved 0x address for a field on a chain (per-chain override → default), ENS-resolved.
+function chainAddr(state, chainId, key, defStr) { return resolvedStr(pcAddrGet(state, chainId, key, defStr)); }
+// Per-chain payout amount for one recipient (override → default).
+function chainPayoutAmount(state, chainId, stageIdx, recipIdx) {
+  var pc = perChainPeek(state, chainId);
+  var ov = pc && pc.payouts && pc.payouts[stageIdx] && pc.payouts[stageIdx][recipIdx];
+  if (ov != null && ov !== '') return ov;
+  return state.stages[stageIdx].payoutRecipients[recipIdx].amountEth;
+}
+// The full amounts array for a stage on a chain (or null if the stage isn't limited).
+function chainStageAmounts(state, chainId, stageIdx) {
+  var st = state.stages[stageIdx];
+  if (!st || st.payoutMode !== 'limited') return null;
+  return st.payoutRecipients.map(function (_, idx) { return chainPayoutAmount(state, chainId, stageIdx, idx); });
+}
+function chainItemIncluded(state, chainId, itemIdx) {
+  var pc = perChainPeek(state, chainId);
+  var ov = pc && pc.items && pc.items[itemIdx];
+  return ov ? ov.include !== false : true;
+}
+// Per-chain "unlimited inventory" toggle for an item (override → item default).
+function chainItemUnlimited(state, chainId, itemIdx) {
+  var pc = perChainPeek(state, chainId);
+  var ov = pc && pc.items && pc.items[itemIdx];
+  if (ov && ov.unlimited != null) return ov.unlimited;
+  return !state.nfts[itemIdx].limited;
+}
+// Per-chain supply string for an item ('' = unlimited).
+function chainItemSupply(state, chainId, itemIdx) {
+  if (chainItemUnlimited(state, chainId, itemIdx)) return '';
+  var pc = perChainPeek(state, chainId);
+  var ov = pc && pc.items && pc.items[itemIdx];
+  if (ov && ov.supply != null && ov.supply !== '') return ov.supply;
+  var nft = state.nfts[itemIdx];
+  return nft.limited ? nft.supply : '';
+}
+
+// An address input prefilled with the per-chain override (or default), with ENS resolution shown below.
+function pcAddrField(state, chainId, key, defStr) {
+  var input = el('input', 'field'); input.type = 'text'; input.placeholder = '0x… or name.eth';
+  input.value = pcAddrGet(state, chainId, key, defStr || '');
+  input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
+  return recipBoxWith(input, attachEns(input, function () {}));
+}
+function isWalletRecip(rec) { return rec && rec.type !== 'project' && (rec.address || '').trim(); }
+function pcLabelRow(card, text) { var d = el('div', 'create-hint'); d.style.marginTop = '8px'; d.textContent = text; card.appendChild(d); }
+
+function perChainSection(state, render) {
+  var hasItems = state.shopEnabled && state.nfts.length > 0;
+  var anyPayouts = state.stages.some(function (s) { return s.payoutMode !== 'none' && (s.payoutRecipients || []).length; });
+  var anyReserved = state.stages.some(function (s) { return s.tokenMode === 'custom' && (s.reservedRecipients || []).some(function (r) { return Number(r.percent) > 0; }); });
+  if (!anyPayouts && !anyReserved && !hasItems) return el('div', '');
+  var wrap = el('div', '');
+  var lbl = el('div', 'create-label'); lbl.style.marginTop = '18px'; lbl.textContent = 'Per-chain settings'; wrap.appendChild(lbl);
+  wrap.appendChild(infoNote('Amounts, store items, and addresses default to the same on every chain. Adjust any chain below — addresses can differ since an account may not exist on all chains.'));
+
+  state.chainIds.forEach(function (cid) {
+    var card = el('div', 'create-subcard');
+    var h = el('div', 'create-stage-title'); h.textContent = chainName(cid); card.appendChild(h);
+    var multiStage = state.stages.length > 1;
+
+    // Payouts — per recipient: amount (limited) and address (wallet recipients).
+    state.stages.forEach(function (stage, si) {
+      if (stage.payoutMode === 'none' || !(stage.payoutRecipients || []).length) return;
+      var cur = stage.payoutCurrency === 2 ? 'USD' : 'ETH';
+      var limited = stage.payoutMode === 'limited';
+      if (multiStage) pcLabelRow(card, 'Ruleset #' + (si + 1) + ' payouts');
+      stage.payoutRecipients.forEach(function (rec, ri) {
+        if (limited) {
+          var row = el('div', 'create-inline-row');
+          row.appendChild(document.createTextNode('Pay '));
+          var amt = el('input', 'field create-inline-num'); amt.type = 'text'; amt.placeholder = '0.0'; amt.value = chainPayoutAmount(state, cid, si, ri);
+          amt.addEventListener('input', function () { var pc = perChainOf(state, cid); pc.payouts[si] = pc.payouts[si] || {}; pc.payouts[si][ri] = amt.value.trim(); });
+          row.appendChild(amt); row.appendChild(document.createTextNode(' ' + cur + ' to'));
+          card.appendChild(row);
+        } else {
+          pcLabelRow(card, round2(Number(rec.percent) || 0) + '% to');
+        }
+        if (isWalletRecip(rec)) card.appendChild(pcAddrField(state, cid, 'p:' + si + ':' + ri, rec.address));
+        else { var pl = el('div', 'create-hint'); pl.textContent = recipLabel(rec); card.appendChild(pl); }
+      });
+    });
+
+    // Reserved-token splits — per wallet recipient, an address override.
+    state.stages.forEach(function (stage, si) {
+      if (stage.tokenMode !== 'custom') return;
+      var wallets = (stage.reservedRecipients || []).map(function (r, i) { return { r: r, i: i }; }).filter(function (e) { return Number(e.r.percent) > 0 && isWalletRecip(e.r); });
+      if (!wallets.length) return;
+      pcLabelRow(card, (multiStage ? 'Ruleset #' + (si + 1) + ' reserved' : 'Reserved tokens'));
+      wallets.forEach(function (e) {
+        pcLabelRow(card, round2(Number(e.r.percent) || 0) + '% to');
+        card.appendChild(pcAddrField(state, cid, 'r:' + si + ':' + e.i, e.r.address));
+      });
+    });
+
+    // Store items — include + quantity, plus reserve beneficiary and sale-split addresses.
+    if (hasItems) {
+      state.nfts.forEach(function (nft, ii) {
+        var name = nft.name || ('Item #' + (ii + 1));
+        var inc = chainItemIncluded(state, cid, ii);
+        card.appendChild(toggleRow('Sell “' + name + '” here', dz('Sold on ' + chainName(cid) + '.', 'Not sold on ' + chainName(cid) + '.'), inc, function (v) {
+          var pc = perChainOf(state, cid); pc.items[ii] = pc.items[ii] || {}; pc.items[ii].include = v; render();
+        }));
+        if (!inc) return;
+        var unlimited = chainItemUnlimited(state, cid, ii);
+        card.appendChild(toggleRow('Unlimited inventory', dz('Any number can be sold on ' + chainName(cid) + '.', 'Only a set quantity is sold on ' + chainName(cid) + '.'), unlimited, function (v) {
+          var pc = perChainOf(state, cid); pc.items[ii] = pc.items[ii] || {}; pc.items[ii].unlimited = v; render();
+        }));
+        if (!unlimited) {
+          var qrow = el('div', 'create-inline-row');
+          qrow.appendChild(document.createTextNode('Quantity '));
+          var q = el('input', 'field create-inline-num'); q.type = 'text'; q.placeholder = '100'; q.value = chainItemSupply(state, cid, ii);
+          q.addEventListener('input', function () { var pc = perChainOf(state, cid); pc.items[ii] = pc.items[ii] || {}; pc.items[ii].supply = q.value.trim(); });
+          qrow.appendChild(q);
+          card.appendChild(qrow);
+        }
+        if (nft.reserveOn && Number(nft.reserveFrequency) > 0) {
+          pcLabelRow(card, 'Reserve set-aside to');
+          card.appendChild(pcAddrField(state, cid, 'rb:' + ii, nft.reserveBeneficiary));
+        }
+        if (nft.splitOn) {
+          (nft.splitRecipients || []).forEach(function (r, sj) {
+            var v = (r.recip || '').trim();
+            if (!v || (/^[0-9]+$/.test(v) && Number(v) > 0)) return; // skip empty + project-ID recipients
+            pcLabelRow(card, round2(Number(r.pct) || 0) + '% of “' + name + '” sales to');
+            card.appendChild(pcAddrField(state, cid, 'is:' + ii + ':' + sj, v));
+          });
+        }
+      });
+    }
+    wrap.appendChild(card);
+  });
   return wrap;
 }
 
@@ -1200,16 +2335,35 @@ function reviewSummary(state) {
     var vv = el('span', 'create-review-v'); vv.textContent = v;
     r.appendChild(kk); r.appendChild(vv); return r;
   }
+  function rowBullets(k, items) {
+    var r = el('div', 'create-review-row col');
+    var kk = el('span', 'create-review-k'); kk.textContent = k; r.appendChild(kk);
+    var list = el('div', 'create-review-bullets');
+    items.forEach(function (it) { var d = el('div', 'create-review-bullet'); d.textContent = '• ' + it; list.appendChild(d); });
+    r.appendChild(list); return r;
+  }
+  if (state.projectType === 'revnet') {
+    c.appendChild(row('Type', 'Revnet'));
+    c.appendChild(row('Name', state.details.name || '—'));
+    c.appendChild(row('Token', '$' + tickerLabel(state)));
+    c.appendChild(row('Accounting token', (state.accepts[0] || 'eth') === 'usdc' ? 'USDC' : 'ETH'));
+    var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
+    c.appendChild(row('Operator', /^0x/.test(opRaw) ? shortAddr(opRaw) : 'Project owner'));
+    c.appendChild(row('Stages', String(state.stages.length)));
+    state.stages.forEach(function (s, i) { c.appendChild(row('Stage #' + (i + 1), revStageSummary(s, i, state))); });
+    c.appendChild(row('Chains', state.chainIds.map(chainName).join(', ')));
+    return c;
+  }
   c.appendChild(row('Name', state.details.name || '—'));
   c.appendChild(row('Accounting token', state.accepts.map(function (a) { return a.toUpperCase(); }).join(' + ') + (state.swapRouter ? ' (+ any via router)' : '')));
   c.appendChild(row('Launch', state.stages[0] && state.stages[0].schedule
     ? new Date(Number(state.stages[0].schedule) * 1000).toLocaleString() : 'Immediately'));
   c.appendChild(row('Rulesets', String(state.stages.length)));
-  state.stages.forEach(function (s, i) { c.appendChild(row('Ruleset #' + (i + 1), stageSummary(s, i, state))); });
+  state.stages.forEach(function (s, i) { c.appendChild(rowBullets('Ruleset #' + (i + 1), stageSummaryParts(s, i, state))); });
   if (afterApplies(state)) {
     c.appendChild(row('Afterwards', { wait: 'idle (standby)', terminal: 'continue on the same terms forever', cycle: 'repeat the cycle forever' }[state.afterMode] || state.afterMode));
   }
-  c.appendChild(row('Shop', state.nfts.length ? (state.nfts.length + ' item(s)') : 'None'));
+  c.appendChild(row('Shop', (state.shopEnabled && state.nfts.length) ? (state.nfts.length + ' item(s)') : 'None'));
   c.appendChild(row('Chains', state.chainIds.map(chainName).join(', ')));
   return c;
 }
@@ -1299,48 +2453,52 @@ function openRecipientModal(kind, onAdd, stage) {
 // NFT modal
 // ---------------------------------------------------------------------------
 
-function openNftModal(existing, onSave) {
-  var nft = existing ? Object.assign({}, existing) : {
-    name: '', description: '', priceEth: '', imageUri: '', imageUploading: false,
-    limited: false, supply: '', reserveFrequency: '', reserveBeneficiary: '', externalLink: '', advOpen: false,
-  };
-  var ov = el('div', 'create-modal-overlay');
-  var dlg = el('div', 'create-modal');
-  function close() { ov.remove(); }
-  ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
+var ITEM_MAX_MEDIA_MB = 25;
+var ITEM_MAX_MEDIA_BYTES = ITEM_MAX_MEDIA_MB * 1024 * 1024;
 
-  function body() {
-    dlg.innerHTML = '';
-    var title = el('div', 'create-modal-title'); title.textContent = existing ? 'Edit item' : 'Add item for sale'; dlg.appendChild(title);
-    dlg.appendChild(fieldBlock('Name', false, textInput(nft.name, 'My juicy thing', function (v) { nft.name = v; })));
-    dlg.appendChild(fieldBlock('Image', false, renderImagePicker(nft.imageUri, nft.imageUploading, function (uri, busy) { nft.imageUri = uri; nft.imageUploading = busy; body(); })));
-    dlg.appendChild(fieldBlock('Description', true, textArea(nft.description, '', function (v) { nft.description = v; })));
-    dlg.appendChild(fieldBlock('Price (ETH)', false, textInput(nft.priceEth, '0.0', function (v) { nft.priceEth = v.trim(); })));
-    // Inventory — unlimited by default; uncheck to cap how many can be sold (mirrors the project page).
-    dlg.appendChild(toggleRow('Unlimited inventory', '', !nft.limited, function (v) { nft.limited = !v; body(); }));
-    if (nft.limited) dlg.appendChild(fieldBlock('Quantity', false, textInput(nft.supply, '100', function (v) { nft.supply = v.trim(); })));
-    dlg.appendChild(collapse(nft, 'advOpen', 'Extra options', true, body, function () {
-      var c = el('div', '');
-      c.appendChild(fieldBlock('Set aside 1 of every N sold', true, textInput(nft.reserveFrequency, '0 = none', function (v) { nft.reserveFrequency = v.trim(); })));
-      c.appendChild(fieldBlock('Send set-aside items to', true, textInput(nft.reserveBeneficiary, '0x… address', function (v) { nft.reserveBeneficiary = v.trim(); })));
-      c.appendChild(fieldBlock('External link', true, textInput(nft.externalLink, 'https://', function (v) { nft.externalLink = v.trim(); })));
-      return c;
-    }));
-    var foot = el('div', 'create-modal-foot');
-    var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel'; cancel.addEventListener('click', close);
-    var ok = el('button', 'create-btn primary'); ok.textContent = existing ? 'Save item' : 'Add item';
-    ok.addEventListener('click', function () {
-      if (!nft.name) { alert('Name required.'); return; }
-      if (!nft.priceEth) { alert('Price required.'); return; }
-      if (!nft.imageUri) { alert('Add an image (needs Pinata JWT).'); return; }
-      onSave(nft); close();
-    });
-    foot.appendChild(cancel); foot.appendChild(ok);
-    dlg.appendChild(foot);
-  }
-  body();
-  ov.appendChild(dlg);
-  document.body.appendChild(ov);
+function itemDraft() {
+  return {
+    expanded: true, advOpen: false, _mediaBusy: false, _catAdding: false,
+    name: '', description: '',
+    imageUri: '', mediaType: '', metaUri: '', encodedIpfsUri: '',
+    priceEth: '', limited: false, supply: '',
+    splitOn: false, splitRecipients: [],   // {pct, recip, benef}
+    discountOn: false, discountPct: '',
+    category: 0,
+    reserveOn: false, reserveFrequency: '', reserveBeneficiary: '',
+    votingOn: false, votingUnits: '',
+    flags: { allowOwnerMint: false, transfersPausable: false, cantBeRemoved: false, allowCredits: true, ownerCanEditDiscount: true },
+  };
+}
+
+function itemFileSize(bytes) {
+  if (bytes >= 1024 * 1024) return (Math.round(bytes / 1024 / 1024 * 10) / 10) + ' MB';
+  if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+  return bytes + ' B';
+}
+
+
+// Convert an item draft's split recipients into per-chain JB721 splits. Project recipients use the entered
+// project ID as-is on every chain (pre-deploy, the same project deploys at the same ID across chains).
+function itemSplits(d, state, chainId, itemIdx) {
+  if (!d.splitOn) return { splitPercent: 0, splits: [] };
+  var rsList = d.splitRecipients.map(function (r, i) { return { r: r, i: i }; }).filter(function (e) { return Number(e.r.pct) > 0 && (e.r.recip || '').trim(); });
+  var tot = rsList.reduce(function (s, e) { return s + Number(e.r.pct); }, 0);
+  if (!tot) return { splitPercent: 0, splits: [] };
+  var splits = rsList.map(function (e) {
+    var r = e.r;
+    var v = (r.recip || '').trim();
+    var isProj = /^[0-9]+$/.test(v) && Number(v) > 0;
+    // Per-chain wallet beneficiary override → default (ENS-resolved).
+    var benef = state ? chainAddr(state, chainId, 'is:' + itemIdx + ':' + e.i, pickResolved(v, r)) : pickResolved(v, r);
+    return {
+      percent: Math.round(Number(r.pct) / tot * 1e9),
+      projectId: isProj ? BigInt(v) : 0n,
+      beneficiary: isProj ? ((r.benef && /^0x[0-9a-fA-F]{40}$/.test(r.benef)) ? r.benef : ZERO) : ((benef && /^0x[0-9a-fA-F]{40}$/.test(benef)) ? benef : ZERO),
+      preferAddToBalance: false, lockedUntil: 0, hook: ZERO,
+    };
+  });
+  return { splitPercent: Math.round(tot / 100 * 1e9), splits: splits };
 }
 
 // ---------------------------------------------------------------------------
@@ -1350,15 +2508,20 @@ function openNftModal(existing, onSave) {
 function deploy(state, render) {
   state.statusLines = [];
   state.done = false;
-  var owner = state.details.immutable
-    ? '0x000000000000000000000000000000000000dEaD'
-    : ((state.details.owner && /^0x[0-9a-fA-F]{40}$/.test(state.details.owner)) ? state.details.owner : (getAccount && getAccount()));
-  if (!owner) {
+  // A connected wallet is always required — it signs/sends (and pays once, for multichain via Relayr).
+  var signer = getAccount && getAccount();
+  if (!signer) {
     connect().then(function () { state.statusLines.push({ text: 'Wallet connected — click Launch again.' }); render(); })
       .catch(function (e) { state.statusLines.push({ text: 'Connect failed: ' + (e && e.message || e), err: true }); render(); });
     return;
   }
+  // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
+  var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
+  var owner = /^0x[0-9a-fA-F]{40}$/.test(ownerRaw) ? ownerRaw : signer;
   state.deploying = true; render();
+  // Set the status pusher BEFORE runDeploy — with no Pinata JWT, runDeploy calls push() synchronously
+  // (the "launching without metadata" line) before its first await, so the assignment must precede the call.
+  state._push = function pushStatus(text, kind) { state.statusLines.push({ text: text, ok: kind === 'ok', err: kind === 'err' }); render(); };
   runDeploy(state, owner).then(function () {
     state.deploying = false; state.done = true;
     state.statusLines.push({ text: 'All done. 🎉', ok: true });
@@ -1368,9 +2531,6 @@ function deploy(state, render) {
     state.statusLines.push({ text: 'Error: ' + (e && e.message || e), err: true });
     render();
   });
-
-  function pushStatus(text, kind) { state.statusLines.push({ text: text, ok: kind === 'ok', err: kind === 'err' }); render(); }
-  state._push = pushStatus;
 }
 
 async function runDeploy(state, owner) {
@@ -1387,21 +2547,110 @@ async function runDeploy(state, owner) {
     push('No Pinata JWT — launching without metadata; you can edit the project later.');
   }
 
-  var salt = deploySalt(state, owner);
-
-  for (var i = 0; i < state.chainIds.length; i++) {
-    var chainId = state.chainIds[i];
-    push('Building transaction for ' + chainName(chainId) + '…');
-    var plan = buildLaunchArgs(state, chainId, owner, projectUri, salt);
-    if (plan.missingSuckers) {
-      push('Note: some chain pairs have no sucker deployer on ' + chainName(chainId) + '; those links will be skipped.', 'err');
+  // Pin each store item's metadata JSON (name + media) so its tier resolves to {name, image/animation_url}.
+  if (state.nfts.length && hasPinata()) {
+    for (var n = 0; n < state.nfts.length; n++) {
+      var it = state.nfts[n];
+      push('Pinning item “' + (it.name || ('#' + (n + 1))) + '” metadata…');
+      var meta = { name: it.name || ('Item #' + (n + 1)) };
+      if (it.description) meta.description = it.description;
+      if (it.imageUri) { if ((it.mediaType || '').indexOf('image') === 0) meta.image = it.imageUri; else meta.animation_url = it.imageUri; meta.mediaType = it.mediaType; }
+      try {
+        it.metaUri = await pinJson(meta, (it.name || 'item') + '-item');
+        it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri);
+      } catch (e) { push('Item metadata pin failed (' + (e && e.message || e) + ').', 'err'); }
     }
-    if (!plan.address) throw new Error('No deployer address on ' + chainName(chainId));
-    push('Confirm in wallet for ' + chainName(chainId) + '…');
-    await execTx({ chainId: chainId, address: plan.address, abi: plan.abi, functionName: 'launchProjectFor', args: plan.args,
-      onStatus: function (m) { push(m); } });
-    push('Launched on ' + chainName(chainId) + ' √', 'ok');
   }
+
+  var salt = deploySalt(state, owner);
+  var signer = getAccount();
+  if (!signer) throw new Error('Connect a wallet to deploy.');
+  // Revnet stage start times are absolute timestamps baked into the config hash — compute ONCE so every
+  // chain encodes the identical config (matching cross-chain sucker/project addresses). ~10 min ahead so
+  // the deploy lands before the first stage begins, matching "starts ~10 minutes after deployment".
+  var deployStart = Math.floor(Date.now() / 1000) + 600;
+
+  // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
+  // BEFORE the user signs or pays anything.
+  var plans = [];
+  for (var i = 0; i < state.chainIds.length; i++) {
+    var cid = state.chainIds[i];
+    var plan = state.projectType === 'revnet'
+      ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
+      : buildLaunchArgs(state, cid, owner, projectUri, salt);
+    if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
+    if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
+    plan.chainId = cid;
+    plan.value = await creationFeeOf(cid); // the deploy charges msg.value == JBProjects.creationFee()
+    plans.push(plan);
+  }
+  push('Simulating the ' + (state.projectType === 'revnet' ? 'revnet deploy' : 'launch') + ' on ' + plans.length + ' chain' + (plans.length > 1 ? 's' : '') + '…');
+  for (var s = 0; s < plans.length; s++) {
+    var sp = plans[s];
+    try {
+      await simulateTransaction({ chainId: sp.chainId, address: sp.address, abi: sp.abi, functionName: sp.functionName || 'launchProjectFor', args: sp.args, value: sp.value, account: signer });
+      push('Simulation OK on ' + chainName(sp.chainId) + ' ✓', 'ok');
+    } catch (e) {
+      throw new Error('Simulation failed on ' + chainName(sp.chainId) + ' — ' + (e && e.message || e));
+    }
+  }
+
+  // Single chain → one direct wallet transaction (includes the creation fee as msg.value).
+  if (plans.length === 1) {
+    var p0 = plans[0];
+    push('Confirm in your wallet for ' + chainName(p0.chainId) + ' (incl. ' + formatEther(p0.value) + ' ETH creation fee)…');
+    await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, onStatus: function (m) { push(m); } });
+    push((state.projectType === 'revnet' ? 'Deployed revnet on ' : 'Launched on ') + chainName(p0.chainId) + ' ✓', 'ok');
+    return;
+  }
+
+  // Multichain → Relayr: sign one request per chain (no chain switching to sign), pay gas once, relayers
+  // execute everywhere.
+  push('Sign one request per chain — gas is paid once at the end.');
+  var txs = [];
+  for (var k = 0; k < plans.length; k++) {
+    var pk = plans[k];
+    push('Estimating + signing for ' + chainName(pk.chainId) + '…');
+    var gas = await estimateLaunchGas(pk, signer);
+    var data = encodeFunctionData({ abi: pk.abi, functionName: pk.functionName || 'launchProjectFor', args: pk.args });
+    txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, data, gas, pk.value));
+  }
+  push('Requesting a Relayr quote…');
+  var quote = await relayrPostBundle(txs);
+  var pay = (quote.payment_info || []).reduce(function (m, x) { return (!m || BigInt(x.amount) < BigInt(m.amount)) ? x : m; }, null);
+  if (!pay) throw new Error('Relayr returned no payment option.');
+  var wallet = getWalletClient();
+  var cur = await wallet.getChainId();
+  if (cur !== pay.chain) { push('Switching wallet to ' + chainName(pay.chain) + '…'); await switchChain(pay.chain); }
+  push('Pay once on ' + chainName(pay.chain) + ' (~' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains — confirm in wallet…');
+  var payHash = await relayrPay(pay);
+  push('Payment sent · ' + truncAddr(payHash) + ' — relayers launching on each chain…');
+  await relayrPoll(quote.bundle_uuid, function (txList) {
+    push((txList || []).map(function (t) { return chainName(t.chain) + ': ' + (t.status && t.status.state || '…'); }).join(' · '));
+  });
+  push('Launched on all ' + plans.length + ' chains 🎉', 'ok');
+}
+
+// Gas for the inner launch call (the forwarder forwards this much). Estimate the direct call + buffer;
+// fall back generously if estimation throws. Includes the creation fee as value so the estimate runs
+// (a 0-value estimate would hit the InvalidCreationFee revert).
+function estimateLaunchGas(plan, account) {
+  var pub = createPublicClientForChain(plan.chainId);
+  return pub.estimateContractGas({ account: account, address: plan.address, abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value || 0n })
+    .then(function (g) { return (g * 13n) / 10n + 300000n; })
+    .catch(function () { return 8000000n; });
+}
+
+// JBProjects.creationFee() — the exact msg.value launchProjectFor requires (per chain).
+function creationFeeOf(chainId) {
+  var projects = getAddress('JBProjects', chainId);
+  if (!projects) return Promise.resolve(0n);
+  var pub = createPublicClientForChain(chainId);
+  return pub.readContract({
+    address: projects,
+    abi: [{ type: 'function', name: 'creationFee', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }],
+    functionName: 'creationFee',
+  }).catch(function () { return 0n; });
 }
 
 function execTx(opts) {
@@ -1423,12 +2672,18 @@ function deploySalt(state, owner) {
 // byte-for-byte what they sign.
 function buildLaunchArgs(state, chainId, owner, projectUri, salt) {
   var multi = state.chainIds.length > 1;
-  var hasNfts = state.nfts.length > 0;
+  // Items can be included/excluded per chain — a chain with no included items uses the non-721 path.
+  var hasNfts = state.shopEnabled && state.nfts.some(function (_, idx) { return chainItemIncluded(state, chainId, idx); });
   var terminalConfigs = buildTerminalConfigs(chainId, state.accepts, state.swapRouter);
   var effectiveStages = resolveStages(state);
+  var deadlineOn = deadlineApplies(state);
   var stageRulesets = function (payHook) {
     return buildRulesetConfigs(
-      effectiveStages.map(function (s, i) { return assembleRuleset(s, chainId, i === 0); }),
+      effectiveStages.map(function (s, i) {
+        // The appended standby/terminal stage (index ≥ user-stage count) inherits the last user stage's overrides.
+        var userIdx = Math.min(i, state.stages.length - 1);
+        return assembleRuleset(state, s, userIdx, chainId, i === 0, deadlineOn);
+      }),
       payHook ? { payDataHookVariant: true } : undefined);
   };
 
@@ -1441,18 +2696,18 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt) {
   if (!multi && hasNfts) {
     return {
       contract: 'JB721TiersHookProjectDeployer', address: getAddress('JB721TiersHookProjectDeployer', chainId), abi: deployer721Abi,
-      args: [owner, build721Config(state, projectUri),
+      args: [owner, build721Config(state, projectUri, chainId),
         { projectUri: projectUri, rulesetConfigurations: stageRulesets(true), terminalConfigurations: terminalConfigs, memo: '' },
         getAddress('JBController', chainId), salt],
     };
   }
   var others = state.chainIds.filter(function (x) { return x !== chainId; });
-  var sucker = suckerConfigFor(chainId, others, salt);
+  var sucker = suckerConfigFor(chainId, others, salt, state.suckerType, state.accepts);
   var rulesetsFull = stageRulesets(false);
   var addr = getAddress('JBOmnichainDeployer', chainId);
-  var missing = sucker.deployerConfigurations.length < others.length;
+  var missing = sucker.missing.length > 0;
   if (hasNfts) {
-    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri), useDataHookForCashOut: false, salt: salt };
+    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: false, salt: salt };
     return { contract: 'JBOmnichainDeployer', address: addr, abi: omnichain721Abi, missingSuckers: missing,
       args: [owner, projectUri, deploy721, rulesetsFull, terminalConfigs, '', sucker] };
   }
@@ -1460,10 +2715,151 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt) {
     args: [owner, projectUri, rulesetsFull, terminalConfigs, '', sucker] };
 }
 
+// ---- Revnet (REVDeployer.deployFor) call assembly ----
+
+// Build the REVDeployer.deployFor call for one chain. revnetId 0 = deploy a new revnet (msg.value ==
+// creationFee). Stage start times are computed cumulatively from a single deployStart so every chain
+// encodes the identical config (matching cross-chain addresses).
+function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
+  var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
+  var operator = /^0x[0-9a-fA-F]{40}$/.test(opRaw) ? opRaw : owner;
+
+  var stages = [];
+  var prevStart = deployStart;
+  state.stages.forEach(function (stage, i) {
+    var start;
+    if (i === 0) {
+      start = (stage.scheduleOn && stage.schedule) ? Number(stage.schedule) : deployStart;
+    } else {
+      // The previous stage's autocut makes its ruleset CYCLE every `cutFreqDays` (REVDeployer sets
+      // duration = issuanceCutFrequency). A queued next stage only takes effect on a cycle boundary, so
+      // its start must be a positive multiple of the cut interval — snap it so the encoded start matches
+      // what the controller will actually do.
+      start = prevStart + revStageDaysAfter(state, i) * 86400;
+    }
+    prevStart = start;
+    stages.push(buildRevStage(state, stage, i, chainId, start));
+  });
+
+  var configuration = {
+    description: { name: state.details.name || '', ticker: state.details.ticker || '', uri: projectUri || '', salt: salt },
+    baseCurrency: state.revBaseCurrency === 2 ? 2 : 1, // standard JBCurrencyIds (ETH=1 / USD=2); JBPrices bridges to the accounting context
+    operator: operator,
+    scopeCashOutsToLocalBalances: false,
+    stageConfigurations: stages,
+  };
+  var accept = revnetAccept(state, chainId);
+  var others = state.chainIds.filter(function (x) { return x !== chainId; });
+  var sucker = others.length ? suckerConfigFor(chainId, others, salt, state.suckerType, state.accepts) : { deployerConfigurations: [], salt: salt, missing: [] };
+  var suckerArg = { deployerConfigurations: sucker.deployerConfigurations, salt: sucker.salt };
+  var addr = getAddress('REVDeployer', chainId);
+  var missing = sucker.missing && sucker.missing.length > 0;
+
+  // With store items, use the 6-arg overload (tiered ERC-721 hook). Otherwise the 4-arg builds an empty hook.
+  var hasItems = state.shopEnabled && state.nfts.some(function (_, idx) { return chainItemIncluded(state, chainId, idx); });
+  if (hasItems) {
+    return {
+      contract: 'REVDeployer', address: addr, abi: revDeploy721Abi, functionName: 'deployFor', missingSuckers: missing,
+      args: [0n, configuration, accept, suckerArg, buildRevnet721Config(state, projectUri, chainId, salt), []],
+    };
+  }
+  return {
+    contract: 'REVDeployer', address: addr, abi: revDeployAbi, functionName: 'deployFor', missingSuckers: missing,
+    args: [0n, configuration, accept, suckerArg],
+  };
+}
+
+// REVDeploy721TiersHookConfig from the Shop step. Reuses build721Config (tiers priced in standard
+// JBCurrencyIds — ETH=1 / USD=2, bridged to the accounting context by JBPrices), then strips
+// issueTokensForSplits (revnets force it false).
+function buildRevnet721Config(state, projectUri, chainId, salt) {
+  var base = build721Config(state, projectUri, chainId);
+  var baseline = {
+    name: base.name, symbol: base.symbol, baseUri: base.baseUri, tokenUriResolver: base.tokenUriResolver,
+    contractUri: base.contractUri, tiersConfig: base.tiersConfig,
+    flags: {
+      noNewTiersWithReserves: !!base.flags.noNewTiersWithReserves,
+      noNewTiersWithVotes: !!base.flags.noNewTiersWithVotes,
+      noNewTiersWithOwnerMinting: !!base.flags.noNewTiersWithOwnerMinting,
+      preventOverspending: !!base.flags.preventOverspending,
+    },
+  };
+  var col = state.collection || {};
+  return {
+    baseline721HookConfiguration: baseline, salt: salt,
+    // The toggles grant ability (default on); the contract flags REVOKE, so prevent = !can.
+    preventOperatorAdjustingTiers: col.opCanAdjustTiers === false,
+    preventOperatorUpdatingMetadata: col.opCanUpdateMetadata === false,
+    preventOperatorMinting: col.opCanMint === false,
+    preventOperatorIncreasingDiscountPercent: col.opCanIncreaseDiscount === false,
+  };
+}
+
+// The revnet's accounting context — ETH (native) or USDC, per the Settlement accounting choice.
+// JBAccountingContext.currency = uint32(uint160(token)).
+function revnetAccept(state, chainId) {
+  if ((state.accepts[0] || 'eth') === 'usdc') {
+    var usdc = USDC_BY_CHAIN[chainId];
+    if (usdc) return [{ token: usdc, decimals: 6, currency: Number(BigInt(usdc) % (1n << 32n)) }];
+  }
+  return [{ token: NATIVE_TOKEN, decimals: 18, currency: NATIVE_CURRENCY }];
+}
+
+// One REVStageConfig from a revnet stage object.
+function buildRevStage(state, stage, idx, chainId, start) {
+  var totalPct = revSplitTotalPct(stage); // 0..100 across split rows
+  var splitPercent = Math.round(Math.min(100, totalPct) * 100); // → out of MAX_RESERVED_PERCENT (10000)
+  var splits = [];
+  if (totalPct > 0) {
+    var rows = (stage.reservedRecipients || [])
+      .map(function (x, origIdx) { return { x: x, origIdx: origIdx }; })
+      .filter(function (e) { return (Number(e.x.percent) || 0) > 0; });
+    // Each split's share of the reserved bucket is its row% ÷ total%. Per-row rounding can drift above/below
+    // SPLITS_TOTAL (1e9); JBSplits reverts if a group exceeds it. Give the LAST split the exact remainder.
+    var acc = 0;
+    splits = rows.map(function (e, k) {
+      var raw = (k === rows.length - 1)
+        ? (SPLITS_TOTAL - acc)
+        : Math.round((Number(e.x.percent) || 0) / totalPct * SPLITS_TOTAL);
+      acc += raw;
+      var benef = e.x.type === 'project' ? null : pickResolved(e.x.address, e.x);
+      return splitState(e.x, raw, benef);
+    });
+  }
+  // initialIssuance: tokens per ETH × 1e18 (18-dec fixed point). 0 on later stages = inherit (with cut).
+  var issuance = (idx === 0 || stage.weight)
+    ? BigInt(Math.max(0, Math.round(Number(stage.weight) || 0))) * (10n ** 18n)
+    : 0n;
+  var cutFreq = stage.issuanceCutOn ? Math.max(0, Math.round((Number(stage.cutFreqDays) || 0) * 86400)) : 0;
+  var cutPercent = stage.issuanceCutOn
+    ? Math.round(Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) / 100 * JBCONSTANTS.MAX_WEIGHT_CUT_PERCENT)
+    : 0;
+  var taxRate = Math.round(Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) * 100); // percent → out of 10000
+  var autos = (stage.autoIssuances || [])
+    .map(function (a) { return { count: a.count, addr: pickResolved(a.address, a) }; })
+    .filter(function (a) { return Number(a.count) > 0 && /^0x[0-9a-fA-F]{40}$/.test(a.addr); })
+    .map(function (a) { return { chainId: chainId, count: BigInt(Math.round(Number(a.count))) * (10n ** 18n), beneficiary: a.addr }; });
+  return {
+    startsAtOrAfter: start,
+    autoIssuances: autos,
+    splitPercent: splitPercent,
+    splits: splits,
+    initialIssuance: issuance,
+    issuanceCutFrequency: cutFreq,
+    issuanceCutPercent: cutPercent,
+    cashOutTaxRate: taxRate,
+    extraMetadata: 0,
+  };
+}
+
 // Assemble a single ruleset state object (createDefaultRuleset shape) from the wizard steps.
 // Build one JBRulesetConfig from a stage. isFirst => stage 1 (honors scheduled launch); later stages
 // queue with mustStartAtOrAfter 0 so the controller chains them after the previous stage's duration.
-function assembleRuleset(stage, chainId, isFirst) {
+function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn) {
+  // Per-chain overrides (amount + beneficiary), keyed by user-stage + recipient index; fall back to defaults.
+  var amtAt = function (x, idx) { return chainPayoutAmount(state, chainId, userStageIdx, idx); };
+  var payoutBenef = function (x, idx) { return x.type === 'project' ? null : chainAddr(state, chainId, 'p:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
+  var reservedBenef = function (x, idx) { return x.type === 'project' ? null : chainAddr(state, chainId, 'r:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
   var rs = createDefaultRuleset();
   rs.baseCurrency = stage.baseCurrency || 1;
   rs.mustStartAtOrAfter = (isFirst && stage.schedule) ? Number(stage.schedule) : 0;
@@ -1475,32 +2871,43 @@ function assembleRuleset(stage, chainId, isFirst) {
   rs.weight = custom ? (stage.weight || '0') : '0';
   rs.reservedPercent = custom ? Math.min(100, reservedTotalPct) : 0;
   rs.weightCutPercent = custom ? stage.weightCutPercent : 0;
-  rs.cashOutTaxRate = (custom && stage.cashOutEnabled) ? stage.cashOutTaxRate : 100; // 100% = cash outs off
-  rs.allowOwnerMinting = custom ? stage.allowOwnerMinting : false;
-  rs.pauseCreditTransfers = custom ? stage.pauseTransfers : false;
+  // Cash outs / owner minting / pausing apply to the project's tokens regardless of whether THIS stage
+  // issues new tokens (tokens can exist from prior stages or owner mints).
+  rs.cashOutTaxRate = (stage.cashOutEnabled && stage.payoutMode !== 'unlimited') ? stage.cashOutTaxRate : 100; // 100% = cash outs off (no surplus under unlimited payouts)
+  rs.allowOwnerMinting = !!stage.allowOwnerMinting;
+  rs.pauseCreditTransfers = !!stage.pauseTransfers;
 
   var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === stage.deadline; });
-  rs.approvalHook = (dl && dl.contract && getAddress(dl.contract, chainId)) || ZERO;
+  rs.approvalHook = (deadlineOn !== false && dl && dl.contract && getAddress(dl.contract, chainId)) || ZERO;
 
   rs.pausePay = stage.pausePay; rs.holdFees = stage.holdFees;
   rs.allowSetTerminals = stage.allowSetTerminals; rs.allowSetController = stage.allowSetController;
   rs.allowTerminalMigration = stage.allowTerminalMigration;
+  rs.allowSetCustomToken = !!stage.allowSetCustomToken;
+  rs.allowAddAccountingContext = !!stage.allowAddAccountingContext;
+  rs.allowAddPriceFeed = !!stage.allowAddPriceFeed;
 
   // Splits
   rs.splitGroups = [];
   if (stage.payoutMode !== 'none' && stage.payoutRecipients.length) {
-    var total = stage.payoutRecipients.reduce(function (s, x) { return s + (Number(x.amountEth) || 0); }, 0) || 1;
-    rs.splitGroups.push({
-      groupId: uint256FromAddress(NATIVE_TOKEN),
-      splits: stage.payoutRecipients.map(function (x) { return splitState(x, Math.round(((Number(x.amountEth) || 0) / total) * SPLITS_TOTAL)); }),
-    });
+    var payoutSplits;
+    if (stage.payoutMode === 'unlimited') {
+      // % of payouts each recipient gets; any unallocated remainder goes to the project owner.
+      payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL), payoutBenef(x, idx)); });
+    } else {
+      // Limited: the payout limit is the sum of the amounts; each recipient's split is its share of that sum.
+      var total = stage.payoutRecipients.reduce(function (s, x, idx) { return s + (Number(amtAt(x, idx)) || 0); }, 0) || 1;
+      payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL), payoutBenef(x, idx)); });
+    }
+    rs.splitGroups.push({ groupId: uint256FromAddress(NATIVE_TOKEN), splits: payoutSplits });
   }
   if (custom && reservedTotalPct > 0) {
-    // Each recipient's share of the reserved group = its row % ÷ the total reserved %.
+    // Each recipient's share of the reserved group = its row % ÷ the total reserved %. Key by original index.
     rs.splitGroups.push({
       groupId: '1',
-      splits: stage.reservedRecipients.filter(function (x) { return (Number(x.percent) || 0) > 0; })
-        .map(function (x) { return splitState(x, Math.round((Number(x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL)); }),
+      splits: stage.reservedRecipients.map(function (x, origIdx) { return { x: x, origIdx: origIdx }; })
+        .filter(function (e) { return (Number(e.x.percent) || 0) > 0; })
+        .map(function (e) { return splitState(e.x, Math.round((Number(e.x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL), reservedBenef(e.x, e.origIdx)); }),
     });
   }
 
@@ -1509,11 +2916,11 @@ function assembleRuleset(stage, chainId, isFirst) {
   var payoutLimits = [];
   if (stage.payoutMode !== 'none') {
     var amount = stage.payoutMode === 'unlimited' ? UINT224_MAX
-      : stage.payoutRecipients.reduce(function (s, x) { return s + safeParseEther(x.amountEth); }, 0n);
+      : stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n);
     payoutLimits.push({ amount: amount, currency: stage.payoutCurrency || 1 });
   }
   var surplusAllowances = [];
-  if (stage.surplusAllowanceOn) {
+  if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
     var saAmt = stage.surplusAllowanceUnlimited ? UINT224_MAX : safeParseEther(stage.surplusAllowanceAmount);
     if (saAmt > 0n) surplusAllowances.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 });
   }
@@ -1526,44 +2933,68 @@ function assembleRuleset(stage, chainId, isFirst) {
   return rs;
 }
 
-function splitState(rec, rawPercent) {
+function splitState(rec, rawPercent, beneficiaryOverride) {
+  var addr = (beneficiaryOverride != null) ? beneficiaryOverride : pickResolved(rec.address, rec); // resolve ENS → 0x
   return {
     preferAddToBalance: false,
     percent: rawPercent,
     projectId: rec.type === 'project' ? (Number(rec.projectId) || 0) : 0,
-    beneficiary: (rec.address && /^0x[0-9a-fA-F]{40}$/.test(rec.address)) ? rec.address : ZERO,
+    beneficiary: (addr && /^0x[0-9a-fA-F]{40}$/.test(addr)) ? addr : ZERO,
     lockedUntil: rec.lockedUntil ? Number(rec.lockedUntil) : 0,
     hook: ZERO,
   };
 }
 
-function build721Config(state, projectUri) {
-  var name = (state.details.name || 'Project') + ' NFTs';
-  var symbol = (state.details.name || 'NFT').replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase() || 'NFT';
-  var tiers = state.nfts.map(function (nft) {
+function build721Config(state, projectUri, chainId) {
+  var name = collectionNameOf(state);
+  var symbol = collectionSymbolOf(state);
+  var col = state.collection || {};
+  var priceDecimals = storeDecimals(state);
+  var tiers = state.nfts
+    .map(function (nft, idx) { return { nft: nft, idx: idx }; })
+    .filter(function (e) { return chainId == null || chainItemIncluded(state, chainId, e.idx); })
+    .map(function (e) {
+    var nft = e.nft;
+    // Per-chain quantity override ('' = unlimited).
+    var chainSupply = chainId == null ? (nft.limited ? nft.supply : '') : chainItemSupply(state, chainId, e.idx);
+    var limited = chainSupply !== '' && chainSupply != null;
+    var flags = nft.flags || {};
+    var freq = nft.reserveOn ? (Number(nft.reserveFrequency) || 0) : 0;
+    var rb = freq > 0 ? chainAddr(state, chainId, 'rb:' + e.idx, resolvedStr(nft.reserveBeneficiary)) : '';
+    var reserveBenef = (rb && /^0x[0-9a-fA-F]{40}$/.test(rb)) ? rb : ZERO;
+    var votes = nft.votingOn ? (Number(nft.votingUnits) || 0) : 0;
+    var discountPercent = nft.discountOn ? Math.min(200, Math.round((parseFloat(nft.discountPct) || 0) / 100 * 200)) : 0;
+    var sp = itemSplits(nft, state, chainId, e.idx);
     return {
-      price: safeParseEther(nft.priceEth),
-      initialSupply: nft.limited ? (Number(nft.supply) || 0) : 4294967295, // uint32 max ~ unlimited
-      votingUnits: 0,
-      reserveFrequency: Number(nft.reserveFrequency) || 0,
-      reserveBeneficiary: (nft.reserveBeneficiary && /^0x[0-9a-fA-F]{40}$/.test(nft.reserveBeneficiary)) ? nft.reserveBeneficiary : ZERO,
-      encodedIpfsUri: nft.imageUri ? encodeIpfsUriToBytes32(nft.imageUri) : '0x' + '0'.repeat(64),
-      category: 0,
-      discountPercent: 0,
+      price: priceUnits(nft.priceEth, priceDecimals),
+      initialSupply: limited ? (Number(chainSupply) || 0) : 999999999, // max allowed (_ONE_BILLION - 1) ~ unlimited
+      votingUnits: votes,
+      reserveFrequency: freq,
+      reserveBeneficiary: reserveBenef,
+      encodedIpfsUri: nft.encodedIpfsUri || (nft.metaUri ? encodeIpfsUriToBytes32(nft.metaUri) : '0x' + '0'.repeat(64)),
+      category: Number(nft.category) || 0,
+      discountPercent: discountPercent,
       flags: {
-        allowOwnerMint: false,
-        useReserveBeneficiaryAsDefault: !!(nft.reserveBeneficiary && nft.reserveFrequency),
-        transfersPausable: false, useVotingUnits: false, cantBeRemoved: false,
-        cantIncreaseDiscountPercent: false, cantBuyWithCredits: false,
+        allowOwnerMint: !!flags.allowOwnerMint,
+        useReserveBeneficiaryAsDefault: freq > 0 && reserveBenef !== ZERO,
+        transfersPausable: !!flags.transfersPausable,
+        useVotingUnits: votes > 0,
+        cantBeRemoved: !!flags.cantBeRemoved,
+        cantIncreaseDiscountPercent: !(flags.ownerCanEditDiscount !== false),
+        cantBuyWithCredits: !(flags.allowCredits !== false),
       },
-      splitPercent: 0,
-      splits: [],
+      splitPercent: sp.splitPercent,
+      splits: sp.splits,
     };
   });
   return {
     name: name, symbol: symbol, baseUri: 'ipfs://', tokenUriResolver: ZERO, contractUri: projectUri || '',
-    tiersConfig: { tiers: tiers, currency: (state.stages[0] && state.stages[0].baseCurrency) || 1, decimals: 18 },
-    flags: { noNewTiersWithReserves: false, noNewTiersWithVotes: false, noNewTiersWithOwnerMinting: false, preventOverspending: false, issueTokensForSplits: false },
+    tiersConfig: { tiers: tiers, currency: storeCur(state), decimals: priceDecimals },
+    flags: {
+      noNewTiersWithReserves: !!col.noNewTiersWithReserves, noNewTiersWithVotes: !!col.noNewTiersWithVotes,
+      noNewTiersWithOwnerMinting: !!col.noNewTiersWithOwnerMinting, preventOverspending: !!col.preventOverspending,
+      issueTokensForSplits: !!col.issueTokensForSplits,
+    },
   };
 }
 
@@ -1625,10 +3056,69 @@ function recomputeCustomDuration(stage) {
 }
 function uint256FromAddress(addr) { return BigInt(addr).toString(); }
 function uint32FromAddress(addr) { return (BigInt(addr) & 0xFFFFFFFFn).toString(); }
+// --- ENS resolution for address fields (resolves on mainnet, regardless of the deploy chain) ---
+// The app's default mainnet RPC is CORS-blocked in the browser, so use a dedicated CORS-enabled endpoint.
+var _ensCache = {};
+var _ensClient = null;
+function ensClient() {
+  if (!_ensClient) _ensClient = createPublicClient({ chain: mainnet, transport: http('https://ethereum-rpc.publicnode.com') });
+  return _ensClient;
+}
+function isEnsName(v) { v = (v || '').trim(); return /\.[a-z]{2,}$/i.test(v) && !/^0x/i.test(v); }
+function resolveEns(name) {
+  name = (name || '').trim().toLowerCase();
+  if (_ensCache[name] !== undefined) return Promise.resolve(_ensCache[name]);
+  var norm; try { norm = ensNormalize(name); } catch (_) { return Promise.resolve(null); }
+  return ensClient().getEnsAddress({ name: norm }).then(function (addr) { _ensCache[name] = addr || null; return addr || null; })
+    .catch(function () { return null; });
+}
+// The usable 0x address for a recipient: the resolved ENS address if it still matches the typed name, else
+// the raw value (a 0x address or unresolved name).
+function pickResolved(name, rec) {
+  name = (name || '').trim();
+  return (rec && rec.resolvedAddress && rec.resolvedFor === name) ? rec.resolvedAddress : name;
+}
+// Synchronously resolve an address string to 0x: raw 0x passes through; an ENS name uses the global cache
+// (populated when the field resolved in the UI); unresolved → '' so it encodes as ZERO rather than garbage.
+function resolvedStr(str) {
+  str = (str || '').trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(str)) return str;
+  if (isEnsName(str)) { var c = _ensCache[str.toLowerCase()]; return c || ''; }
+  return str;
+}
+// Attach ENS resolution to an address input: returns a small hint element that shows the resolved address
+// (or a "resolving…/not found" state) under the field, and stores the result on `rec` via store(name,addr).
+function attachEns(input, store) {
+  var hint = el('div', 'create-resolve-hint'); hint.style.display = 'none';
+  var token = 0, timer = null;
+  function go() {
+    var v = (input.value || '').trim();
+    if (!isEnsName(v)) { hint.style.display = 'none'; store(v, null); return; }
+    hint.style.display = ''; hint.className = 'create-resolve-hint'; hint.textContent = 'Resolving ' + v + '…';
+    var my = ++token;
+    resolveEns(v).then(function (addr) {
+      if (my !== token) return;
+      if (addr) { hint.textContent = addr; hint.className = 'create-resolve-hint ok'; store(v, addr); }
+      else { hint.textContent = 'No address found for ' + v; hint.className = 'create-resolve-hint warn'; store(v, null); }
+    });
+  }
+  input.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(go, 350); });
+  go();
+  return hint;
+}
+// Column wrapper so an ENS resolve-hint sits directly under (left-aligned with) its recipient field.
+function recipBoxWith(recip, hint) {
+  recip.style.flex = '';
+  var b = el('div', 'create-recip-box');
+  b.appendChild(recip); b.appendChild(hint);
+  return b;
+}
+
 function safeParseEther(v) { try { return v ? parseEther(String(v)) : 0n; } catch (_) { return 0n; } }
+function priceUnits(v, decimals) { try { return v ? parseUnits(String(v), decimals) : 0n; } catch (_) { return 0n; } }
 function ipfsHttp(uri) {
   if (!uri) return '';
-  if (uri.indexOf('ipfs://') === 0) return 'https://jbm.infura-ipfs.io/ipfs/' + uri.slice(7);
+  if (uri.indexOf('ipfs://') === 0) return 'https://ipfs.io/ipfs/' + uri.slice(7);
   return uri;
 }
 function tsToLocal(ts) {

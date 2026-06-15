@@ -21,6 +21,9 @@ async function build() {
     sourcemap: false,
     define: {
       __BENDYSTRAW_API_KEY__: JSON.stringify(process.env.BENDYSTRAW_API_KEY || ENV.BENDYSTRAW_API_KEY || ''),
+      // Baked-in default Pinata JWT (from .env) so users can pin without supplying their own. NOTE: the
+      // published bundle is public, so this JWT is publicly extractable — use a scoped key and rotate it.
+      __PINATA_JWT__: JSON.stringify(process.env.PINATA_JWT || ENV.PINATA_JWT || ''),
     },
   });
   const js = jsResult.outputFiles[0].text;

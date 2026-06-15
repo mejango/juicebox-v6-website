@@ -2,10 +2,49 @@
 // Shared building blocks for all component widgets
 
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain, eagerConnect } from './wallet.js';
-import { CHAINS, getManifestChains, getChainTokens } from './chain.js';
+import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
-import { getAddress } from './abi-registry.js';
+import { getAddress, meta } from './abi-registry.js';
+
+// Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
+// address is. Suckers and other per-project deployments aren't in the registry — callers pass contractName.
+var _addrToName = null;
+function buildAddrIndex() {
+  _addrToName = {};
+  try {
+    Object.keys(meta).forEach(function (name) {
+      var addrs = meta[name] && meta[name].addresses; if (!addrs) return;
+      Object.keys(addrs).forEach(function (cid) {
+        var a = (addrs[cid] || '').toLowerCase();
+        if (a) _addrToName[cid + ':' + a] = meta[name].deploymentName || meta[name].contractName || name;
+      });
+    });
+  } catch (_) {}
+}
+export function resolveContractName(address, chainId) {
+  if (!address) return null;
+  if (!_addrToName) buildAddrIndex();
+  return _addrToName[chainId + ':' + String(address).toLowerCase()] || null;
+}
+
+// A canonical type string (expands tuples to their component types) for an ABI param.
+function abiTypeOf(p) {
+  if (p && typeof p.type === 'string' && p.type.indexOf('tuple') === 0 && p.components) {
+    return '(' + p.components.map(abiTypeOf).join(',') + ')' + p.type.slice(5);
+  }
+  return p ? p.type : '';
+}
+// Human-readable signature of the function being called: `name(type arg, …) [payable|view] [returns (…)]`.
+export function abiSignature(abi, functionName) {
+  if (!Array.isArray(abi)) return functionName;
+  var f = abi.filter(function (x) { return x.type === 'function' && x.name === functionName; })[0];
+  if (!f) return functionName;
+  var ins = (f.inputs || []).map(function (i) { return abiTypeOf(i) + (i.name ? ' ' + i.name : ''); }).join(', ');
+  var mut = (f.stateMutability && f.stateMutability !== 'nonpayable') ? ' ' + f.stateMutability : '';
+  var outs = (f.outputs && f.outputs.length) ? ' returns (' + f.outputs.map(abiTypeOf).join(', ') + ')' : '';
+  return f.name + '(' + ins + ')' + mut + outs;
+}
 
 export { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain, eagerConnect };
 export { CHAINS, getManifestChains, getChainTokens };
@@ -453,19 +492,39 @@ export function createWalletButton(label, onClick, permissionNote) {
 // Includes the exact payload, block-explorer link(s) to the target contract(s), and a safety checklist.
 export function buildTxAuditPrompt(payload) {
   var lines = [];
-  lines.push("I'm about to sign a blockchain transaction in the Juicebox V6 web app. Act as a careful security reviewer: tell me whether it is safe to sign and whether it matches my intent. Flag anything suspicious — assume I could be the target of a scam or a spoofed UI.");
+  lines.push("I'm about to sign a blockchain transaction in the Juicebox V6 web app. Act as a careful security reviewer: independently verify the transaction, confirm it matches my intent, and only then give a go/no-go. Assume I could be the target of a scam or a spoofed UI — trust the on-chain data and source code over anything the page says.");
   lines.push('');
   lines.push('Transaction payload — exactly what will be sent on-chain:');
   lines.push('```json');
   lines.push(JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2));
   lines.push('```');
   lines.push('');
-  var links = auditLinksFromPayload(payload);
-  if (links.length) {
-    lines.push('Verify the target contract(s) — open these, confirm the source is verified and the address is the legitimate Juicebox V6 contract (not a look-alike):');
-    links.forEach(function (l) { lines.push('- ' + l.label + ': ' + l.url); });
+
+  // 1) The exact UI build, so the reviewer can audit the button I clicked.
+  var site = currentSiteRef();
+  lines.push('Audit the exact app build I am using:');
+  if (site) {
+    lines.push('- This UI was loaded from IPFS CID `' + site.cid + '` — fetch it (e.g. ' + site.gateway + ' or ipfs://' + site.cid + ') and inspect src/app.js / the create + transaction code to confirm the button I clicked builds exactly this payload and nothing hidden.');
+  } else {
+    lines.push('- This UI was loaded from ' + currentOrigin() + ' (not an IPFS gateway). If it claims to be the Juicebox V6 app but is not served from a known IPFS build, treat that as a red flag.');
+  }
+  lines.push('');
+
+  // 2 + 3) Contract source: ecosystem umbrella + the specific repo(s) for the target contract(s), + explorers.
+  lines.push('Verify the contract source:');
+  lines.push('- Full Juicebox V6 ecosystem (all contracts): https://github.com/Bananapus/version-6');
+  contractSourceRefs(payload).forEach(function (r) { lines.push('- ' + r); });
+  auditLinksFromPayload(payload).forEach(function (l) { lines.push('- ' + l.label + ' on-chain (confirm verified source + legit address): ' + l.url); });
+  lines.push('');
+
+  // 5) Expected wallet data — what I should match on my wallet / hardware wallet before approving.
+  var w = walletExpectations(payload);
+  if (w.length) {
+    lines.push('What I should see and verify in my wallet / hardware wallet before approving — if any of these differ, tell me to REJECT:');
+    w.forEach(function (e) { lines.push('- ' + e); });
     lines.push('');
   }
+
   lines.push('Check specifically:');
   lines.push('1. Decode the `function` and each `arg` — do they match what I believe I am doing?');
   lines.push('2. Is `value` (native token sent with the call) what I expect? Flag any unexpected non-zero value.');
@@ -474,10 +533,67 @@ export function buildTxAuditPrompt(payload) {
   lines.push('5. For cross-chain (relayr) calls, is the SAME change applied consistently across every listed chain, with no extra chain slipped in?');
   lines.push('6. Any sign of a drain, ownership/operator transfer, or permission grant I did not intend?');
   lines.push('');
-  lines.push('Juicebox V6 docs: https://docs.juicebox.money — contract source: https://github.com/Bananapus . If the target address is not a recognizable Juicebox V6 deployment, warn me explicitly.');
+
+  // 4) Quiz me on intent before the verdict.
+  lines.push('Before giving your verdict, QUIZ me to confirm I understand what I am signing: ask me 2–4 short questions in plain English about what I expect this transaction to do (e.g. what is being created/sent, to whom, for how much, on which chain(s), and what control I am keeping or giving away). Wait for my answers, then compare them against the decoded payload and flag any mismatch between my stated intent and what the transaction actually does.');
   lines.push('');
-  lines.push('End with a one-line verdict: SAFE TO SIGN / DO NOT SIGN / NEEDS MORE INFO, followed by the top reasons.');
+  lines.push('Juicebox V6 docs: https://docs.juicebox.money. If the target address is not a recognizable Juicebox V6 deployment, warn me explicitly.');
+  lines.push('');
+  lines.push('After the quiz, end with a one-line verdict: SAFE TO SIGN / DO NOT SIGN / NEEDS MORE INFO, followed by the top reasons.');
   return lines.join('\n');
+}
+
+// The IPFS CID this UI was served from (path-gateway /ipfs/<cid>/ or <cid>.ipfs.* subdomain), or null.
+function currentSiteRef() {
+  try {
+    var loc = window.location;
+    var pm = (loc.pathname || '').match(/\/ipfs\/(ba[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})/i);
+    if (pm) return { cid: pm[1], gateway: loc.origin + '/ipfs/' + pm[1] + '/' };
+    var sm = (loc.hostname || '').match(/^(ba[0-9a-z]{20,})\.ipfs\./i);
+    if (sm) return { cid: sm[1], gateway: loc.origin + '/' };
+  } catch (_) { /* no window */ }
+  return null;
+}
+function currentOrigin() { try { return window.location.origin; } catch (_) { return 'an unknown origin'; } }
+
+// GitHub repo for a Juicebox V6 contract by name (best-effort; all are tracked in the version-6 umbrella).
+function contractRepoFor(name) {
+  if (!name || /^0x/i.test(name)) return null;
+  if (name === 'ERC2771Forwarder') return 'OpenZeppelin ERC2771Forwarder: https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/metatx/ERC2771Forwarder.sol';
+  if (/Sucker/.test(name)) return name + ' (nana-suckers): https://github.com/Bananapus/nana-suckers';
+  if (/^JB721/.test(name)) return name + ' (nana-721-hook): https://github.com/Bananapus/nana-721-hook';
+  if (name === 'JBOmnichainDeployer') return name + ' (nana-omnichain-deployers): https://github.com/Bananapus/nana-omnichain-deployers';
+  if (name === 'JBRouterTerminalRegistry') return name + ' (nana-router-terminal): https://github.com/Bananapus/nana-router-terminal';
+  if (/^REV/.test(name)) return name + ' (revnet-core): https://github.com/Bananapus/revnet-core';
+  if (/^JB/.test(name)) return name + ' (nana-core): https://github.com/Bananapus/nana-core';
+  return null;
+}
+function contractSourceRefs(payload) {
+  var names = {};
+  if (payload && Array.isArray(payload.chains)) payload.chains.forEach(function (c) { if (c.contract) names[c.contract] = 1; });
+  else if (payload && payload.contract) names[payload.contract] = 1;
+  return Object.keys(names).map(contractRepoFor).filter(Boolean);
+}
+
+// Wei (string/bigint) → decimal ETH string, no trailing zeros.
+function weiToEth(v) {
+  try {
+    var n = BigInt(v || 0); var W = 1000000000000000000n;
+    var whole = (n / W).toString(); var frac = (n % W).toString().padStart(18, '0').replace(/0+$/, '');
+    return frac ? (whole + '.' + frac) : whole;
+  } catch (_) { return String(v); }
+}
+// Plain "what to verify on your wallet" lines from a confirm payload.
+function walletExpectations(payload) {
+  if (!payload || Array.isArray(payload.chains)) return []; // relayr payment is a separate prompt
+  var out = [];
+  if (payload.chain) out.push('Network: ' + payload.chain + ' — make sure your wallet is on this network.');
+  var to = payload.address || (typeof payload.contract === 'string' && /^0x/.test(payload.contract) ? payload.contract : null);
+  if (to) out.push('Recipient / "To" address: ' + to + (payload.contract && !/^0x/.test(payload.contract) ? ' (' + payload.contract + ')' : '') + ' — it must match this exactly.');
+  out.push('Amount / value: ' + weiToEth(payload.value || 0) + ' ETH' + ((payload.value && BigInt(payload.value) > 0n) ? '' : ' (zero — your wallet should show no ETH being sent)') + '.');
+  if (payload.function) out.push('Function being called: ' + payload.function + (payload.abi ? ' — signature ' + payload.abi : '') + '.');
+  out.push('If your wallet shows a different "To" address, a higher amount, or a different function/network than the above, REJECT the transaction.');
+  return out;
 }
 
 // Derive block-explorer address links from a confirm payload (direct: {chain,contract}; relayr: {chains:[{chain,contract}]}).
@@ -519,6 +635,19 @@ export function appendAuditPromptLink(container, payload) {
 // Pre-sign confirmation modal — shows the exact transaction payload and resolves true/false.
 // Self-contained (no dependency on discover.js) so every executeTransaction caller can gate on it.
 // Reuses the global modal/confirm CSS classes for a consistent look.
+// Append a `// <ContractName>` comment to any display-JSON line whose value is a known JB address,
+// so a reviewer can associate raw addresses with contract labels (e.g. JBRouterTerminalRegistry).
+// Display-only — the result is not re-parsed as JSON.
+function annotateAddresses(text) {
+  return text.split('\n').map(function (line) {
+    if (line.indexOf('//') !== -1) return line; // already annotated
+    var m = line.match(/(0x[0-9a-fA-F]{40})/);
+    if (!m) return line;
+    var name = contractNameByAddress(m[1]);
+    return name ? (line + '  // ' + name) : line;
+  }).join('\n');
+}
+
 export function confirmTransactionModal(payload, opts) {
   opts = opts || {};
   return new Promise(function (resolve) {
@@ -533,8 +662,8 @@ export function confirmTransactionModal(payload, opts) {
     note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
     content.appendChild(note);
     var pre = el('pre', 'create-payload');
-    pre.textContent = JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
-      .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
+    pre.textContent = annotateAddresses(JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
+      .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:'));
     content.appendChild(pre);
     appendAuditPromptLink(content, payload);
     var foot = el('div', 'create-modal-foot');
@@ -566,11 +695,15 @@ export function executeTransaction(opts) {
   if (opts.skipConfirm) {
     confirmStep = Promise.resolve(true);
   } else {
+    var cname = opts.contractName || resolveContractName(opts.address, opts.chainId);
     var payload = {
       action: opts.label || opts.functionName,
       chain: (CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || ('chain ' + opts.chainId),
-      contract: opts.address,
+      contract: cname || opts.address,
+      // Keep the raw target address visible even when we resolved a name (nothing is hidden).
+      address: cname ? opts.address : undefined,
       function: opts.functionName,
+      abi: abiSignature(opts.abi, opts.functionName),
       args: opts.args,
       value: (opts.value || 0n),
     };
@@ -636,6 +769,9 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
   var pub = createPublicClientForChain(chainId);
   var owner = getAccount();
   if (!pub || !owner) return Promise.resolve();
+  // Native ETH (and the zero address) have no ERC-20 contract — no allowance/approval step. Reading
+  // `allowance` on the native pseudo-address reverts with "returned no data (0x)".
+  if (!tokenAddr || tokenAddr.toLowerCase() === NATIVE_TOKEN.toLowerCase() || tokenAddr === ZERO_ADDRESS) return Promise.resolve();
 
   return pub.readContract({
     address: tokenAddr,
@@ -670,6 +806,39 @@ export function executeRead(opts) {
     abi: opts.abi,
     functionName: opts.functionName,
     args: opts.args || [],
+  });
+}
+
+// --- Pre-flight simulation (eth_call) ---
+// Dry-runs a state-changing call without sending a transaction, so encoding/logic reverts surface
+// BEFORE the user signs. Resolves on success; rejects with the decoded revert reason on failure.
+// The caller is funded via a balance state-override so a low/zero balance never masks a logic check
+// (the wallet enforces real funding at send time; multichain users fund once via the relayer). If the
+// chain's RPC rejects state overrides, it retries without one.
+// opts: { chainId, address, abi, functionName, args, value, account }
+export function simulateTransaction(opts) {
+  var client = createPublicClientForChain(opts.chainId);
+  if (!client) return Promise.reject(new Error('No client for chain ' + opts.chainId));
+  var account = opts.account || getAccount();
+  var base = {
+    account: account, address: opts.address, abi: opts.abi,
+    functionName: opts.functionName, args: opts.args || [], value: opts.value || 0n,
+  };
+  var fundOverride = account ? [{ address: account, balance: (opts.value || 0n) + 1000000000000000000n }] : undefined;
+  function run(withOverride) {
+    var req = withOverride && fundOverride ? Object.assign({ stateOverride: fundOverride }, base) : base;
+    return client.simulateContract(req);
+  }
+  return run(true).catch(function (err) {
+    var msg = (err && (err.shortMessage || err.message) || '').toLowerCase();
+    // RPC doesn't support eth_call state overrides → retry without; otherwise surface the revert.
+    if (fundOverride && /state override|stateoverride|not support|invalid params|unknown field|method/.test(msg)) {
+      return run(false);
+    }
+    throw err;
+  }).catch(function (err) {
+    var reason = err && (err.shortMessage || err.message) || 'reverted';
+    var e = new Error(reason); e.cause = err; throw e;
   });
 }
 

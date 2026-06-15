@@ -76,6 +76,29 @@ export function isContractSingleton(contractName) {
   return contract ? contract.singleton : true;
 }
 
+// Reverse map: lowercased address → contractName, across every chain in the manifest.
+// JB contracts are mostly deterministic (same address on every chain), so a global map is safe.
+let _addrToName = null;
+export function contractNameByAddress(address) {
+  if (!address || typeof address !== 'string') return null;
+  const a = address.toLowerCase();
+  // Native token sentinel (NATIVE_TOKEN = 0x…EEEe) isn't a contract — label it plainly.
+  if (a === '0x000000000000000000000000000000000000eeee') return 'Native token (ETH)';
+  if (!_addrToName) {
+    _addrToName = {};
+    const cs = manifest.contracts || {};
+    for (const name in cs) {
+      const addrs = cs[name] && cs[name].addresses;
+      if (!addrs) continue;
+      for (const cid in addrs) {
+        const v = addrs[cid];
+        if (v) _addrToName[String(v).toLowerCase()] = cs[name].contractName || name;
+      }
+    }
+  }
+  return _addrToName[a] || null;
+}
+
 export function getCustomRpc(chainId) {
   return localStorage.getItem('jb-rpc-' + chainId) || '';
 }
