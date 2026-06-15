@@ -623,42 +623,6 @@ function textArea(value, placeholder, onInput) {
   return t;
 }
 
-function choiceCards(options, current, onPick) {
-  // options: [{key, title, sub, icon}]
-  var row = el('div', 'create-choices');
-  options.forEach(function (o) {
-    var card = el('button', 'create-choice' + (current === o.key ? ' selected' : ''));
-    var top = el('div', 'create-choice-top');
-    if (o.icon) { var ic = el('span', 'create-choice-icon'); ic.textContent = o.icon; top.appendChild(ic); }
-    var ti = el('span', 'create-choice-title');
-    ti.textContent = o.title;
-    top.appendChild(ti);
-    if (o.badge) { var bd = el('span', 'create-choice-badge'); bd.textContent = o.badge; top.appendChild(bd); }
-    card.appendChild(top);
-    if (o.sub) { var s = el('div', 'create-choice-sub'); s.textContent = o.sub; card.appendChild(s); }
-    card.addEventListener('click', function () { onPick(o.key); });
-    row.appendChild(card);
-  });
-  return row;
-}
-
-function pctSlider(value, onChange) {
-  var row = el('div', 'create-slider-row');
-  var slider = el('input', 'config-slider');
-  slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '0.5';
-  slider.value = String(value);
-  var box = el('input', 'config-slider-input');
-  box.type = 'text'; box.value = String(value);
-  var suf = el('span', 'config-percent-suffix'); suf.textContent = '%';
-  slider.addEventListener('input', function () { box.value = slider.value; onChange(Number(slider.value)); });
-  box.addEventListener('input', function () {
-    var v = parseFloat(box.value);
-    if (!isNaN(v) && v >= 0 && v <= 100) { slider.value = String(v); onChange(v); }
-  });
-  row.appendChild(slider); row.appendChild(box); row.appendChild(suf);
-  return row;
-}
-
 // desc may be a string or a function(checked) → string, so the subtext reflects the toggle's state and
 // updates in place when toggled.
 // State-reflective subtext: prefix "On:"/"Off:" so the sentence reads as the current checkbox state.
@@ -1072,10 +1036,7 @@ function revStageEditor(stage, idx, state, render) {
   issRow.appendChild(issIn);
   issRow.appendChild(document.createTextNode(' $' + tk + ' per '));
   // Base currency (revnet-wide): issue per ETH or per USD. Small inline dropdown (no full-width `field`).
-  var curSel = el('select', 'create-amount-cur');
-  [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option'); op.value = String(o[1]); op.textContent = o[0]; if ((state.revBaseCurrency || 1) === o[1]) op.selected = true; curSel.appendChild(op); });
-  curSel.addEventListener('change', function () { state.revBaseCurrency = Number(curSel.value); render(); });
-  issRow.appendChild(curSel);
+  issRow.appendChild(currencySelect(state.revBaseCurrency, function (v) { state.revBaseCurrency = v; render(); }));
   // "add auto cuts?" prompt + checkbox sit to the right of the currency selector (kept even when checked).
   var cutPrompt = el('span', 'create-inline-prompt'); cutPrompt.textContent = 'add auto cuts?'; issRow.appendChild(cutPrompt);
   var cutCb = el('input', 'create-inline-check'); cutCb.type = 'checkbox'; cutCb.checked = !!stage.issuanceCutOn;
@@ -1384,6 +1345,19 @@ function choiceCardsInline(opts, current, onPick) {
   return row;
 }
 
+// ETH/USD currency <select> (JBCurrencyIds 1/2). `onChange` receives the numeric id; `cls` overrides the
+// default compact inline style. Consolidates the identical option-loop used across the wizard.
+function currencySelect(current, onChange, cls) {
+  var sel = el('select', cls || 'create-amount-cur');
+  [['ETH', 1], ['USD', 2]].forEach(function (o) {
+    var op = el('option'); op.value = String(o[1]); op.textContent = o[0];
+    if ((current || 1) === o[1]) op.selected = true;
+    sel.appendChild(op);
+  });
+  sel.addEventListener('change', function () { onChange(Number(sel.value)); });
+  return sel;
+}
+
 
 // Payouts section for a stage (folded into the stage editor).
 function payoutRow(stage, rec, idx, mode, render) {
@@ -1415,10 +1389,7 @@ function payoutRow(stage, rec, idx, mode, render) {
     var lead1 = el('span', 'create-split-lead'); lead1.textContent = leadText; l1.appendChild(lead1);
     var amt = el('input', 'field create-inline-num'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
     amt.value = rec.amountEth || ''; amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); }); l1.appendChild(amt);
-    var cur = el('select', 'create-amount-cur');
-    [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0]; if ((stage.payoutCurrency || 1) === o[1]) op.selected = true; cur.appendChild(op); });
-    cur.addEventListener('change', function () { stage.payoutCurrency = Number(cur.value); render(); });
-    l1.appendChild(cur);
+    l1.appendChild(currencySelect(stage.payoutCurrency, function (v) { stage.payoutCurrency = v; render(); }));
     var toEnd = el('span', 'create-split-to'); toEnd.textContent = 'to'; l1.appendChild(toEnd);
     wrap.appendChild(l1);
     var l2 = el('div', 'create-split-row payout-line2');
@@ -1485,10 +1456,7 @@ function payoutsSection(stage, render) {
         var saAmt = el('input', 'field create-inline-num'); saAmt.type = 'text'; saAmt.placeholder = '0.0'; saAmt.value = stage.surplusAllowanceAmount;
         saAmt.addEventListener('input', function () { stage.surplusAllowanceAmount = saAmt.value.trim(); });
         saRow.appendChild(saAmt);
-        var saCur = el('select', 'create-amount-cur');
-        [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0]; if (stage.surplusAllowanceCurrency === o[1]) op.selected = true; saCur.appendChild(op); });
-        saCur.addEventListener('change', function () { stage.surplusAllowanceCurrency = Number(saCur.value); });
-        saRow.appendChild(saCur);
+        saRow.appendChild(currencySelect(stage.surplusAllowanceCurrency, function (v) { stage.surplusAllowanceCurrency = v; }));
         saRow.appendChild(document.createTextNode(' allowed.'));
         saCard.appendChild(saRow);
       }
@@ -1498,21 +1466,6 @@ function payoutsSection(stage, render) {
     wrap.appendChild(cashOutSection(stage, render));
   }
   return wrap;
-}
-
-function recipientRow(rec, right, onRemove) {
-  var row = el('div', 'create-recipient');
-  var who = el('span', 'create-recipient-who');
-  who.textContent = rec.type === 'project' ? ('Project #' + rec.projectId) : shortAddr(rec.address);
-  row.appendChild(who);
-  var r = el('span', 'create-recipient-right');
-  r.textContent = right;
-  row.appendChild(r);
-  var x = el('button', 'create-recipient-x');
-  x.textContent = '✕';
-  x.addEventListener('click', onRemove);
-  row.appendChild(x);
-  return row;
 }
 
 // Inline reserved-token split row: "Split [%] to [0x / project ID]". A project ID reveals a
@@ -1691,10 +1644,7 @@ function tokenSection(stage, render) {
       n.addEventListener('input', function () { t.weight = n.value.trim(); });
       row.appendChild(n);
       row.appendChild(document.createTextNode(' tokens per '));
-      var cur = el('select', 'create-amount-cur');
-      [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0]; if (t.baseCurrency === o[1]) op.selected = true; cur.appendChild(op); });
-      cur.addEventListener('change', function () { t.baseCurrency = Number(cur.value); render(); });
-      row.appendChild(cur);
+      row.appendChild(currencySelect(t.baseCurrency, function (v) { t.baseCurrency = v; render(); }));
       return row;
     })());
 
@@ -1793,9 +1743,8 @@ function renderNfts(state, render) {
 
   // Store pricing currency — what every item's price is denominated in.
   wrap.appendChild(fieldBlock('Store pricing currency', false, (function () {
-    var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
-    [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option'); op.value = String(o[1]); op.textContent = o[0]; if (storeCur(state) === o[1]) op.selected = true; sel.appendChild(op); });
-    sel.addEventListener('change', function () { state.storePricingCurrency = Number(sel.value); render(); });
+    var sel = currencySelect(storeCur(state), function (v) { state.storePricingCurrency = v; render(); }, 'field create-input');
+    sel.style.width = 'auto'; sel.style.minWidth = '0';
     return sel;
   })()));
 
@@ -2198,10 +2147,6 @@ function renderDeploy(state, render) {
 
 // ---- Per-chain overrides (multichain): limited payout amounts + store-item inclusion/quantity ----
 
-function stageHasLimitedPayouts(s) {
-  return s.payoutMode === 'limited' && (s.payoutRecipients || []).some(function (r) { return Number(r.amountEth) > 0 || r.recip || r.address || r.projectId; });
-}
-function anyLimitedPayouts(state) { return state.stages.some(stageHasLimitedPayouts); }
 // Per-chain overrides are keyed by canonical chain id (1/10/42161/8453) so they survive a mainnet↔testnet switch.
 function perChainOf(state, chainId) {
   var k = canonChainId(chainId);
@@ -2226,12 +2171,6 @@ function chainPayoutAmount(state, chainId, stageIdx, recipIdx) {
   var ov = pc && pc.payouts && pc.payouts[stageIdx] && pc.payouts[stageIdx][recipIdx];
   if (ov != null && ov !== '') return ov;
   return state.stages[stageIdx].payoutRecipients[recipIdx].amountEth;
-}
-// The full amounts array for a stage on a chain (or null if the stage isn't limited).
-function chainStageAmounts(state, chainId, stageIdx) {
-  var st = state.stages[stageIdx];
-  if (!st || st.payoutMode !== 'limited') return null;
-  return st.payoutRecipients.map(function (_, idx) { return chainPayoutAmount(state, chainId, stageIdx, idx); });
 }
 function chainItemIncluded(state, chainId, itemIdx) {
   var pc = perChainPeek(state, chainId);
@@ -2394,86 +2333,6 @@ function reviewSummary(state) {
   return c;
 }
 
-// ---------------------------------------------------------------------------
-// Recipient modal (payouts + reserved)
-// ---------------------------------------------------------------------------
-
-// For payout recipients, `stage` is passed so the amount field's trailing ETH/USD selector reads/writes
-// the stage's payout currency (currency is a property of the payout limit, shared across recipients).
-function openRecipientModal(kind, onAdd, stage) {
-  var rec = { type: 'wallet', address: '', projectId: '', amountEth: '', percent: 0, lockedUntil: '' };
-  var ov = el('div', 'create-modal-overlay');
-  var dlg = el('div', 'create-modal');
-  function close() { ov.remove(); }
-  ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
-
-  var title = el('div', 'create-modal-title');
-  title.textContent = kind === 'payout' ? 'Add payout recipient' : 'Add reserved token recipient';
-  dlg.appendChild(title);
-
-  var typeRow = el('div', 'create-pills');
-  [['wallet', 'Wallet Address'], ['project', 'Juicebox Project']].forEach(function (o) {
-    var p = el('button', 'create-pill' + (rec.type === o[0] ? ' selected' : ''));
-    p.textContent = o[1];
-    p.addEventListener('click', function () { rec.type = o[0]; body(); });
-    typeRow.appendChild(p);
-  });
-  dlg.appendChild(typeRow);
-
-  var fields = el('div', '');
-  dlg.appendChild(fields);
-  function body() {
-    Array.prototype.forEach.call(typeRow.children, function (p, i) {
-      p.classList.toggle('selected', (i === 0) === (rec.type === 'wallet'));
-    });
-    fields.innerHTML = '';
-    if (rec.type === 'project') {
-      fields.appendChild(fieldBlock('Juicebox Project ID', false, textInput(rec.projectId, '#', function (v) { rec.projectId = v.trim(); })));
-      fields.appendChild(fieldBlock('Token beneficiary address', false, textInput(rec.address, '0x…', function (v) { rec.address = v.trim(); })));
-    } else {
-      fields.appendChild(fieldBlock('Address', false, textInput(rec.address, '0x…', function (v) { rec.address = v.trim(); })));
-    }
-    if (kind === 'payout') {
-      // Amount + trailing ETH/USD selector (like the Pay form's value field). The selector sets the
-      // stage's payout currency, naming which unit the amount is measured in.
-      fields.appendChild(fieldBlock('Payout amount', false, (function () {
-        var rowEl = el('div', 'create-amount-row');
-        var amt = el('input', 'field create-amount-input'); amt.type = 'text'; amt.placeholder = '0.0'; amt.value = rec.amountEth;
-        amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); });
-        var curSel = el('select', 'create-amount-cur');
-        [['ETH', 1], ['USD', 2]].forEach(function (o) {
-          var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0];
-          if ((stage && stage.payoutCurrency) === o[1]) op.selected = true;
-          curSel.appendChild(op);
-        });
-        curSel.addEventListener('change', function () { if (stage) stage.payoutCurrency = Number(curSel.value); });
-        rowEl.appendChild(amt); rowEl.appendChild(curSel);
-        return rowEl;
-      })()));
-    } else {
-      var pf = el('div', 'create-field');
-      var pl = el('label', 'create-label'); pl.textContent = 'Reserved percentage'; pf.appendChild(pl);
-      pf.appendChild(pctSlider(rec.percent, function (v) { rec.percent = v; }));
-      fields.appendChild(pf);
-    }
-  }
-  body();
-
-  var foot = el('div', 'create-modal-foot');
-  var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
-  cancel.addEventListener('click', close);
-  var ok = el('button', 'create-btn primary'); ok.textContent = kind === 'payout' ? 'Add payout' : 'Add recipient';
-  ok.addEventListener('click', function () {
-    if (rec.type === 'wallet' && !/^0x[0-9a-fA-F]{40}$/.test(rec.address)) { alert('Enter a valid address.'); return; }
-    if (rec.type === 'project' && !rec.projectId) { alert('Enter a project ID.'); return; }
-    onAdd(rec); close();
-  });
-  foot.appendChild(cancel); foot.appendChild(ok);
-  dlg.appendChild(foot);
-
-  ov.appendChild(dlg);
-  document.body.appendChild(ov);
-}
 
 // ---------------------------------------------------------------------------
 // NFT modal
@@ -3124,7 +2983,6 @@ function buildMetadata(d) {
 // small helpers
 // ---------------------------------------------------------------------------
 
-function networkOf(id) { var c = CHAIN_OPTIONS.find(function (x) { return x.id === id; }); return c && c.testnet ? 'testnet' : 'mainnet'; }
 function chainName(id) { var c = CHAIN_OPTIONS.find(function (x) { return x.id === id; }); return c ? c.name : ('chain ' + id); }
 function shortAddr(a) { return a && a.length > 10 ? (a.slice(0, 6) + '…' + a.slice(-4)) : (a || '—'); }
 function secondsLabel(s) {

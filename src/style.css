@@ -5076,22 +5076,6 @@ select.create-input, .create-amount-cur {
 .create-suffix-row .field { flex: 1; }
 .create-suffix { font-size: 12px; color: var(--muted-2); white-space: nowrap; }
 
-/* Choice cards */
-.create-choices { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
-.create-choice {
-  text-align: left; font-family: inherit; cursor: pointer; padding: 14px 16px;
-  background: var(--card-bg); border: 2px solid var(--c-orange-light);
-}
-.create-choice.selected { border-color: var(--c-teal); }
-.create-choice-top { display: flex; align-items: center; gap: 10px; }
-.create-choice-icon { font-size: 15px; }
-.create-choice-title { font-size: 15px; font-weight: bold; color: var(--c-black); }
-.create-choice-badge {
-  font-size: 9px; font-weight: bold; letter-spacing: 0.5px; color: var(--c-teal);
-  background: var(--c-teal-light); border-radius: 8px; padding: 2px 7px; margin-left: 4px;
-}
-.create-choice-sub { font-size: 12px; color: var(--muted-2); margin-top: 5px; line-height: 1.5; }
-
 /* Inline pills */
 .create-pills { display: flex; gap: 6px; flex-wrap: wrap; }
 .create-pill {
@@ -5153,15 +5137,6 @@ select.create-input, .create-amount-cur {
 .create-subcard-title { font-size: 14px; font-weight: bold; color: var(--c-black); }
 .create-empty { text-align: center; color: var(--muted-2); font-size: 12px; padding: 16px 0; }
 
-/* Recipients */
-.create-recipient {
-  display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--c-orange-light);
-}
-.create-recipient-who { font-size: 13px; color: var(--c-black); flex: 1; }
-.create-recipient-right { font-size: 12px; color: var(--muted-2); }
-.create-recipient-x { background: none; border: none; color: var(--muted-2); cursor: pointer; font-size: 12px; padding: 2px 4px; }
-.create-recipient-x:hover { color: var(--c-pink); }
-
 /* NFT rows */
 .create-add-nft {
   width: 100%; font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer; padding: 18px;
@@ -5220,25 +5195,13 @@ select.create-input, .create-amount-cur {
 .create-btn.big { width: 100%; padding: 12px; margin-top: 6px; }
 .create-btn:disabled { opacity: 0.5; cursor: default; }
 
-/* Sub-modals (recipient / NFT) */
-.create-modal-overlay {
-  position: fixed; inset: 0; background: rgba(44, 32, 24, 0.45); z-index: 210;
-  display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; overflow-y: auto;
-}
-.create-modal { background: var(--bg); border: 3px solid var(--c-black-light); width: 100%; max-width: 480px; padding: 20px 22px; }
-.create-modal-title { font-size: 16px; font-weight: bold; color: var(--c-black); margin-bottom: 14px; }
+/* Modal footer (shared by the confirm modal + discover modals) */
 .create-modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
 
 @media (max-width: 560px) {
   .create-grid2 { grid-template-columns: 1fr; }
   .create-step-label { display: none; }
 }
-
-/* Create wizard sliders — roomier than the compact config sliders */
-.create-slider-row { display: flex; align-items: center; gap: 16px; margin: 10px 0 4px; }
-.create-slider-row .config-slider { max-width: none; flex: 1; height: 10px; }
-.create-slider-row .config-slider-input { width: 68px; font-size: 13px; padding: 6px 10px; text-align: center; }
-.create-slider-row .config-percent-suffix { font-size: 13px; color: var(--muted-2); }
 
 /* Create wizard — full tx payload preview */
 .create-payload {
@@ -5280,18 +5243,6 @@ select.create-input, .create-amount-cur {
 .create-stage-body { padding: 4px 14px 14px; border-top: 1px solid var(--c-orange-light); background: var(--bg); }
 
 .create-note.warn { border-left-color: var(--c-pink); color: var(--c-pink); }
-
-/* Project-type chooser (Custom / Revnet) */
-.create-type-cards { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
-.create-type-card {
-  flex: 1; min-width: 220px; text-align: left; cursor: pointer; font-family: inherit;
-  background: var(--card-bg); border: 2px solid var(--c-orange-light); padding: 18px 18px 20px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.create-type-card:hover { border-color: var(--c-orange); }
-.create-type-card.selected { border-color: var(--c-teal); }
-.create-type-card-title { font-size: 16px; font-weight: bold; color: var(--c-black); }
-.create-type-card-desc { font-size: 12px; color: var(--muted-2); line-height: 1.55; }
 
 /* Revnet stage editor */
 .create-stage-editor { padding: 4px 14px 14px; border-top: 1px solid var(--c-orange-light); background: var(--bg); }
