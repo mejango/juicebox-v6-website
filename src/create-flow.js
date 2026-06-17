@@ -447,6 +447,7 @@ export function openCreateFlow() {
   overlay.appendChild(sheet);
 
   function close() { document.removeEventListener('keydown', onKey); overlay.remove(); }
+  state._close = close; // so the success panel's "Go to project" can dismiss the overlay
   function onKey(e) { if (e.key === 'Escape' && !state.deploying) close(); }
   overlay.addEventListener('mousedown', function (e) { if (e.target === overlay && !state.deploying) close(); });
   document.addEventListener('keydown', onKey);
@@ -1180,7 +1181,7 @@ function autoIssuanceRow(stage, ai, idx, tk, render) {
   var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; });
   recip.addEventListener('input', function () { ai.address = recip.value.trim(); });
   row.appendChild(recipBoxWith(recip, ensHint));
-  var rm = el('button', 'create-split-rm'); rm.textContent = '🗑'; rm.title = 'Remove';
+  var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = stage.autoIssuances.indexOf(ai); if (i >= 0) stage.autoIssuances.splice(i, 1); render(); });
   row.appendChild(rm);
   return row;
@@ -2098,14 +2099,35 @@ function renderDeploy(state, render) {
 
   if (!hasPinata()) wrap.appendChild(infoNote('No Pinata JWT set — add one in DATA → settings to pin your logo & metadata. Otherwise they’re skipped at launch and you can add them by editing the project later.'));
 
-  if (state.statusLines.length) {
-    var log = el('div', 'create-log');
-    state.statusLines.forEach(function (line) {
-      var l = el('div', 'create-log-line' + (line.err ? ' err' : (line.ok ? ' ok' : '')));
-      l.textContent = line.text;
-      log.appendChild(l);
-    });
-    wrap.appendChild(log);
+  // Success panel — replaces the form once deployed: a clear confirmation + a "Go to project" CTA.
+  if (state.done) {
+    var panel = el('div', 'create-success');
+    var st = el('div', 'create-success-title'); st.textContent = (state.details.name || 'Your project') + ' is live'; panel.appendChild(st);
+    var sub = el('div', 'create-success-sub');
+    sub.textContent = (isRev ? 'Revnet' : 'Project') + ' deployed on ' + state.chainIds.map(chainName).join(', ') + '.';
+    panel.appendChild(sub);
+    if (state.deployed && state.deployed.txHash) {
+      var txp = el('div', 'create-success-sub'); txp.textContent = 'Transaction: ' + truncAddr(state.deployed.txHash);
+      panel.appendChild(txp);
+    }
+    if (state.deployed && state.deployed.route) {
+      var go = el('button', 'create-btn primary big'); go.style.marginTop = '14px'; go.textContent = 'Go to project →';
+      go.addEventListener('click', function () { window.location.hash = state.deployed.route; if (state._close) state._close(); });
+      panel.appendChild(go);
+    } else {
+      var noteFinding = el('div', 'create-success-sub'); noteFinding.textContent = 'Find it in Discover in a moment.'; panel.appendChild(noteFinding);
+    }
+    wrap.appendChild(panel);
+    return wrap;
+  }
+
+  // While deploying, show only the current step (single live line) — not a growing log.
+  var last = state.statusLines.length ? state.statusLines[state.statusLines.length - 1] : null;
+  if (last) {
+    var statusRow = el('div', 'create-status' + (last.err ? ' err' : ''));
+    if (state.deploying && !last.err) statusRow.appendChild(el('span', 'create-spinner'));
+    var stx = el('span'); stx.textContent = last.text; statusRow.appendChild(stx);
+    wrap.appendChild(statusRow);
   }
 
   var bad = isRev ? -1 : badStageIndex(state); // revnets have no per-stage durations to validate
@@ -2132,7 +2154,7 @@ function renderDeploy(state, render) {
   function updateLaunch() {
     launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || bad !== -1;
   }
-  launch.textContent = state.done ? (isRev ? 'Deployed ✓' : 'Launched ✓') : (state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project'));
+  launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
   updateLaunch();
   wrap.appendChild(launch);
@@ -2444,7 +2466,7 @@ function deploy(state, render) {
   state._push = function pushStatus(text, kind) { state.statusLines.push({ text: text, ok: kind === 'ok', err: kind === 'err' }); render(); };
   runDeploy(state, owner).then(function () {
     state.deploying = false; state.done = true;
-    state.statusLines.push({ text: 'All done. 🎉', ok: true });
+    state.statusLines.push({ text: 'All done.', ok: true });
     render();
   }).catch(function (e) {
     state.deploying = false;
@@ -2509,7 +2531,7 @@ async function runDeploy(state, owner) {
     var sp = plans[s];
     try {
       await simulateTransaction({ chainId: sp.chainId, address: sp.address, abi: sp.abi, functionName: sp.functionName || 'launchProjectFor', args: sp.args, value: sp.value, account: signer });
-      push('Simulation OK on ' + chainName(sp.chainId) + ' ✓', 'ok');
+      push('Simulation passed on ' + chainName(sp.chainId), 'ok');
     } catch (e) {
       throw new Error('Couldn’t simulate on ' + chainName(sp.chainId) + ' — ' + friendlyDeployError(e));
     }
@@ -2519,8 +2541,9 @@ async function runDeploy(state, owner) {
   if (plans.length === 1) {
     var p0 = plans[0];
     push('Confirm in your wallet for ' + chainName(p0.chainId) + ' (incl. ' + formatEther(p0.value) + ' ETH creation fee)…');
-    await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, onStatus: function (m) { push(m); } });
-    push((state.projectType === 'revnet' ? 'Deployed revnet on ' : 'Launched on ') + chainName(p0.chainId) + ' ✓', 'ok');
+    var hash0 = await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, onStatus: function (m) { push(m); } });
+    push('Reading the new project…');
+    await captureDeployed(state, p0.chainId, hash0);
     return;
   }
 
@@ -2548,7 +2571,8 @@ async function runDeploy(state, owner) {
   await relayrPoll(quote.bundle_uuid, function (txList) {
     push((txList || []).map(function (t) { return chainName(t.chain) + ': ' + (t.status && t.status.state || '…'); }).join(' · '));
   });
-  push('Launched on all ' + plans.length + ' chains 🎉', 'ok');
+  push('Reading the new project…');
+  await captureDeployed(state, plans[0].chainId, null);
 }
 
 // Gas for the inner launch call (the forwarder forwards this much). Estimate the direct call + buffer;
@@ -2576,10 +2600,30 @@ function creationFeeOf(chainId) {
 function execTx(opts) {
   return new Promise(function (resolve, reject) {
     executeTransaction(Object.assign({}, opts, {
-      onSuccess: function (m) { resolve(m); },
+      onSuccess: function (m, meta) { resolve((meta && meta.hash) || null); },
       onError: function (m) { reject(new Error(m)); },
     }));
   });
+}
+
+// After a successful deploy, capture the new project's id (JBProjects.count) + route + tx hash for the
+// success panel's "Go to project" link. Best-effort — the panel still shows a generic success if it fails.
+function captureDeployed(state, chainId, txHash) {
+  return projectCountOf(chainId).then(function (pid) {
+    state.deployed = { chainId: chainId, projectId: pid, txHash: txHash || null, route: projectRouteFor(chainId, pid) };
+  }).catch(function () { state.deployed = { chainId: chainId, txHash: txHash || null }; });
+}
+
+// Chain-id → discover route slug (must match discover.js CHAIN_SLUGS exactly) for the "Go to project" link.
+var CREATE_CHAIN_SLUGS = { 1: 'eth', 11155111: 'sep', 42161: 'arb', 421614: 'arbsep', 8453: 'base', 84532: 'basesep', 10: 'op', 11155420: 'opsep' };
+function projectRouteFor(chainId, projectId) { var s = CREATE_CHAIN_SLUGS[chainId]; return (s && projectId) ? ('#' + s + ':' + projectId) : null; }
+// JBProjects.count() = the id of the most recently created project (ids increment) — the one we just deployed.
+function projectCountOf(chainId) {
+  var projects = getAddress('JBProjects', chainId);
+  if (!projects) return Promise.resolve(null);
+  return createPublicClientForChain(chainId).readContract({
+    address: projects, abi: [{ type: 'function', name: 'count', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }], functionName: 'count',
+  }).then(function (n) { return Number(n); }).catch(function () { return null; });
 }
 
 // Deterministic salt — same on every chain (so omnichain sucker addresses match). No Math.random.

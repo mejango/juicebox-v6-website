@@ -3172,6 +3172,20 @@ input[type="checkbox"].field {
 .modal-label { font-size: 12px; font-weight: bold; color: var(--text); margin: 10px 0 4px; }
 .modal-balance { font-size: 11px; color: var(--muted-2); margin-bottom: 8px; }
 .ops-preview { font-size: 13px; color: var(--text); margin: 10px 0 4px; min-height: 16px; }
+.ops-preview-line { line-height: 1.5; }
+.ops-preview-recv { font-weight: bold; }
+.ops-preview-fee, .ops-preview-feetok { font-size: 12px; color: var(--muted-2); }
+.ops-preview-feetok { padding-left: 2px; }
+.ops-preview-lock { font-weight: bold; color: var(--c-pink); }
+
+/* Cash-out success summary (replaces the form once the tx confirms). */
+.cashout-success { display: flex; flex-direction: column; gap: 4px; }
+.cashout-success-title { font-size: 20px; font-weight: bold; color: var(--text); }
+.cashout-success-sub { font-size: 13px; color: var(--muted-2); margin-bottom: 8px; }
+.cashout-success-reclbl { font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.04em; }
+.cashout-success-amount { font-size: 28px; font-weight: bold; color: var(--c-teal); line-height: 1.1; }
+.cashout-success-extra { font-size: 13px; color: var(--text); margin-top: 2px; }
+.cashout-success-tx { margin-top: 12px; font-size: 12px; }
 .ops-inrow { display: flex; align-items: stretch; gap: 0; }
 .ops-select {
   font-family: inherit; font-size: 12px; padding: 8px 24px 8px 10px; border: 2px solid var(--write); border-right: none;
@@ -3269,14 +3283,25 @@ input[type="checkbox"].field {
 .loan-caret { color: var(--muted-2); font-size: 9px; }
 .loan-section-body { margin-top: 12px; }
 .loan-prepaid-label { font-size: 12px; font-weight: bold; color: var(--text); margin-bottom: 8px; }
-.loan-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; background: var(--c-black-light); outline: none; }
-.loan-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--c-pink); cursor: pointer; border: none; }
-.loan-slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--c-pink); cursor: pointer; border: none; }
+/* Track: orange filled portion (left of thumb, 6px) over a thinner dark remainder (4px). The orange
+   width is driven by --loan-pct, set in JS as the thumb moves. Input height holds the 16px thumb so
+   it stays vertically centered on the track (gradient lives on the track pseudo, not the input). */
+.loan-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; cursor: pointer; }
+.loan-slider::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px;
+  background:
+    linear-gradient(to right, var(--c-orange, #b8602e) 0 var(--loan-pct, 0%), rgba(0,0,0,0) var(--loan-pct, 0%)),
+    linear-gradient(var(--c-black-light), var(--c-black-light)) left center / 100% 4px no-repeat;
+}
+.loan-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--c-orange, #b8602e); cursor: pointer; border: none; margin-top: -5px; }
+.loan-slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--c-orange, #b8602e); cursor: pointer; border: none; }
+.loan-slider::-moz-range-track { height: 4px; border-radius: 2px; background: var(--c-black-light); }
+.loan-slider::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--c-orange, #b8602e); }
 .loan-slider-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted-2); margin-top: 6px; }
 .loan-fee-chart { margin-top: 12px; position: relative; }
 .loan-fee-svg { display: block; width: 100%; height: auto; }
-.loan-fee-cursor { position: absolute; width: 1px; background: rgba(196, 53, 80, 0.5); pointer-events: none; }
-.loan-fee-dot { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--c-pink); transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card-bg); pointer-events: none; }
+.loan-fee-cursor { position: absolute; width: 1px; background: rgba(184, 96, 46, 0.5); pointer-events: none; }
+.loan-fee-dot { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--c-orange, #b8602e); transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card-bg); pointer-events: none; }
 .loan-fee-tip { position: absolute; background: var(--c-black); color: #fbe9e2; font-size: 10px; line-height: 1.45; padding: 5px 8px; border-radius: 3px; pointer-events: none; max-width: 190px; z-index: 3; }
 .loan-fee-tip-t { font-weight: bold; }
 .loan-fee-caption { text-align: center; font-size: 11px; color: var(--muted-2); margin-top: 6px; }
@@ -3284,6 +3309,10 @@ input[type="checkbox"].field {
 .loan-summary-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 3px 0; }
 .loan-summary-k { color: var(--muted-2); }
 .loan-summary-v { color: var(--text); text-align: right; }
+.loan-summary-feetok { font-size: 11px; color: var(--muted-2); padding: 0 0 2px 2px; }
+.loan-summary-feetok:empty { display: none; }
+.loan-summary-net .loan-summary-k, .loan-summary-net .loan-summary-v { font-weight: bold; color: var(--text); }
+.loan-summary-net { border-top: 1px dashed var(--c-orange-light); margin-top: 4px; padding-top: 6px; }
 .loan-summary-bullets { margin: 10px 0 0; padding-left: 18px; font-size: 11px; color: var(--muted-2); line-height: 1.6; }
 .modal-status { font-size: 11px; color: var(--muted-2); margin-top: 10px; word-break: break-word; }
 .tx-confirm-status.error { color: var(--c-pink); }
@@ -3384,6 +3413,14 @@ input[type="checkbox"].field {
 .owners-chart-panel {
   min-width: 0;
   text-align: center;
+}
+.owners-pie-slice { cursor: pointer; }
+/* More specific than the default `.owners-pie-svg .owners-pie-slice` fill below, so hover wins. */
+.owners-pie-svg .owners-pie-slice.is-hover { fill: var(--c-pink); }
+.owners-pie-tip {
+  position: absolute; pointer-events: none; z-index: 5; white-space: nowrap;
+  background: var(--c-black, #2c2018); color: #fbe9e2; font-size: 11px; line-height: 1.4;
+  padding: 4px 7px; border-radius: 3px; text-align: left;
 }
 .owners-pie-svg {
   display: block;
@@ -3493,6 +3530,18 @@ input[type="checkbox"].field {
 .lp-amm-bartitle { margin: 14px 0 8px; } /* appearance via .detail-card-title */
 .lp-pos-table { min-width: 320px; }
 .lp-pos-table .owners-row { grid-template-columns: 1.6fr 1fr 1fr 0.6fr; }
+
+/* Loans table — 8 columns (Address, Collateral, Borrowed, Opened, Prepaid, Prepaid until, Outstanding fee, Expires). */
+.loans-table { min-width: 860px; }
+.loans-row { grid-template-columns: 1.4fr 1fr 0.9fr 0.7fr 0.7fr 1fr 1fr 1fr; }
+.loans-table-mine .loans-row { grid-template-columns: 1.3fr 0.9fr 0.85fr 0.65fr 0.6fr 0.9fr 0.95fr 0.9fr 0.7fr; }
+.loans-muted { color: var(--muted-2); }
+.loans-fee { color: var(--c-orange, #b8602e); font-weight: bold; }
+.loans-act { text-align: right; }
+.loans-repay-btn { font-family: inherit; font-size: 11px; font-weight: bold; padding: 4px 12px; border: 2px solid var(--write); background: var(--c-green-light); color: var(--c-black); cursor: pointer; }
+.loans-repay-btn:hover { opacity: 0.9; }
+.you-loans { margin-top: 18px; }
+.you-loans-title { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-2); margin-bottom: 8px; }
 .lp-pos-count { margin-left: 7px; font-size: 10px; color: var(--muted-2); }
 .lp-bar-wrap { width: 100%; }
 .lp-bar { display: flex; height: 22px; border-radius: 3px; overflow: hidden; border: 1px solid var(--c-orange-light); }
@@ -4589,6 +4638,7 @@ input[type="checkbox"].field {
 /* Per-chain settlement table — matches the owners/market table chrome (wrapping border + filled head). */
 .detail-ops-table { margin-top: 10px; font-size: 12px; border: 1px solid var(--c-orange-light); }
 .detail-ops-row { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--c-orange-light); }
+.detail-ops-row.detail-ops-3 { grid-template-columns: 1.3fr 1fr 1fr; }
 .detail-ops-row:last-child { border-bottom: none; }
 .detail-ops-head { background: var(--bg); color: var(--muted-2); font-size: 10px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
 .detail-ops-total { font-weight: bold; }
@@ -4898,6 +4948,16 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   border: 2px solid var(--write); background: var(--c-green-light); color: var(--c-black); cursor: pointer;
 }
 .paybox-btn:hover { opacity: 0.9; }
+.paybox-btn-idle { background: var(--card-bg); color: var(--muted-2); border-color: var(--c-green-light); cursor: not-allowed; }
+.paybox-btn-idle:hover { opacity: 1; }
+
+/* Countdown banner shown above the pay box until the project's first ruleset starts. */
+.paybox-countdown {
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px;
+  padding: 8px 12px; border: 1px dashed var(--c-green-light); background: var(--card-bg);
+}
+.paybox-countdown-label { font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.04em; }
+.paybox-countdown-time { font-size: 15px; font-weight: bold; color: var(--c-teal); font-variant-numeric: tabular-nums; }
 
 .paybox-feedback { margin: 8px 0; }
 .paybox-yg-label { font-size: 11px; color: var(--muted-2); }
@@ -5180,6 +5240,22 @@ select.create-input, .create-amount-cur {
 .create-log-line { padding: 3px 0; color: var(--muted-2); }
 .create-log-line.ok { color: var(--c-green); }
 .create-log-line.err { color: var(--c-pink); }
+
+/* Single live status line during deploy (replaces the growing log). */
+.create-status { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 13px; color: var(--muted-2); }
+.create-status.err { color: var(--c-pink); }
+.create-spinner {
+  width: 13px; height: 13px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid var(--c-orange-light); border-top-color: var(--c-orange);
+  animation: create-spin 0.7s linear infinite;
+}
+@keyframes create-spin { to { transform: rotate(360deg); } }
+
+/* Success panel shown once deployed. */
+.create-success { text-align: center; padding: 24px 8px 8px; }
+.create-success-title { font-size: 18px; font-weight: bold; color: var(--c-black); margin-bottom: 8px; }
+.create-success-sub { font-size: 13px; color: var(--muted-2); margin-top: 4px; }
+.create-success .create-btn { width: 100%; }
 
 /* Footer */
 .create-foot { display: flex; justify-content: space-between; gap: 12px; padding: 16px 22px 4px; }

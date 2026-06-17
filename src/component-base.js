@@ -710,7 +710,7 @@ export function executeTransaction(opts) {
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
       payload.erc20Approval = { token: opts.tokenAddr, spender: opts.spenderAddr, amount: opts.approvalAmount };
     }
-    confirmStep = confirmTransactionModal(payload, { title: opts.confirmTitle || 'Confirm transaction', confirmText: opts.confirmText });
+    confirmStep = confirmTransactionModal(payload, { title: opts.confirmTitle || 'Confirm transaction', confirmText: opts.confirmText, note: opts.confirmNote });
   }
 
   confirmStep.then(function (ok) {
