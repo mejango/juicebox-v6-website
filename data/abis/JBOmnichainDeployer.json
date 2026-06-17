@@ -2384,6 +2384,19 @@
     },
     {
       "type": "function",
+      "name": "originalPayer",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "peerChainAdjustedAccountsOf",
       "inputs": [
         {
@@ -3619,6 +3632,9 @@
     },
     "launchRulesetsFor(uint256,string,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,address,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],(address,(address,uint8,uint32)[])[],string)": {
       "notice": "Launches new rulesets for a project with a default (empty-tier) 721 hook."
+    },
+    "originalPayer()": {
+      "notice": "The account that paid the creation fee for the project currently being launched."
     },
     "peerChainAdjustedAccountsOf(uint256)": {
       "notice": "Forwards peer-chain adjusted accounts from the stored extra data hook. Suckers call this on the active data hook (which is this deployer after wrapping) to learn about additional supply and per-context surplus and balance that should be included in cross-chain snapshots. Without forwarding, the extra hook's peer-chain adjustments are silently masked, causing the bonding curve to use only local values and over-reclaiming on peer chains."

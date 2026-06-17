@@ -143,6 +143,52 @@
     },
     {
       "type": "function",
+      "name": "allowTokenMapping",
+      "inputs": [
+        {
+          "name": "localToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "remoteChainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteToken",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "allowTokenMappings",
+      "inputs": [
+        {
+          "name": "localTokens",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "remoteChainIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "remoteTokens",
+          "type": "bytes32[]",
+          "internalType": "bytes32[]"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "deploySuckersFor",
       "inputs": [
         {
@@ -262,98 +308,64 @@
     },
     {
       "type": "function",
-      "name": "remoteBalanceOf",
+      "name": "peerChainAccountsOf",
       "inputs": [
-        {
-          "name": "sucker",
-          "type": "address",
-          "internalType": "address"
-        },
         {
           "name": "projectId",
           "type": "uint256",
           "internalType": "uint256"
         },
         {
-          "name": "currency",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "decimals",
+          "name": "exceptChainId",
           "type": "uint256",
           "internalType": "uint256"
         }
       ],
       "outputs": [
         {
-          "name": "",
-          "type": "tuple",
-          "internalType": "struct JBPeerChainValue",
+          "name": "accounts",
+          "type": "tuple[]",
+          "internalType": "struct JBChainAccounting[]",
           "components": [
             {
-              "name": "value",
+              "name": "chainId",
               "type": "uint256",
               "internalType": "uint256"
             },
             {
-              "name": "peerChainId",
+              "name": "totalSupply",
               "type": "uint256",
               "internalType": "uint256"
             },
             {
-              "name": "snapshotTimestamp",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "remoteSurplusOf",
-      "inputs": [
-        {
-          "name": "sucker",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "projectId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "currency",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "decimals",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "tuple",
-          "internalType": "struct JBPeerChainValue",
-          "components": [
-            {
-              "name": "value",
-              "type": "uint256",
-              "internalType": "uint256"
+              "name": "contexts",
+              "type": "tuple[]",
+              "internalType": "struct JBSourceContext[]",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "bytes32",
+                  "internalType": "bytes32"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "surplus",
+                  "type": "uint128",
+                  "internalType": "uint128"
+                },
+                {
+                  "name": "balance",
+                  "type": "uint128",
+                  "internalType": "uint128"
+                }
+              ]
             },
             {
-              "name": "peerChainId",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "snapshotTimestamp",
+              "name": "timestamp",
               "type": "uint256",
               "internalType": "uint256"
             }
@@ -414,10 +426,79 @@
     },
     {
       "type": "function",
+      "name": "removeTokenMapping",
+      "inputs": [
+        {
+          "name": "localToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "remoteChainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteToken",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "removeTokenMappings",
+      "inputs": [
+        {
+          "name": "localTokens",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "remoteChainIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "remoteTokens",
+          "type": "bytes32[]",
+          "internalType": "bytes32[]"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "renounceOwnership",
       "inputs": [],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "requireTokenMappingAllowed",
+      "inputs": [
+        {
+          "name": "localToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "remoteChainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteToken",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -515,6 +596,35 @@
           "name": "",
           "type": "uint256",
           "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tokenMappingIsAllowed",
+      "inputs": [
+        {
+          "name": "localToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "remoteChainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteToken",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
         }
       ],
       "stateMutability": "view"
@@ -776,6 +886,68 @@
       "anonymous": false
     },
     {
+      "type": "event",
+      "name": "TokenMappingAllowed",
+      "inputs": [
+        {
+          "name": "localToken",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "remoteChainId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteToken",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "TokenMappingRemoved",
+      "inputs": [
+        {
+          "name": "localToken",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "remoteChainId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteToken",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
       "type": "error",
       "name": "JBPermissioned_Unauthorized",
       "inputs": [
@@ -862,6 +1034,48 @@
     },
     {
       "type": "error",
+      "name": "JBSuckerRegistry_TokenMappingLengthMismatch",
+      "inputs": [
+        {
+          "name": "localTokenCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteChainIdCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteTokenCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSuckerRegistry_TokenMappingNotAllowed",
+      "inputs": [
+        {
+          "name": "localToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "remoteChainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteToken",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "JBSuckerRegistry_ZeroPeerChainId",
       "inputs": [
         {
@@ -937,19 +1151,35 @@
         "deployers": "The addresses of the deployers to add."
       }
     },
+    "allowTokenMapping(address,uint256,bytes32)": {
+      "details": "Can only be called by this contract's owner (initially project ID 1, or JuiceboxDAO).",
+      "params": {
+        "localToken": "The local token address.",
+        "remoteChainId": "The ID of the remote chain.",
+        "remoteToken": "The remote token address encoded as bytes32."
+      }
+    },
+    "allowTokenMappings(address[],uint256[],bytes32[])": {
+      "details": "Can only be called by this contract's owner (initially project ID 1, or JuiceboxDAO).",
+      "params": {
+        "localTokens": "The local token addresses.",
+        "remoteChainIds": "The remote chain IDs.",
+        "remoteTokens": "The remote token addresses encoded as bytes32."
+      }
+    },
     "constructor": {
       "params": {
         "directory": "The juicebox directory.",
         "initialOwner": "The initial owner of this contract.",
         "permissions": "A contract storing permissions.",
-        "prices": "The prices contract used to value remote per-context surplus/balance into a requested currency."
+        "prices": "The prices contract for valuing remote per-context surplus/balance into a requested currency."
       }
     },
     "deploySuckersFor(uint256,bytes32,(address,bytes32,(address,uint32,bytes32)[])[])": {
       "params": {
         "configurations": "The sucker deployer configs to use to deploy the suckers.",
         "projectId": "The ID of the project to deploy suckers for.",
-        "salt": "The salt used to deploy the contract. For the suckers to be peers, this must be the same value on each chain where suckers are deployed."
+        "salt": "The deployment salt. For the suckers to be peers, this must be the same value on each chain where suckers are deployed."
       },
       "returns": {
         "suckers": "The addresses of the deployed suckers."
@@ -970,32 +1200,18 @@
     "owner()": {
       "details": "Returns the address of the current owner."
     },
-    "remoteBalanceOf(address,uint256,uint256,uint256)": {
-      "details": "Exposed as an external self-call boundary so `totalRemoteBalanceOf` can `try` it and drop a single sucker whose price feed is missing. A context whose currency already matches `currency` folds in at par (no feed read); a missing cross-currency feed reverts, and the aggregator catches it and skips just this sucker.",
+    "peerChainAccountsOf(uint256,uint256)": {
+      "details": "A sucker building an outbound gossip bundle calls this to gather the project's full cross-chain knowledge (the registry is the only place a hub chain's per-peer suckers are visible together), then prepends its own local record. Records are deduped per chain (freshest wins; an active sucker's record supersedes a deprecated one's), and the destination chain and the local chain are excluded. Suckers and records that revert are silently skipped.",
       "params": {
-        "currency": "The currency to value into.",
-        "decimals": "The decimal precision for the returned value.",
-        "projectId": "The project whose price feeds to use.",
-        "sucker": "The sucker to read."
+        "exceptChainId": "The destination chain to exclude (it has authoritative data about itself).",
+        "projectId": "The ID of the project."
       },
       "returns": {
-        "_0": "A `JBPeerChainValue` with the valued balance, the sucker's peer chain ID, and its snapshot freshness key."
-      }
-    },
-    "remoteSurplusOf(address,uint256,uint256,uint256)": {
-      "details": "Exposed as an external self-call boundary so `totalRemoteSurplusOf` can `try` it and drop a single sucker whose price feed is missing. A context whose currency already matches `currency` folds in at par (no feed read); a missing cross-currency feed reverts, and the aggregator catches it and skips just this sucker.",
-      "params": {
-        "currency": "The currency to value into.",
-        "decimals": "The decimal precision for the returned value.",
-        "projectId": "The project whose price feeds to use.",
-        "sucker": "The sucker to read."
-      },
-      "returns": {
-        "_0": "A `JBPeerChainValue` with the valued surplus, the sucker's peer chain ID, and its snapshot freshness key."
+        "accounts": "The deduped raw accounting records, one per known source chain."
       }
     },
     "remoteTotalSupplyOf(uint256)": {
-      "details": "Includes deprecated suckers only when no active sucker answers for the same peer chain, to prevent undercounting during migration windows without letting stale deprecated snapshots dominate live routes. Silently skips suckers that revert.",
+      "details": "Each sucker holds an accounting record per source chain it has heard about (its direct peer plus chains gossiped through it), so this aggregates over every (sucker, chain) pair and dedups per chain. Includes deprecated suckers only when no active sucker answers for the same peer chain, to prevent undercounting during migration windows without letting stale deprecated records dominate live routes. Silently skips suckers and records that revert.",
       "params": {
         "projectId": "The ID of the project."
       },
@@ -1016,8 +1232,32 @@
         "deployer": "The address of the deployer to remove."
       }
     },
+    "removeTokenMapping(address,uint256,bytes32)": {
+      "details": "Can only be called by this contract's owner (initially project ID 1, or JuiceboxDAO).",
+      "params": {
+        "localToken": "The local token address.",
+        "remoteChainId": "The ID of the remote chain.",
+        "remoteToken": "The remote token address encoded as bytes32."
+      }
+    },
+    "removeTokenMappings(address[],uint256[],bytes32[])": {
+      "details": "Can only be called by this contract's owner (initially project ID 1, or JuiceboxDAO).",
+      "params": {
+        "localTokens": "The local token addresses.",
+        "remoteChainIds": "The remote chain IDs.",
+        "remoteTokens": "The remote token addresses encoded as bytes32."
+      }
+    },
     "renounceOwnership()": {
       "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "requireTokenMappingAllowed(address,uint256,bytes32)": {
+      "details": "Disable mappings never require owner approval. Non-native same-address mappings pass through directly. Native-to-native and differing-address mappings must be explicitly allowed.",
+      "params": {
+        "localToken": "The local token address.",
+        "remoteChainId": "The ID of the remote chain.",
+        "remoteToken": "The remote token address encoded as bytes32."
+      }
     },
     "setToRemoteFee(uint256)": {
       "details": "Only callable by the contract owner. Fee cannot exceed MAX_TO_REMOTE_FEE.",
@@ -1043,7 +1283,7 @@
       }
     },
     "totalRemoteBalanceOf(uint256,uint256,uint256)": {
-      "details": "Dedups same-peer suckers by freshest snapshot, then sums each sucker's balance valued into `currency`. Includes deprecated suckers only when no active sucker answers for the same peer chain, to prevent undercounting during migration windows without letting stale deprecated snapshots dominate live routes. A context whose currency already matches is taken at par (no feed); a missing cross-currency feed reverts and that sucker is silently skipped (conservative, bias-low).",
+      "details": "Aggregates over every (sucker, chain) pair and dedups per chain by freshest record, then sums each chain's balance valued into `currency`. Includes deprecated suckers only when no active sucker answers for the same peer chain, to prevent undercounting during migration windows without letting stale deprecated records dominate live routes. A context whose currency already matches is taken at par (no feed); a missing cross-currency feed reverts and that (sucker, chain) is silently skipped (conservative, bias-low).",
       "params": {
         "currency": "The currency to value the combined balance into.",
         "decimals": "The decimal precision for the returned value.",
@@ -1054,7 +1294,7 @@
       }
     },
     "totalRemoteSurplusOf(uint256,uint256,uint256)": {
-      "details": "Dedups same-peer suckers by freshest snapshot, then sums each sucker's surplus valued into `currency`. Includes deprecated suckers only when no active sucker answers for the same peer chain, to prevent undercounting during migration windows without letting stale deprecated snapshots dominate live routes. A context whose currency already matches is taken at par (no feed); a missing cross-currency feed reverts and that sucker is silently skipped (conservative, bias-low).",
+      "details": "Aggregates over every (sucker, chain) pair and dedups per chain by freshest record, then sums each chain's surplus valued into `currency`. Includes deprecated suckers only when no active sucker answers for the same peer chain, to prevent undercounting during migration windows without letting stale deprecated records dominate live routes. A context whose currency already matches is taken at par (no feed); a missing cross-currency feed reverts and that (sucker, chain) is silently skipped (conservative, bias-low).",
       "params": {
         "currency": "The currency to value the combined surplus into.",
         "decimals": "The decimal precision for the returned value.",
@@ -1073,7 +1313,7 @@
   },
   "userdoc": {
     "DIRECTORY()": {
-      "notice": "The Juicebox directory used to look up project terminals and controllers."
+      "notice": "The Juicebox directory for project terminals and controllers."
     },
     "MAX_TO_REMOTE_FEE()": {
       "notice": "The maximum ETH fee (in wei) that the owner can set via `setToRemoteFee()`."
@@ -1082,7 +1322,7 @@
       "notice": "A contract storing permissions."
     },
     "PRICES()": {
-      "notice": "The prices contract used to value remote per-context surplus and balance into a requested currency, exactly as the terminal store values local surplus."
+      "notice": "The prices contract for valuing remote per-context surplus and balance into a requested currency, exactly as the terminal store values local surplus."
     },
     "PROJECTS()": {
       "notice": "A contract which mints ERC-721s that represent project ownership and transfers."
@@ -1096,17 +1336,20 @@
     "allowSuckerDeployers(address[])": {
       "notice": "Adds multiple sucker deployers to the allowlist."
     },
+    "allowTokenMapping(address,uint256,bytes32)": {
+      "notice": "Adds a local-to-remote token mapping to the allowlist."
+    },
+    "allowTokenMappings(address[],uint256[],bytes32[])": {
+      "notice": "Adds multiple local-to-remote token mappings to the allowlist."
+    },
     "deploySuckersFor(uint256,bytes32,(address,bytes32,(address,uint32,bytes32)[])[])": {
       "notice": "Deploy one or more cross-chain suckers for a project in a single transaction. Each sucker is created via its deployer, registered in this registry, and immediately configured with its token mappings. Multiple suckers targeting the same peer chain are allowed for bridge resilience. The caller must have `DEPLOY_SUCKERS` permission, which also authorizes the initial token mappings in each deployment configuration."
     },
     "isSuckerOf(uint256,address)": {
       "notice": "Whether the given address is a sucker (active or deprecated) that was deployed through this registry for the specified project. Used by controllers to authorize mint calls from suckers."
     },
-    "remoteBalanceOf(address,uint256,uint256,uint256)": {
-      "notice": "Values one sucker's raw peer-chain balance into a currency with peer chain ID and freshness."
-    },
-    "remoteSurplusOf(address,uint256,uint256,uint256)": {
-      "notice": "Values one sucker's raw peer-chain surplus into a currency with peer chain ID and freshness."
+    "peerChainAccountsOf(uint256,uint256)": {
+      "notice": "The freshest accounting record per source chain that a project's suckers hold, for re-gossiping to a peer."
     },
     "remoteTotalSupplyOf(uint256)": {
       "notice": "The cumulative total supply across all remote peer chains for a project."
@@ -1116,6 +1359,15 @@
     },
     "removeSuckerDeployer(address)": {
       "notice": "Removes a sucker deployer from the allowlist."
+    },
+    "removeTokenMapping(address,uint256,bytes32)": {
+      "notice": "Removes a local-to-remote token mapping from the allowlist."
+    },
+    "removeTokenMappings(address[],uint256[],bytes32[])": {
+      "notice": "Removes multiple local-to-remote token mappings from the allowlist."
+    },
+    "requireTokenMappingAllowed(address,uint256,bytes32)": {
+      "notice": "Reverts unless a local-to-remote token mapping can be chosen by a project."
     },
     "setToRemoteFee(uint256)": {
       "notice": "Set the ETH fee (in wei) paid into the fee project on each toRemote() call."
@@ -1131,6 +1383,9 @@
     },
     "toRemoteFee()": {
       "notice": "The ETH fee (in wei) paid into the fee project via terminal.pay() on each toRemote() call."
+    },
+    "tokenMappingIsAllowed(address,uint256,bytes32)": {
+      "notice": "Tracks whether projects may choose an owner-gated token mapping."
     },
     "totalRemoteBalanceOf(uint256,uint256,uint256)": {
       "notice": "The cumulative peer-chain balance across all remote peer chains for a project, valued into a currency."

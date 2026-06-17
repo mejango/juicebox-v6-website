@@ -3,7 +3,7 @@
 // No wagmi, no RainbowKit. Maximum simplicity for auditability.
 
 import { createWalletClient, createPublicClient, custom, http } from 'viem';
-import { CHAINS, getCurrentChainId, getCustomRpc } from './chain.js';
+import { CHAINS, getCurrentChainId, getCustomRpc, defaultRpcFor } from './chain.js';
 
 let walletClient = null;
 let publicClient = null;
@@ -44,7 +44,7 @@ export function createPublicClientForChain(chainId) {
   if (_readClients[key]) return _readClients[key];
   return (_readClients[key] = createPublicClient({
     chain: chain,
-    transport: http(customRpc || undefined),
+    transport: http(customRpc || defaultRpcFor(chainId)),
     batch: { multicall: { wait: 32 } },
   }));
 }

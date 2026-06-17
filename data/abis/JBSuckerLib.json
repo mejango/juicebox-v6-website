@@ -10,7 +10,17 @@
           "internalType": "contract IJBDirectory"
         },
         {
+          "name": "registry",
+          "type": "IJBSuckerRegistry",
+          "internalType": "contract IJBSuckerRegistry"
+        },
+        {
           "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "exceptChainId",
           "type": "uint256",
           "internalType": "uint256"
         },
@@ -37,41 +47,53 @@
               "internalType": "uint8"
             },
             {
-              "name": "sourceTotalSupply",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "sourceContexts",
+              "name": "accounts",
               "type": "tuple[]",
-              "internalType": "struct JBSourceContext[]",
+              "internalType": "struct JBChainAccounting[]",
               "components": [
                 {
-                  "name": "token",
-                  "type": "bytes32",
-                  "internalType": "bytes32"
+                  "name": "chainId",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "name": "decimals",
-                  "type": "uint8",
-                  "internalType": "uint8"
+                  "name": "totalSupply",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "name": "surplus",
-                  "type": "uint128",
-                  "internalType": "uint128"
+                  "name": "contexts",
+                  "type": "tuple[]",
+                  "internalType": "struct JBSourceContext[]",
+                  "components": [
+                    {
+                      "name": "token",
+                      "type": "bytes32",
+                      "internalType": "bytes32"
+                    },
+                    {
+                      "name": "decimals",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "surplus",
+                      "type": "uint128",
+                      "internalType": "uint128"
+                    },
+                    {
+                      "name": "balance",
+                      "type": "uint128",
+                      "internalType": "uint128"
+                    }
+                  ]
                 },
                 {
-                  "name": "balance",
-                  "type": "uint128",
-                  "internalType": "uint128"
+                  "name": "timestamp",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 }
               ]
-            },
-            {
-              "name": "sourceTimestamp",
-              "type": "uint256",
-              "internalType": "uint256"
             }
           ]
         }
@@ -88,7 +110,17 @@
           "internalType": "contract IJBDirectory"
         },
         {
+          "name": "registry",
+          "type": "IJBSuckerRegistry",
+          "internalType": "contract IJBSuckerRegistry"
+        },
+        {
           "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "exceptChainId",
           "type": "uint256",
           "internalType": "uint256"
         },
@@ -162,41 +194,53 @@
               ]
             },
             {
-              "name": "sourceTotalSupply",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "sourceContexts",
+              "name": "accounts",
               "type": "tuple[]",
-              "internalType": "struct JBSourceContext[]",
+              "internalType": "struct JBChainAccounting[]",
               "components": [
                 {
-                  "name": "token",
-                  "type": "bytes32",
-                  "internalType": "bytes32"
+                  "name": "chainId",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "name": "decimals",
-                  "type": "uint8",
-                  "internalType": "uint8"
+                  "name": "totalSupply",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "name": "surplus",
-                  "type": "uint128",
-                  "internalType": "uint128"
+                  "name": "contexts",
+                  "type": "tuple[]",
+                  "internalType": "struct JBSourceContext[]",
+                  "components": [
+                    {
+                      "name": "token",
+                      "type": "bytes32",
+                      "internalType": "bytes32"
+                    },
+                    {
+                      "name": "decimals",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "surplus",
+                      "type": "uint128",
+                      "internalType": "uint128"
+                    },
+                    {
+                      "name": "balance",
+                      "type": "uint128",
+                      "internalType": "uint128"
+                    }
+                  ]
                 },
                 {
-                  "name": "balance",
-                  "type": "uint128",
-                  "internalType": "uint128"
+                  "name": "timestamp",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 }
               ]
-            },
-            {
-              "name": "sourceTimestamp",
-              "type": "uint256",
-              "internalType": "uint256"
             }
           ]
         }
@@ -255,32 +299,109 @@
         }
       ],
       "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "foldPeerContexts",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "rawContexts",
+          "type": "tuple[]",
+          "internalType": "struct JBSourceContext[]",
+          "components": [
+            {
+              "name": "token",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "decimals",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "surplus",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "balance",
+              "type": "uint128",
+              "internalType": "uint128"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "contexts",
+          "type": "tuple[]",
+          "internalType": "struct JBPeerChainContext[]",
+          "components": [
+            {
+              "name": "currency",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "decimals",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "surplus",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "balance",
+              "type": "uint128",
+              "internalType": "uint128"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
     }
   ],
   "devdoc": {
-    "buildAccountingSnapshot(IJBDirectory,uint256,uint8,uint256)": {
-      "details": "Extracted from `JBSucker.syncAccountingData` to reduce child contract bytecode. Called via DELEGATECALL. The snapshot carries each context's surplus and balance in its own currency, without price-feed valuation.",
+    "buildAccountingSnapshot(IJBDirectory,IJBSuckerRegistry,uint256,uint256,uint8,uint256)": {
+      "details": "Extracted from `JBSucker.syncAccountingData` to reduce child contract bytecode. Called via DELEGATECALL. Each record carries its source chain's surplus and balance per context in that context's own currency, without price-feed valuation.",
       "params": {
         "directory": "The JB directory to look up controllers and terminals.",
+        "exceptChainId": "The destination chain, excluded from the gathered peer records.",
         "messageVersion": "The message format version.",
         "projectId": "The project ID.",
-        "sourceTimestamp": "The monotonic source freshness key for this snapshot."
+        "registry": "The sucker registry that aggregates the project's per-chain records.",
+        "sourceTimestamp": "The monotonic source freshness key for the local chain's record."
       },
       "returns": {
         "snapshot": "The constructed accounting snapshot."
       }
     },
-    "buildSnapshotMessage(IJBDirectory,uint256,bytes32,uint256,uint64,bytes32,uint8,uint256)": {
-      "details": "Extracted from `JBSucker._buildSnapshotAndSend` to reduce child contract bytecode. Called via DELEGATECALL. The snapshot carries each context's surplus and balance in its own currency, without price-feed valuation.",
+    "buildSnapshotMessage(IJBDirectory,IJBSuckerRegistry,uint256,uint256,bytes32,uint256,uint64,bytes32,uint8,uint256)": {
+      "details": "Extracted from `JBSucker._buildSnapshotAndSend` to reduce child contract bytecode. Called via DELEGATECALL. Each accounting record carries its source chain's surplus and balance per context in that context's own currency, without price-feed valuation.",
       "params": {
         "amount": "The amount of terminal tokens to bridge.",
         "directory": "The JB directory to look up controllers and terminals.",
+        "exceptChainId": "The destination chain, excluded from the gathered peer records.",
         "messageVersion": "The message format version.",
         "nonce": "The outbox nonce for this send.",
         "projectId": "The project ID.",
+        "registry": "The sucker registry that aggregates the project's per-chain records.",
         "remoteToken": "The remote token bytes32 address.",
         "root": "The merkle root of the outbox tree.",
-        "sourceTimestamp": "The monotonic source freshness key for this snapshot."
+        "sourceTimestamp": "The monotonic source freshness key for the local chain's record."
       },
       "returns": {
         "message": "The constructed JBMessageRoot."
@@ -304,20 +425,34 @@
       "returns": {
         "current": "The merkle root."
       }
+    },
+    "foldPeerContexts(IJBDirectory,uint256,JBSourceContext[])": {
+      "details": "Extracted from `JBSucker.peerChainContextsOf` to reduce child contract bytecode. Called via DELEGATECALL. The caller stores mapped remote-token keys in its local token namespace before this runs. This derives each token's authoritative accounting-context currency and merges entries that share BOTH currency AND decimals. The accounting-context currency is immutable, so re-resolving on each read is safe. Entries that share a currency but carry different decimals stay separate, since the raw amounts are on different scales. No price oracle is consulted.",
+      "params": {
+        "directory": "The JB directory to look up the project's terminals.",
+        "projectId": "The project whose accounting contexts to read.",
+        "rawContexts": "The peer chain's per-context surplus and balance."
+      },
+      "returns": {
+        "contexts": "The per-currency surplus and balance for the chain."
+      }
     }
   },
   "userdoc": {
-    "buildAccountingSnapshot(IJBDirectory,uint256,uint8,uint256)": {
-      "notice": "Build the cross-chain accounting snapshot (total supply plus per-context surplus and balance)."
+    "buildAccountingSnapshot(IJBDirectory,IJBSuckerRegistry,uint256,uint256,uint8,uint256)": {
+      "notice": "Build the cross-chain accounting gossip bundle (the local chain's record plus known peer records)."
     },
-    "buildSnapshotMessage(IJBDirectory,uint256,bytes32,uint256,uint64,bytes32,uint8,uint256)": {
-      "notice": "Build the cross-chain snapshot message (total supply plus per-context surplus and balance)."
+    "buildSnapshotMessage(IJBDirectory,IJBSuckerRegistry,uint256,uint256,bytes32,uint256,uint64,bytes32,uint8,uint256)": {
+      "notice": "Build the cross-chain root message, carrying the accounting gossip bundle alongside the outbox root."
     },
     "computeBranchRoot(bytes32,bytes32[32],uint256)": {
       "notice": "Compute a branch root from a leaf, branch, and index. Wraps MerkleLib.branchRoot so its ~170 lines of unrolled assembly live in the library's bytecode instead of each sucker's."
     },
     "computeTreeRoot(bytes32[32],uint256)": {
       "notice": "Compute the merkle tree root from branch and count. Loop-based replacement for the unrolled MerkleLib.root() — saves ~3KB per sucker when called via DELEGATECALL instead of inlining."
+    },
+    "foldPeerContexts(IJBDirectory,uint256,JBSourceContext[])": {
+      "notice": "Folds a peer chain's source contexts into per-currency surplus and balance."
     }
   },
   "contractName": "JBSuckerLib",

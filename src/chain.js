@@ -21,6 +21,18 @@ let currentChainId = 1; // Default to Ethereum mainnet
 let showTestnets = false;
 const listeners = [];
 
+// CORS-enabled public RPCs for the mainnets — viem's defaults (eth.merkle.io etc.) block browser CORS,
+// breaking reads. Testnets use viem defaults (they work in-browser). A user-set custom RPC overrides this.
+const DEFAULT_RPC = {
+  1: 'https://ethereum-rpc.publicnode.com',
+  10: 'https://optimism-rpc.publicnode.com',
+  8453: 'https://base-rpc.publicnode.com',
+  42161: 'https://arbitrum-one-rpc.publicnode.com',
+};
+export function defaultRpcFor(chainId) {
+  return DEFAULT_RPC[chainId] || undefined;
+}
+
 export function getCurrentChainId() {
   return currentChainId;
 }

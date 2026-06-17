@@ -1,0 +1,223 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "feed",
+          "type": "address",
+          "internalType": "contract AggregatorV3Interface"
+        },
+        {
+          "name": "threshold",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "sequencerFeed",
+          "type": "address",
+          "internalType": "contract AggregatorV2V3Interface"
+        },
+        {
+          "name": "gracePeriod",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "FEED",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract AggregatorV3Interface"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "GRACE_PERIOD_TIME",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "SEQUENCER_FEED",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract AggregatorV2V3Interface"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "THRESHOLD",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "currentUnitPrice",
+      "inputs": [
+        {
+          "name": "decimals",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "error",
+      "name": "JBChainlinkV3PriceFeed_IncompleteRound",
+      "inputs": [
+        {
+          "name": "roundId",
+          "type": "uint80",
+          "internalType": "uint80"
+        },
+        {
+          "name": "answeredInRound",
+          "type": "uint80",
+          "internalType": "uint80"
+        },
+        {
+          "name": "updatedAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBChainlinkV3PriceFeed_NegativePrice",
+      "inputs": [
+        {
+          "name": "price",
+          "type": "int256",
+          "internalType": "int256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBChainlinkV3PriceFeed_StalePrice",
+      "inputs": [
+        {
+          "name": "timestamp",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "threshold",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "updatedAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBChainlinkV3SequencerPriceFeed_InvalidRound",
+      "inputs": [
+        {
+          "name": "startedAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBChainlinkV3SequencerPriceFeed_SequencerDownOrRestarting",
+      "inputs": [
+        {
+          "name": "timestamp",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "gracePeriodTime",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "startedAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "feed": "The Chainlink feed to report prices from.",
+        "gracePeriod": "How long the sequencer should have been re-active before returning prices.",
+        "sequencerFeed": "The Chainlink feed to report sequencer status.",
+        "threshold": "How many seconds old a price update may be."
+      }
+    },
+    "currentUnitPrice(uint256)": {
+      "params": {
+        "decimals": "The number of decimals the return value should use."
+      },
+      "returns": {
+        "_0": "The current unit price from the feed, as a fixed point number with the specified number of decimals."
+      }
+    }
+  },
+  "userdoc": {
+    "FEED()": {
+      "notice": "The Chainlink feed that prices are reported from."
+    },
+    "GRACE_PERIOD_TIME()": {
+      "notice": "How long the sequencer must be re-active in order to return a price."
+    },
+    "SEQUENCER_FEED()": {
+      "notice": "The Chainlink sequencer feed that prices are reported from."
+    },
+    "THRESHOLD()": {
+      "notice": "How many seconds old a Chainlink price update is allowed to be before considered \"stale\"."
+    },
+    "currentUnitPrice(uint256)": {
+      "notice": "Gets the current price (per 1 unit) from the feed."
+    }
+  },
+  "contractName": "JBChainlinkV3SequencerPriceFeed",
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBChainlinkV3SequencerPriceFeed.sol"
+}

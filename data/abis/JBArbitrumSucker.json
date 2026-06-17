@@ -509,41 +509,53 @@
               ]
             },
             {
-              "name": "sourceTotalSupply",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "sourceContexts",
+              "name": "accounts",
               "type": "tuple[]",
-              "internalType": "struct JBSourceContext[]",
+              "internalType": "struct JBChainAccounting[]",
               "components": [
                 {
-                  "name": "token",
-                  "type": "bytes32",
-                  "internalType": "bytes32"
+                  "name": "chainId",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "name": "decimals",
-                  "type": "uint8",
-                  "internalType": "uint8"
+                  "name": "totalSupply",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "name": "surplus",
-                  "type": "uint128",
-                  "internalType": "uint128"
+                  "name": "contexts",
+                  "type": "tuple[]",
+                  "internalType": "struct JBSourceContext[]",
+                  "components": [
+                    {
+                      "name": "token",
+                      "type": "bytes32",
+                      "internalType": "bytes32"
+                    },
+                    {
+                      "name": "decimals",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "surplus",
+                      "type": "uint128",
+                      "internalType": "uint128"
+                    },
+                    {
+                      "name": "balance",
+                      "type": "uint128",
+                      "internalType": "uint128"
+                    }
+                  ]
                 },
                 {
-                  "name": "balance",
-                  "type": "uint128",
-                  "internalType": "uint128"
+                  "name": "timestamp",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 }
               ]
-            },
-            {
-              "name": "sourceTimestamp",
-              "type": "uint256",
-              "internalType": "uint256"
             }
           ]
         }
@@ -566,41 +578,53 @@
               "internalType": "uint8"
             },
             {
-              "name": "sourceTotalSupply",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "sourceContexts",
+              "name": "accounts",
               "type": "tuple[]",
-              "internalType": "struct JBSourceContext[]",
+              "internalType": "struct JBChainAccounting[]",
               "components": [
                 {
-                  "name": "token",
-                  "type": "bytes32",
-                  "internalType": "bytes32"
+                  "name": "chainId",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "name": "decimals",
-                  "type": "uint8",
-                  "internalType": "uint8"
+                  "name": "totalSupply",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "name": "surplus",
-                  "type": "uint128",
-                  "internalType": "uint128"
+                  "name": "contexts",
+                  "type": "tuple[]",
+                  "internalType": "struct JBSourceContext[]",
+                  "components": [
+                    {
+                      "name": "token",
+                      "type": "bytes32",
+                      "internalType": "bytes32"
+                    },
+                    {
+                      "name": "decimals",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "surplus",
+                      "type": "uint128",
+                      "internalType": "uint128"
+                    },
+                    {
+                      "name": "balance",
+                      "type": "uint128",
+                      "internalType": "uint128"
+                    }
+                  ]
                 },
                 {
-                  "name": "balance",
-                  "type": "uint128",
-                  "internalType": "uint128"
+                  "name": "timestamp",
+                  "type": "uint256",
+                  "internalType": "uint256"
                 }
               ]
-            },
-            {
-              "name": "sourceTimestamp",
-              "type": "uint256",
-              "internalType": "uint256"
             }
           ]
         }
@@ -836,8 +860,71 @@
     },
     {
       "type": "function",
-      "name": "peerChainContextsOf",
+      "name": "peerChainAccountsOf",
       "inputs": [],
+      "outputs": [
+        {
+          "name": "accounts",
+          "type": "tuple[]",
+          "internalType": "struct JBChainAccounting[]",
+          "components": [
+            {
+              "name": "chainId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "totalSupply",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "contexts",
+              "type": "tuple[]",
+              "internalType": "struct JBSourceContext[]",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "bytes32",
+                  "internalType": "bytes32"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "surplus",
+                  "type": "uint128",
+                  "internalType": "uint128"
+                },
+                {
+                  "name": "balance",
+                  "type": "uint128",
+                  "internalType": "uint128"
+                }
+              ]
+            },
+            {
+              "name": "timestamp",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "peerChainContextsOf",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
       "outputs": [
         {
           "name": "contexts",
@@ -867,11 +954,6 @@
           ]
         },
         {
-          "name": "chainId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
           "name": "snapshot",
           "type": "uint256",
           "internalType": "uint256"
@@ -894,8 +976,33 @@
     },
     {
       "type": "function",
-      "name": "peerChainTotalSupply",
-      "inputs": [],
+      "name": "peerChainIds",
+      "inputs": [
+        {
+          "name": "includeVirtual",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "chainIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "peerChainTotalSupplyOf",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
       "outputs": [
         {
           "name": "",
@@ -908,7 +1015,13 @@
     {
       "type": "function",
       "name": "peerChainTotalSupplyValue",
-      "inputs": [],
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
       "outputs": [
         {
           "name": "",
@@ -1101,8 +1214,14 @@
     },
     {
       "type": "function",
-      "name": "snapshotTimestamp",
-      "inputs": [],
+      "name": "snapshotTimestampOf",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
       "outputs": [
         {
           "name": "",
@@ -2134,13 +2253,13 @@
         "claimData": "The terminal token, merkle tree leaf, and proof for the claim."
       }
     },
-    "fromRemote((uint8,bytes32,uint256,(uint64,bytes32),uint256,(bytes32,uint8,uint128,uint128)[],uint256))": {
+    "fromRemote((uint8,bytes32,uint256,(uint64,bytes32),(uint256,uint256,(bytes32,uint8,uint128,uint128)[],uint256)[]))": {
       "details": "This can only be called by the messenger contract on the local chain, with a message from the remote peer.Nonce ordering: This function accepts any nonce strictly greater than the current inbox nonce, rather than requiring sequential (nonce == inbox.nonce + 1) processing. This is intentional because some bridges (e.g., Chainlink CCIP) do not guarantee in-order message delivery. If nonces arrive out of order, the inbox root is set to the latest nonce's root. Claims from earlier nonces remain provable against the latest root (the merkle tree is append-only), but users will need regenerated proofs computed against the current root. This trade-off is accepted because enforcing sequential nonces could permanently block a token's inbox if a single message is delayed or lost by the bridge.Post-deprecation root acceptance: Roots are accepted in DEPRECATED state to prevent stranding tokens that were sent before deprecation. Even though the mandatory `_maxMessagingDelay()` (14-day) buffer gives in-flight messages time to arrive, accepting roots after deprecation provides a stronger guarantee that users can always claim their bridged tokens. Double-spend is not a concern because `toRemote` is already disabled in `SENDING_DISABLED` and `DEPRECATED` states, so no new outbound transfers can occur.",
       "params": {
         "root": "The merkle root, token, and amount to receive."
       }
     },
-    "fromRemoteAccounting((uint8,uint256,(bytes32,uint8,uint128,uint128)[],uint256))": {
+    "fromRemoteAccounting((uint8,(uint256,uint256,(bytes32,uint8,uint128,uint128)[],uint256)[]))": {
       "details": "This can only be called by the messenger contract on the local chain, with a message from the remote peer. It shares the same freshness gate as `fromRemote`, so stale accounting-only messages cannot roll back fresher state delivered by a root message.",
       "params": {
         "snapshot": "The peer-chain accounting snapshot to receive."
@@ -2200,12 +2319,20 @@
         "_0": "The bytes32 representation of the peer sucker address."
       }
     },
-    "peerChainContextsOf()": {
-      "details": "The contexts are un-valued, in each context's own currency and decimals — the registry dedups same-peer suckers by freshness, then values each context into a requested currency. The sucker consults no price oracle.",
+    "peerChainAccountsOf()": {
+      "details": "The registry reads this to gather a project's full cross-chain knowledge and re-gossip it. Incoming contexts are stored in this sucker's token namespace where a mapping exists, so a hub forwards sibling-chain accounting in hub-local token terms and the next spoke only needs its mapping to the hub token.",
       "returns": {
-        "chainId": "The peer chain these contexts belong to.",
-        "contexts": "The per-currency surplus and balance from the latest snapshot.",
-        "snapshot": "The source freshness key of the latest snapshot."
+        "accounts": "One accounting record per known peer chain."
+      }
+    },
+    "peerChainContextsOf(uint256)": {
+      "details": "Stored contexts are already keyed in this sucker's token namespace where a mapping exists. This folds same-currency, same-decimals entries together. The result is un-valued — the registry values each context into a requested currency; the sucker consults no price oracle. Contexts that share a currency but carry different decimals are kept separate because the raw amounts are on different scales and cannot be summed directly.",
+      "params": {
+        "chainId": "The peer chain to read the contexts of."
+      },
+      "returns": {
+        "contexts": "The per-currency surplus and balance for the chain.",
+        "snapshot": "The source freshness key of the chain's latest accepted record."
       }
     },
     "peerChainId()": {
@@ -2213,8 +2340,20 @@
         "_0": "chainId of the peer."
       }
     },
-    "peerChainTotalSupplyValue()": {
-      "details": "Lets aggregators (e.g. `JBSuckerRegistry`) read the value, peer chain, and freshness in one call instead of three separate staticcalls. The `value` is identical to `peerChainTotalSupply`.",
+    "peerChainIds(bool)": {
+      "details": "With `includeVirtual` false, returns only the directly-connected peer chain (the one this sucker is bridged to). With `includeVirtual` true, also returns every other chain it has learned about through gossip relayed by that peer. The directly-connected peer is always present (with a zero value until its first record) so the registry can enumerate the chain the moment this sucker is deployed. Until the sucker receives its first record, that entry is an empty sentinel (value 0, freshness 0) which the registry skips, so a freshly-deployed active sucker takes over a chain's accounting only once it has synced real data — a deprecated sucker's record keeps answering for the chain during the migration window.",
+      "params": {
+        "includeVirtual": "Whether to also include virtually-known (gossiped) peer chains."
+      },
+      "returns": {
+        "chainIds": "The peer chain IDs."
+      }
+    },
+    "peerChainTotalSupplyValue(uint256)": {
+      "details": "Lets the registry read the value, the peer chain it belongs to, and its freshness in one call. The `value` matches `peerChainTotalSupplyOf(chainId)`.",
+      "params": {
+        "chainId": "The peer chain to read the total supply value of."
+      },
       "returns": {
         "_0": "A `JBPeerChainValue` with the total supply, peer chain ID, and snapshot freshness key."
       }
@@ -2336,10 +2475,10 @@
     "exitThroughEmergencyHatch((address,(uint256,bytes32,uint256,uint256,bytes32),bytes32[32]))": {
       "notice": "Emergency escape hatch: lets a user reclaim their project tokens and terminal tokens on the chain they deposited from, when the bridge has become permanently non-functional. Must be enabled by the project owner via `enableEmergencyHatchFor`."
     },
-    "fromRemote((uint8,bytes32,uint256,(uint64,bytes32),uint256,(bytes32,uint8,uint128,uint128)[],uint256))": {
+    "fromRemote((uint8,bytes32,uint256,(uint64,bytes32),(uint256,uint256,(bytes32,uint8,uint128,uint128)[],uint256)[]))": {
       "notice": "Receive a merkle root and peer-chain accounting snapshot from the remote sucker. Updates the inbox tree so that users can claim bridged tokens. Also accepts any native-token funds delivered with the message."
     },
-    "fromRemoteAccounting((uint8,uint256,(bytes32,uint8,uint128,uint128)[],uint256))": {
+    "fromRemoteAccounting((uint8,(uint256,uint256,(bytes32,uint8,uint128,uint128)[],uint256)[]))": {
       "notice": "Receive a peer-chain accounting snapshot from the remote sucker without updating any token-local inbox root."
     },
     "inboxOf(address)": {
@@ -2366,17 +2505,23 @@
     "peer()": {
       "notice": "The peer sucker on the remote chain, as a bytes32 for cross-VM compatibility."
     },
-    "peerChainContextsOf()": {
-      "notice": "The peer chain's raw per-context surplus and balance from the latest snapshot, bundled with the peer chain ID and snapshot freshness key."
+    "peerChainAccountsOf()": {
+      "notice": "The un-valued accounting record this sucker holds for every peer chain it has heard about."
+    },
+    "peerChainContextsOf(uint256)": {
+      "notice": "One peer chain's per-currency surplus and balance from its latest accepted record, plus that record's freshness key."
     },
     "peerChainId()": {
       "notice": "Returns the chain on which the peer is located."
     },
-    "peerChainTotalSupply()": {
-      "notice": "The last known total token supply on the peer chain, updated each time a bridge message is received."
+    "peerChainIds(bool)": {
+      "notice": "The peer chains this sucker reports accounting for."
     },
-    "peerChainTotalSupplyValue()": {
-      "notice": "The peer chain total supply bundled with the peer chain ID and snapshot freshness key."
+    "peerChainTotalSupplyOf(uint256)": {
+      "notice": "The last known total token supply on each peer chain, updated each time a bridge message carries that chain's accounting record."
+    },
+    "peerChainTotalSupplyValue(uint256)": {
+      "notice": "One peer chain's total supply bundled with the peer chain ID and the record's freshness key."
     },
     "prepare(uint256,bytes32,uint256,address,bytes32)": {
       "notice": "Queue project tokens for bridging to the remote chain. Transfers the caller's project tokens into this contract, cashes them out for the specified terminal token, and inserts a leaf into the outbox merkle tree. The queued entry will be bridged the next time anyone calls `toRemote` for the same `token`."
@@ -2402,8 +2547,8 @@
     "setDeprecation(uint40)": {
       "notice": "Schedule (or cancel) the deprecation of this sucker. Once deprecated, no new outbound transfers are accepted and users can exit via the emergency hatch. Requires `SET_SUCKER_DEPRECATION` permission. A mandatory 14-day buffer ensures in-flight messages have time to arrive before the sucker fully shuts down."
     },
-    "snapshotTimestamp()": {
-      "notice": "The source chain freshness key for the most recent accepted peer snapshot."
+    "snapshotTimestampOf(uint256)": {
+      "notice": "The source-chain freshness key of the most recent accepted accounting record for each peer chain."
     },
     "state()": {
       "notice": "Reports the deprecation state of the sucker."

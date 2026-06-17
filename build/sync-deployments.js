@@ -21,6 +21,10 @@ const DEPLOYMENTS_DIR = process.env.DEPLOY_ALL_DEPLOYMENTS_DIR
   : path.resolve(ROOT, "..", "deploy-all-v6", "deployments");
 
 const CHAIN_NAMES = {
+  "1": "Ethereum",
+  "10": "Optimism",
+  "8453": "Base",
+  "42161": "Arbitrum",
   "11155111": "Sepolia",
   "11155420": "OP Sepolia",
   "84532": "Base Sepolia",

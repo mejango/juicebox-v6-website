@@ -1736,6 +1736,19 @@
     },
     {
       "type": "function",
+      "name": "originalPayer",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "pendingReservedTokenBalanceOf",
       "inputs": [
         {
@@ -3637,6 +3650,9 @@
     },
     "mintTokensOf(uint256,uint256,address,string,bool)": {
       "notice": "Mints new project tokens to a beneficiary. Optionally reserves a portion according to the ruleset's reserved percent (which accumulates until `sendReservedTokensToSplitsOf` is called)."
+    },
+    "originalPayer()": {
+      "notice": "The account that paid the creation fee for the project currently being launched."
     },
     "pendingReservedTokenBalanceOf(uint256)": {
       "notice": "A project's unrealized reserved token balance (i.e. reserved tokens which haven't been sent out to the reserved token split group yet)."

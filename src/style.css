@@ -5037,8 +5037,13 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 
 /* Entry button on the nav tab row */
 /* Create: idle/unavailable (in tuning before launch) — light black. */
+.discover-top-ctrls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.discover-net-select {
+  font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer;
+  padding: 4px 8px; background: transparent; color: var(--c-black-light);
+  border: 2px solid var(--c-green-light);
+}
 .tab-create {
-  margin-left: auto;
   font-family: inherit; font-size: 13px; font-weight: bold; cursor: default;
   padding: 4px 14px; background: transparent; color: var(--c-black-light);
   border: 2px solid var(--c-black-light);

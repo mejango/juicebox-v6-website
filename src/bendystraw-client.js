@@ -6,11 +6,20 @@
 // env var doesn't silently drop to the origin-locked keyless route (the key ships in the bundle regardless).
 
 const HOST_TESTNET = 'https://testnet.bendystraw.xyz';
+const HOST_MAINNET = 'https://bendystraw.xyz';
 const DEFAULT_TESTNET_KEY = '3ZNJpGtazh5fwYoSW59GWDEj';
 const API_KEY = (typeof __BENDYSTRAW_API_KEY__ === 'string' && __BENDYSTRAW_API_KEY__) ? __BENDYSTRAW_API_KEY__ : DEFAULT_TESTNET_KEY;
 
+// Indexer host follows the Discover network toggle: testnet.bendystraw.xyz vs bendystraw.xyz (prod).
+// Initialized from the persisted choice so a mainnet reload hits the right indexer.
+let _host = HOST_MAINNET;
+try { if (localStorage.getItem('jb-network') === 'testnet') _host = HOST_TESTNET; } catch (_) {}
+export function setBendystrawNetwork(mode) {
+  _host = mode === 'mainnet' ? HOST_MAINNET : HOST_TESTNET;
+}
+
 function endpoint() {
-  return API_KEY ? `${HOST_TESTNET}/${API_KEY}/graphql` : `${HOST_TESTNET}/graphql`;
+  return API_KEY ? `${_host}/${API_KEY}/graphql` : `${_host}/graphql`;
 }
 
 export async function bendystrawQuery(graphql, variables) {
@@ -34,10 +43,11 @@ export function renderBendystrawSettings() {
   const panel = document.createElement('div');
   panel.className = 'bendystraw-settings';
 
+  const isMainnet = _host === HOST_MAINNET;
   const note = document.createElement('div');
   note.className = 'bendystraw-settings-note';
-  note.innerHTML = 'Read-only GraphQL of Juicebox V6 testnet events. '
-    + 'Bendystraw is testnet-only for now; no mainnet addresses are indexed here. '
+  note.innerHTML = 'Read-only GraphQL of Juicebox V6 events. Indexer host follows the Discover '
+    + 'network toggle (' + (isMainnet ? 'bendystraw.xyz' : 'testnet.bendystraw.xyz') + '). '
     + '<a href="https://bendystraw-dev.up.railway.app/schema" target="_blank" rel="noopener">Open schema</a>.';
   panel.appendChild(note);
 
@@ -46,7 +56,7 @@ export function renderBendystrawSettings() {
 
   const netBadge = document.createElement('span');
   netBadge.className = 'bendystraw-net-btn active';
-  netBadge.textContent = 'testnet';
+  netBadge.textContent = isMainnet ? 'mainnet' : 'testnet';
   row.appendChild(netBadge);
 
   panel.appendChild(row);

@@ -42,6 +42,11 @@
           "name": "hookStore",
           "type": "address",
           "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "trustedForwarder",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "stateMutability": "nonpayable"
@@ -113,6 +118,19 @@
     },
     {
       "type": "function",
+      "name": "DIRECTORY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "GOVERNOR",
       "inputs": [],
       "outputs": [
@@ -152,6 +170,19 @@
     },
     {
       "type": "function",
+      "name": "PROJECTS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBProjects"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "REGISTRY",
       "inputs": [],
       "outputs": [
@@ -159,6 +190,19 @@
           "name": "",
           "type": "address",
           "internalType": "contract IJBAddressRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "RULESETS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBRulesets"
         }
       ],
       "stateMutability": "view"
@@ -276,6 +320,25 @@
           "name": "",
           "type": "uint256",
           "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isTrustedForwarder",
+      "inputs": [
+        {
+          "name": "forwarder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
         }
       ],
       "stateMutability": "view"
@@ -546,6 +609,19 @@
     },
     {
       "type": "function",
+      "name": "originalPayer",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "safetyParamsOf",
       "inputs": [
         {
@@ -628,6 +704,19 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "trustedForwarder",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "event",
@@ -890,7 +979,8 @@
         "hookCodeOrigin": "The code of the Defifa hook.",
         "hookStore": "The store used by Defifa hooks.",
         "registry": "The contract storing references to the deployer of each hook.",
-        "tokenUriResolver": "The standard default token URI resolver."
+        "tokenUriResolver": "The standard default token URI resolver.",
+        "trustedForwarder": "The trusted forwarder for the ERC2771Context."
       }
     },
     "currentGamePhaseOf(uint256)": {
@@ -917,6 +1007,9 @@
       "params": {
         "gameId": "The ID of the game to fulfill splits for."
       }
+    },
+    "isTrustedForwarder(address)": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
     },
     "launchGameWith((string,string,string,string,(string,uint16,address,bytes32,bool)[],uint104,(address,uint8,uint32),uint24,uint24,uint48,(uint32,uint64,address,bool,uint48,address)[],uint256,uint256,address,address,address,uint256,uint32,uint256))": {
       "details": "Forwards `msg.value` to `JBProjects.createFor` to cover any configured project creation fee.",
@@ -967,6 +1060,9 @@
       "params": {
         "gameId": "The ID of the game to trigger no-contest for."
       }
+    },
+    "trustedForwarder()": {
+      "details": "Returns the address of the trusted forwarder."
     }
   },
   "userdoc": {
@@ -985,6 +1081,9 @@
     "DEFIFA_PROJECT_ID()": {
       "notice": "The project ID that receives Defifa game fees as commitments are fulfilled."
     },
+    "DIRECTORY()": {
+      "notice": "The directory of terminals and controllers for each project."
+    },
     "GOVERNOR()": {
       "notice": "The governance contract that ratifies scorecards for each game."
     },
@@ -994,8 +1093,14 @@
     "HOOK_STORE()": {
       "notice": "The 721 tiers hook store used by all games."
     },
+    "PROJECTS()": {
+      "notice": "The contract which mints ERC-721s that represent project ownership and transfers."
+    },
     "REGISTRY()": {
       "notice": "The Juicebox 721 tiers hook registry used to register deployed games."
+    },
+    "RULESETS()": {
+      "notice": "The contract storing and managing project rulesets."
     },
     "TOKEN_URI_RESOLVER()": {
       "notice": "The default Defifa token URI resolver."
@@ -1026,6 +1131,9 @@
     },
     "onERC721Received(address,address,uint256,bytes)": {
       "notice": "Allows this contract to receive 721s."
+    },
+    "originalPayer()": {
+      "notice": "The account that paid the creation fee for the game currently being launched."
     },
     "safetyParamsOf(uint256)": {
       "notice": "The safety mechanism parameters of a game."

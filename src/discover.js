@@ -5,9 +5,9 @@
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData } from 'viem';
 import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName } from './component-base.js';
-import { CHAINS, getCustomRpc, getChainTokens } from './chain.js';
+import { CHAINS, getCustomRpc, getChainTokens, defaultRpcFor } from './chain.js';
 import { computePayPreview, formatTokenCount, renderRoutingTag, shortHex } from './pay-preview.js';
-import { bendystrawQuery } from './bendystraw-client.js';
+import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
@@ -22,9 +22,9 @@ function clientFor(chainId) {
   var chain = CHAINS[chainId];
   if (!chain) throw new Error('Unknown chain ' + chainId);
   var customRpc = getCustomRpc(chainId);
-  // viem's default mainnet RPC (eth.merkle.io) blocks browser CORS, which breaks ENS reverse
-  // lookups. Fall back to a CORS-enabled public endpoint for mainnet unless a custom one is set.
-  var rpc = customRpc || (chainId === 1 ? 'https://ethereum-rpc.publicnode.com' : undefined);
+  // viem's default mainnet RPCs (eth.merkle.io etc.) block browser CORS, which breaks reads/ENS.
+  // Fall back to CORS-enabled public endpoints for the mainnets unless a custom one is set.
+  var rpc = customRpc || defaultRpcFor(chainId);
   var client = createPublicClient({
     chain: chain,
     transport: http(rpc),
@@ -34,14 +34,39 @@ function clientFor(chainId) {
   return client;
 }
 
-// The V6 contracts are deployed (same CREATE2 addresses) on these testnets. Default to the
-// first; the selector lets a viewer switch chains.
-var DISCOVER_CHAINS = [
+// The V6 contracts are deployed (same CREATE2 addresses) on every chain below. Discover pivots between
+// the two networks via the header dropdown; `DISCOVER_CHAINS` is the active set and is reassigned by
+// setNetwork(). Every consumer reads it live, so reassigning + re-rendering is enough to switch.
+var TESTNET_CHAINS = [
   { id: 11155111, name: 'Sepolia', short: 'Eth' },
   { id: 421614, name: 'Arbitrum Sepolia', short: 'Arb' },
   { id: 84532, name: 'Base Sepolia', short: 'Base' },
   { id: 11155420, name: 'OP Sepolia', short: 'OP' },
 ];
+var MAINNET_CHAINS = [
+  { id: 1, name: 'Ethereum', short: 'Eth' },
+  { id: 42161, name: 'Arbitrum', short: 'Arb' },
+  { id: 8453, name: 'Base', short: 'Base' },
+  { id: 10, name: 'Optimism', short: 'OP' },
+];
+function getNetworkMode() {
+  // Default to mainnet (the real network — 7 canonical revnets live). Project cards read on-chain;
+  // indexer-backed feeds (activity/owners) populate once prod bendystraw indexes V6. Testnets via toggle.
+  try { return localStorage.getItem('jb-network') === 'testnet' ? 'testnet' : 'mainnet'; } catch (_) { return 'mainnet'; }
+}
+var DISCOVER_CHAINS = getNetworkMode() === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
+// Switch the active network: persist, swap the chain set + indexer host, drop caches + any open project
+// route, and re-render the grid from scratch.
+function setNetwork(mode) {
+  mode = mode === 'mainnet' ? 'mainnet' : 'testnet';
+  if (mode === getNetworkMode()) return;
+  try { localStorage.setItem('jb-network', mode); } catch (_) {}
+  DISCOVER_CHAINS = mode === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
+  setBendystrawNetwork(mode);
+  _groups = null; _cache = {}; _activeDetail = null;
+  if (location.hash) { location.hash = ''; }
+  renderDiscoverTab();
+}
 
 var IPFS_GATEWAY = 'https://ipfs.io/ipfs/';
 var ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -2585,15 +2610,26 @@ export function applyDiscoverRoute(route) {
 function renderGrid() {
   _gridWrapper = el('div', 'discover-grid-wrapper');
 
-  // Top row: "Work in progress" banner on the left, the Create button top-right within the tab.
+  // Top row: "Work in progress" banner on the left; network pivot + Create button top-right.
   var topRow = el('div', 'discover-top');
   var header = el('div', 'discover-header');
   header.textContent = 'Work in progress';
   topRow.appendChild(header);
+  var rightCtrls = el('div', 'discover-top-ctrls');
+  // Network pivot: mainnet ⇄ testnet. Switches the queried chains + the indexer host.
+  var netSel = el('select', 'discover-net-select');
+  [['mainnet', 'Mainnets'], ['testnet', 'Testnets']].forEach(function (o) {
+    var opt = document.createElement('option'); opt.value = o[0]; opt.textContent = o[1]; netSel.appendChild(opt);
+  });
+  netSel.value = getNetworkMode();
+  netSel.title = 'Switch between mainnet and testnet deployments';
+  netSel.addEventListener('change', function () { setNetwork(netSel.value); });
+  rightCtrls.appendChild(netSel);
   var createBtn = el('button', 'tab-create'); createBtn.textContent = '+ Create';
   createBtn.title = 'Create — in tuning before launch';
   createBtn.addEventListener('click', function () { openCreateFlow(); });
-  topRow.appendChild(createBtn);
+  rightCtrls.appendChild(createBtn);
+  topRow.appendChild(rightCtrls);
   _gridWrapper.appendChild(topRow);
 
   var grid = el('div', 'discover-grid');

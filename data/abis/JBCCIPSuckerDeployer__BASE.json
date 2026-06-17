@@ -1,0 +1,469 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "permissions",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        },
+        {
+          "name": "tokens",
+          "type": "address",
+          "internalType": "contract IJBTokens"
+        },
+        {
+          "name": "configurator",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "trustedForwarder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "DIRECTORY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "LAYER_SPECIFIC_CONFIGURATOR",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PERMISSIONS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TOKENS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBTokens"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ccipRemoteChainId",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ccipRemoteChainSelector",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ccipRouter",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract ICCIPRouter"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "configureSingleton",
+      "inputs": [
+        {
+          "name": "_singleton",
+          "type": "address",
+          "internalType": "contract JBSucker"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "createForSender",
+      "inputs": [
+        {
+          "name": "localProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "peer",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sucker",
+          "type": "address",
+          "internalType": "contract IJBSucker"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "isSucker",
+      "inputs": [
+        {
+          "name": "sucker",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isTrustedForwarder",
+      "inputs": [
+        {
+          "name": "forwarder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setChainSpecificConstants",
+      "inputs": [
+        {
+          "name": "remoteChainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteChainSelector",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "router",
+          "type": "address",
+          "internalType": "contract ICCIPRouter"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "singleton",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract JBSucker"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "trustedForwarder",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "CCIPConstantsSet",
+      "inputs": [
+        {
+          "name": "ccipRouter",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "ccipRemoteChainId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "ccipRemoteChainSelector",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JBPermissioned_Unauthorized",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "sender",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "permissionId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSuckerDeployer_AlreadyConfigured",
+      "inputs": [
+        {
+          "name": "singleton",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "layerSpecificConfigurationIsSet",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSuckerDeployer_DeployerIsNotConfigured",
+      "inputs": [
+        {
+          "name": "singleton",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSuckerDeployer_InvalidLayerSpecificConfiguration",
+      "inputs": [
+        {
+          "name": "configurator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSuckerDeployer_LayerSpecificNotConfigured",
+      "inputs": [
+        {
+          "name": "configurator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSuckerDeployer_Unauthorized",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "expected",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSuckerDeployer_ZeroConfiguratorAddress",
+      "inputs": [
+        {
+          "name": "configurator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "configureSingleton(address)": {
+      "details": "Must be called by the layer-specific configurator after `setChainSpecificConstants`.",
+      "params": {
+        "_singleton": "The address of the singleton."
+      }
+    },
+    "constructor": {
+      "params": {
+        "configurator": "The address of the configurator.",
+        "directory": "The directory of terminals and controllers for projects.",
+        "permissions": "The permissions contract for the deployer.",
+        "tokens": "The contract that manages token minting and burning.",
+        "trustedForwarder": "The trusted forwarder for ERC-2771 meta-transactions."
+      }
+    },
+    "createForSender(uint256,bytes32,bytes32)": {
+      "details": "Called by the registry during `deploySuckersFor`.",
+      "params": {
+        "localProjectId": "The project's ID on the local chain.",
+        "peer": "The remote peer address. Leave zero to use the default deterministic same-address peer.",
+        "salt": "The salt to use for the `create2` address."
+      },
+      "returns": {
+        "sucker": "The address of the new sucker."
+      }
+    },
+    "isTrustedForwarder(address)": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
+    },
+    "setChainSpecificConstants(uint256,uint64,address)": {
+      "params": {
+        "remoteChainId": "The remote chain id.",
+        "remoteChainSelector": "The CCIP remote chain selector.",
+        "router": "The CCIP router for this chain."
+      }
+    },
+    "trustedForwarder()": {
+      "details": "Returns the address of the trusted forwarder."
+    }
+  },
+  "userdoc": {
+    "DIRECTORY()": {
+      "notice": "The directory of terminals and controllers for projects."
+    },
+    "LAYER_SPECIFIC_CONFIGURATOR()": {
+      "notice": "Only this address can configure this deployer, can only be used once."
+    },
+    "PERMISSIONS()": {
+      "notice": "A contract storing permissions."
+    },
+    "TOKENS()": {
+      "notice": "The contract that manages token minting and burning."
+    },
+    "ccipRemoteChainId()": {
+      "notice": "Store the remote chain id."
+    },
+    "ccipRemoteChainSelector()": {
+      "notice": "The remote chain selector target of all sucker deployed by this contract."
+    },
+    "ccipRouter()": {
+      "notice": "Store the address of the CCIP router for this chain."
+    },
+    "configureSingleton(address)": {
+      "notice": "Set the implementation contract that all future suckers will be cloned from. Can only be called once."
+    },
+    "createForSender(uint256,bytes32,bytes32)": {
+      "notice": "Deploy a new sucker clone for a project via CREATE2. The same sender must call this on both chains to produce matching deterministic addresses."
+    },
+    "isSucker(address)": {
+      "notice": "Whether a given address was deployed by this deployer."
+    },
+    "setChainSpecificConstants(uint256,uint64,address)": {
+      "notice": "Handles some layer specific configuration that can't be done in the constructor otherwise deployment addresses would change."
+    },
+    "singleton()": {
+      "notice": "The singleton used to clone suckers."
+    }
+  },
+  "contractName": "JBCCIPSuckerDeployer",
+  "sourceName": "node_modules/@bananapus/suckers-v6/src/deployers/JBCCIPSuckerDeployer.sol"
+}

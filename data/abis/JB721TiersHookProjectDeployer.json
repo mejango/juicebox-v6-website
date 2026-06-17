@@ -1167,6 +1167,19 @@
     },
     {
       "type": "function",
+      "name": "originalPayer",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "queueRulesetsOf",
       "inputs": [
         {
@@ -1769,6 +1782,9 @@
     },
     "onERC721Received(address,address,uint256,bytes)": {
       "notice": "Accepts project NFT reservations minted by `JBProjects.createFor`."
+    },
+    "originalPayer()": {
+      "notice": "The account that paid the creation fee for the project currently being launched."
     },
     "queueRulesetsOf(uint256,(string,string,string,address,string,((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint32,uint8),(bool,bool,bool,bool,bool)),(uint64,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],string),address,bytes32)": {
       "notice": "Queues rulesets for a project with an attached 721 tiers hook."
