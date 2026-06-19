@@ -346,7 +346,7 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
         outputArea.innerHTML = '<div class="tx-success">TX submitted: ' + hash + '</div>';
         return pub.waitForTransactionReceipt({ hash: hash });
       }).then(function(receipt) {
-        outputArea.innerHTML = '<div class="tx-success">Confirmed in block ' + receipt.blockNumber + ' · TX: ' + truncateAddress(receipt.transactionHash) + '</div>';
+        outputArea.innerHTML = '<div class="tx-success">Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncateAddress(receipt.transactionHash) + '</div>';
       }).catch(function(err) {
         outputArea.innerHTML = '';
         outputArea.appendChild(renderError(formatError(err, abi)));

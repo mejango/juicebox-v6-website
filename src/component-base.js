@@ -1,11 +1,12 @@
 // src/component-base.js
 // Shared building blocks for all component widgets
 
-import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect } from './wallet.js';
+import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders } from './wallet.js';
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
-import { getAddress, meta } from './abi-registry.js';
+import { decodeFunctionData } from 'viem';
+import { getAddress, meta, getABI } from './abi-registry.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
 // address is. Suckers and other per-project deployments aren't in the registry — callers pass contractName.
@@ -46,7 +47,7 @@ export function abiSignature(abi, functionName) {
   return f.name + '(' + ins + ')' + mut + outs;
 }
 
-export { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect };
+export { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders };
 export { CHAINS, getManifestChains, getChainTokens };
 export { parseAmount, formatAmount };
 export { renderError };
@@ -492,7 +493,7 @@ export function createWalletButton(label, onClick, permissionNote) {
 // Includes the exact payload, block-explorer link(s) to the target contract(s), and a safety checklist.
 export function buildTxAuditPrompt(payload) {
   var lines = [];
-  lines.push("I'm about to sign a blockchain transaction in the Juicebox V6 web app. Act as a careful security reviewer: independently verify the transaction, confirm it matches my intent, and only then give a go/no-go. Assume I could be the target of a scam or a spoofed UI — trust the on-chain data and source code over anything the page says.");
+  lines.push("I'm about to sign a blockchain transaction in the Juicebox **V6** web app (the `nana` V6 / revnet V6 protocol release — NOT Juicebox v1/v2/v3/v4/v5). Act as a careful security reviewer: independently verify the transaction, confirm it matches my intent, and only then give a go/no-go. Assume I could be the target of a scam or a spoofed UI — trust the on-chain data and the V6 source code over anything the page says. When you look up contract source, use ONLY the V6 repositories (names ending in `-v6`); same-named repos without that suffix are older protocol versions and will mislead you.");
   lines.push('');
   lines.push('Transaction payload — exactly what will be sent on-chain:');
   lines.push('```json');
@@ -511,8 +512,8 @@ export function buildTxAuditPrompt(payload) {
   lines.push('');
 
   // 2 + 3) Contract source: ecosystem umbrella + the specific repo(s) for the target contract(s), + explorers.
-  lines.push('Verify the contract source:');
-  lines.push('- Full Juicebox V6 ecosystem (all contracts): https://github.com/Bananapus/version-6');
+  lines.push('Verify the contract source — this is Juicebox **V6** (a.k.a. the `nana` V6 / revnet V6 release). CRITICAL: audit only the **V6** repositories — their names end in `-v6`. The older same-named repos WITHOUT the `-v6` suffix (e.g. `Bananapus/nana-suckers`, `Bananapus/nana-core`) are PRIOR protocol versions and will NOT match the deployed bytecode — do not use them. Match against each repo\'s default branch:');
+  lines.push('- Full Juicebox V6 ecosystem (umbrella of all V6 repos): https://github.com/Bananapus/version-6');
   contractSourceRefs(payload).forEach(function (r) { lines.push('- ' + r); });
   auditLinksFromPayload(payload).forEach(function (l) { lines.push('- ' + l.label + ' on-chain (confirm verified source + legit address): ' + l.url); });
   lines.push('');
@@ -556,16 +557,19 @@ function currentSiteRef() {
 }
 function currentOrigin() { try { return window.location.origin; } catch (_) { return 'an unknown origin'; } }
 
-// GitHub repo for a Juicebox V6 contract by name (best-effort; all are tracked in the version-6 umbrella).
+// GitHub repo for a Juicebox V6 contract by name. The deployed bytecode lives in the V6 repos — their names
+// end in `-v6`. The older same-named repos (no suffix) are PRIOR protocol versions and will NOT match; always
+// cite the `-v6` repo on its default branch so a reviewer doesn't audit the wrong version.
 function contractRepoFor(name) {
   if (!name || /^0x/i.test(name)) return null;
   if (name === 'ERC2771Forwarder') return 'OpenZeppelin ERC2771Forwarder: https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/metatx/ERC2771Forwarder.sol';
-  if (/Sucker/.test(name)) return name + ' (nana-suckers): https://github.com/Bananapus/nana-suckers';
-  if (/^JB721/.test(name)) return name + ' (nana-721-hook): https://github.com/Bananapus/nana-721-hook';
-  if (name === 'JBOmnichainDeployer') return name + ' (nana-omnichain-deployers): https://github.com/Bananapus/nana-omnichain-deployers';
-  if (name === 'JBRouterTerminalRegistry') return name + ' (nana-router-terminal): https://github.com/Bananapus/nana-router-terminal';
-  if (/^REV/.test(name)) return name + ' (revnet-core): https://github.com/Bananapus/revnet-core';
-  if (/^JB/.test(name)) return name + ' (nana-core): https://github.com/Bananapus/nana-core';
+  if (/Sucker/.test(name)) return name + ' (nana-suckers-v6): https://github.com/Bananapus/nana-suckers-v6';
+  if (/Buyback/.test(name)) return name + ' (nana-buyback-hook-v6): https://github.com/Bananapus/nana-buyback-hook-v6';
+  if (/^JB721/.test(name)) return name + ' (nana-721-hook-v6): https://github.com/Bananapus/nana-721-hook-v6';
+  if (name === 'JBOmnichainDeployer') return name + ' (nana-omnichain-deployers-v6): https://github.com/Bananapus/nana-omnichain-deployers-v6';
+  if (name === 'JBRouterTerminalRegistry') return name + ' (nana-router-terminal-v6): https://github.com/Bananapus/nana-router-terminal-v6';
+  if (/^REV/.test(name)) return name + ' (revnet-core-v6): https://github.com/rev-net/revnet-core-v6';
+  if (/^JB/.test(name)) return name + ' (nana-core-v6): https://github.com/Bananapus/nana-core-v6';
   return null;
 }
 function contractSourceRefs(payload) {
@@ -585,12 +589,35 @@ function weiToEth(v) {
 }
 // Plain "what to verify on your wallet" lines from a confirm payload.
 function walletExpectations(payload) {
-  if (!payload || Array.isArray(payload.chains)) return []; // relayr payment is a separate prompt
+  if (!payload) return [];
+  // Multi-tx flows (e.g. a multichain deploy: { transactions: [...] }). Each chain carries its OWN
+  // native value — typically the project creation fee — so never assert a single "0 ETH" expectation.
+  var txs = Array.isArray(payload.transactions) ? payload.transactions
+          : Array.isArray(payload.chains) ? payload.chains : null;
+  if (txs) {
+    var multi = ['This action spans ' + txs.length + ' chains — there is one transaction per chain (below). Verify EACH one’s network, "To" address, function and `value`. Each chain sends its own native amount (e.g. the project creation fee), so do NOT expect a single 0 ETH value across them.'];
+    txs.forEach(function (t) {
+      var bits = [];
+      if (t.chain) bits.push(t.chain);
+      if (t.address || t.to || t.contract) bits.push('to ' + (t.address || t.to || t.contract));
+      if (t.value != null) bits.push('value ' + (typeof t.value === 'string' ? t.value : weiToEth(t.value) + ' ETH'));
+      if (bits.length) multi.push(bits.join(' — ') + '.');
+    });
+    return multi;
+  }
   var out = [];
   if (payload.chain) out.push('Network: ' + payload.chain + ' — make sure your wallet is on this network.');
   var to = payload.address || (typeof payload.contract === 'string' && /^0x/.test(payload.contract) ? payload.contract : null);
   if (to) out.push('Recipient / "To" address: ' + to + (payload.contract && !/^0x/.test(payload.contract) ? ' (' + payload.contract + ')' : '') + ' — it must match this exactly.');
-  out.push('Amount / value: ' + weiToEth(payload.value || 0) + ' ETH' + ((payload.value && BigInt(payload.value) > 0n) ? '' : ' (zero — your wallet should show no ETH being sent)') + '.');
+  // `value` may be raw wei (bigint/numeric string, from executeTransaction) OR an already-formatted display
+  // string like "0.002 ETH" (from openTxConfirm payloads). Detect the latter by the presence of letters and
+  // never call BigInt() on it — BigInt("0.002 ETH") throws and would crash the whole audit-prompt build.
+  var rawVal = payload.value;
+  var preformatted = typeof rawVal === 'string' && /[a-zA-Z]/.test(rawVal);
+  var valDisp = preformatted ? rawVal : (weiToEth(rawVal || 0) + ' ETH');
+  var valZero = false;
+  if (!preformatted) { try { valZero = BigInt(rawVal || 0) === 0n; } catch (_) { valZero = false; } }
+  out.push('Amount / value: ' + valDisp + (valZero ? ' (zero — your wallet should show no ETH being sent)' : '') + '.');
   if (payload.function) out.push('Function being called: ' + payload.function + (payload.abi ? ' — signature ' + payload.abi : '') + '.');
   out.push('If your wallet shows a different "To" address, a higher amount, or a different function/network than the above, REJECT the transaction.');
   return out;
@@ -607,8 +634,8 @@ function auditLinksFromPayload(payload) {
     if (!be || !be.url) return null;
     return be.url.replace(/\/$/, '') + '/address/' + addr;
   }
-  if (payload && Array.isArray(payload.chains)) {
-    payload.chains.forEach(function (c) { var u = explorer(c.chain, c.contract || c.to); if (u) out.push({ label: c.chain + ' target', url: u }); });
+  if (payload && (Array.isArray(payload.chains) || Array.isArray(payload.transactions))) {
+    (payload.transactions || payload.chains).forEach(function (c) { var u = explorer(c.chain, c.contract || c.address || c.to); if (u) out.push({ label: c.chain + ' target', url: u }); });
   } else if (payload) {
     var u = explorer(payload.chain, payload.contract || payload.address || payload.to);
     if (u) out.push({ label: 'Target contract', url: u });
@@ -662,6 +689,76 @@ function annotateTimestamps(text) {
   }).join('\n');
 }
 
+// ── Human-legible calldata decoding for the confirm modal ───────────────────
+// Format a single decoded arg value for display (no hex parsing required by the user).
+function formatArgValue(type, v) {
+  if (v == null) return '';
+  if (typeof v === 'bigint') return v.toString();
+  if (typeof v === 'boolean') return String(v);
+  if (typeof v === 'string') {
+    if ((type || '') === 'address') return v;                 // keep full address (modal annotates it)
+    if (/^0x/.test(v)) return v.length > 26 ? (v.slice(0, 12) + '…' + v.slice(-8)) : v; // bytes/hash → truncate
+    return JSON.stringify(v);                                  // quote plain strings
+  }
+  if (Array.isArray(v)) return '[' + v.map(function (x) { return formatArgValue('', x); }).join(', ') + ']';
+  try { return JSON.stringify(v, function (k, val) { return typeof val === 'bigint' ? val.toString() : val; }); } catch (_) { return String(v); }
+}
+function shapeDecoded(abi, fnName, argsArr) {
+  var frag = abi && abi.filter(function (e) { return e.type === 'function' && e.name === fnName; })[0];
+  var inputs = (frag && frag.inputs) || [];
+  return { fn: fnName, args: (argsArr || []).map(function (v, i) { var inp = inputs[i] || {}; return { name: inp.name || ('arg' + i), type: inp.type || '', value: formatArgValue(inp.type, v) }; }) };
+}
+// Decode a tx into { fn, args:[{name,type,value}] } from its raw calldata (preferred) or its
+// already-known function+args (single-tx payloads). Null when no ABI/function is resolvable.
+export function decodeCallForDisplay(tx) {
+  if (!tx) return null;
+  var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
+  var abi = null; try { if (name) abi = getABI(name); } catch (_) {}
+  if (tx.calldata && tx.calldata !== '0x' && abi) {
+    try { var dec = decodeFunctionData({ abi: abi, data: tx.calldata }); return shapeDecoded(abi, dec.functionName, dec.args); } catch (_) {}
+  }
+  if (tx.function) return shapeDecoded(abi, tx.function, tx.args || []);
+  return null;
+}
+export function renderDecodedTx(tx) {
+  var box = el('div', 'tx-decoded');
+  if (tx.chain) { var ch = el('div', 'tx-decoded-chain'); ch.textContent = tx.chain; box.appendChild(ch); }
+  var who = el('div', 'tx-decoded-target');
+  var nm = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : null;
+  who.textContent = (nm ? nm + ' | ' : '') + (tx.address || tx.to || tx.contract || '');
+  box.appendChild(who);
+  var dec = decodeCallForDisplay(tx);
+  if (dec) {
+    var call = el('div', 'tx-decoded-call');
+    var fn = el('div', 'tx-decoded-fn'); fn.textContent = dec.fn + (dec.args.length ? '' : '()'); call.appendChild(fn);
+    dec.args.forEach(function (a) {
+      var r = el('div', 'tx-decoded-arg');
+      var k = el('span', 'tx-decoded-argname'); k.textContent = a.name + (a.type ? ' (' + a.type + ')' : '') + ': ';
+      var val = el('span', 'tx-decoded-argval'); val.textContent = a.value;
+      r.appendChild(k); r.appendChild(val); call.appendChild(r);
+    });
+    box.appendChild(call);
+  } else {
+    var raw = el('div', 'tx-decoded-unknown'); raw.textContent = 'Could not decode this call — review the raw data below before signing.'; box.appendChild(raw);
+  }
+  if (tx.erc20Approval) {
+    var ap = el('div', 'tx-decoded-arg'); ap.textContent = 'ERC-20 approval: ' + formatArgValue('uint256', tx.erc20Approval.amount) + ' to ' + tx.erc20Approval.spender; box.appendChild(ap);
+  }
+  if (tx.value != null && String(tx.value) !== '0' && String(tx.value) !== '0n') {
+    var v = el('div', 'tx-decoded-value'); v.textContent = 'Value: ' + (typeof tx.value === 'bigint' ? tx.value.toString() + ' wei' : tx.value); box.appendChild(v);
+  }
+  return box;
+}
+function renderDecodedSummary(payload) {
+  var list = Array.isArray(payload.transactions) ? payload.transactions : (Array.isArray(payload.chains) ? payload.chains : null);
+  var wrap = el('div', 'tx-decoded-list');
+  if (payload.action) { var a = el('div', 'tx-decoded-action'); a.textContent = payload.action; wrap.appendChild(a); }
+  if (list) { list.forEach(function (t) { wrap.appendChild(renderDecodedTx(t)); }); return wrap; }
+  // Single-tx payload (executeTransaction): function + args, or calldata.
+  if (payload.function || payload.calldata || payload.address) { wrap.appendChild(renderDecodedTx(payload)); return wrap; }
+  return null;
+}
+
 export function confirmTransactionModal(payload, opts) {
   opts = opts || {};
   return new Promise(function (resolve) {
@@ -675,23 +772,62 @@ export function confirmTransactionModal(payload, opts) {
     var note = el('div', 'tx-confirm-note');
     note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
     content.appendChild(note);
+    // Optional plain-English explanation of WHAT this step does / WHY it exists (e.g. the bridge's
+    // second "send" step). Sits between the safety banner and the decoded payload.
+    if (opts.description) {
+      var desc = el('div', 'tx-confirm-desc'); desc.textContent = opts.description; content.appendChild(desc);
+    }
+    // Legible decode first (function + named args), so users don't parse calldata themselves…
+    var decoded = renderDecodedSummary(payload);
+    if (decoded) content.appendChild(decoded);
+    // …with the exact raw payload still one click away.
     var pre = el('pre', 'create-payload');
     pre.textContent = annotateTimestamps(annotateAddresses(JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
       .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:')));
-    content.appendChild(pre);
+    if (decoded) {
+      var details = document.createElement('details'); details.className = 'tx-rawdata';
+      var sm = document.createElement('summary'); sm.textContent = 'Show raw data'; details.appendChild(sm);
+      details.appendChild(pre);
+      content.appendChild(details);
+    } else {
+      content.appendChild(pre);
+    }
     appendAuditPromptLink(content, payload);
     var foot = el('div', 'create-modal-foot');
     var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
     var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
     foot.appendChild(cancel); foot.appendChild(confirm); content.appendChild(foot);
+    // Post-confirm progress shows HERE, inside the modal — the modal stays open after "Confirm" so callers
+    // don't have to render tx status next to a button. Hidden until the tx is in flight.
+    var statusEl = el('div', 'tx-confirm-status'); statusEl.style.display = 'none'; content.appendChild(statusEl);
     dialog.appendChild(content); overlay.appendChild(dialog);
-    var done = false;
-    function close(result) { if (done) return; done = true; document.removeEventListener('keydown', onKey); overlay.remove(); resolve(result); }
-    function onKey(e) { if (e.key === 'Escape') close(false); }
-    x.addEventListener('click', function () { close(false); });
-    cancel.addEventListener('click', function () { close(false); });
-    confirm.addEventListener('click', function () { close(true); });
-    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(false); });
+    // Legacy callers await a boolean and expect the modal to close on confirm. `keepOpenForProgress`
+    // (executeTransaction only) opts into the richer behavior: stay open, resolve { ok, showStatus, close }.
+    var keepOpen = !!opts.keepOpenForProgress;
+    var cancelResult = keepOpen ? { ok: false } : false;
+    var resolved = false, inFlight = false;
+    function finish(result) { if (resolved) return; resolved = true; resolve(result); }
+    function teardown() { document.removeEventListener('keydown', onKey); if (overlay.parentNode) overlay.remove(); }
+    function close(result) { finish(result); teardown(); }
+    function showStatus(m, kind) {
+      statusEl.style.display = '';
+      statusEl.className = 'tx-confirm-status ' + (kind === 'error' ? 'error' : kind === 'success' ? 'success' : 'pending');
+      statusEl.textContent = m;
+    }
+    function onKey(e) { if (e.key === 'Escape' && !inFlight) close(cancelResult); }
+    x.addEventListener('click', function () { if (!inFlight) close(cancelResult); });
+    cancel.addEventListener('click', function () { if (!inFlight) close(cancelResult); });
+    confirm.addEventListener('click', function () {
+      if (keepOpen) {
+        // Hand control to the caller: keep the modal open, disable the buttons, and let it drive
+        // showStatus()/close() as the tx progresses. Resolve now so the caller can start.
+        inFlight = true; confirm.disabled = true; cancel.disabled = true;
+        finish({ ok: true, showStatus: showStatus, close: teardown });
+      } else {
+        close(true);
+      }
+    });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay && !inFlight) close(cancelResult); });
     document.addEventListener('keydown', onKey);
     document.body.appendChild(overlay);
   });
@@ -704,10 +840,14 @@ export function executeTransaction(opts) {
   var account = getAccount();
   if (!account) { opts.onError('Connect wallet to transact'); return; }
 
+  // Status/result callbacks. When the confirm modal is shown (not skipConfirm), these get wrapped so tx
+  // progress renders INSIDE the modal (which stays open after Confirm) — callers no longer show it elsewhere.
+  var cbs = { onStatus: opts.onStatus || function () {}, onSuccess: opts.onSuccess || function () {}, onError: opts.onError || function () {} };
+
   // Build the review payload and require explicit confirmation, unless the caller already showed its own.
   var confirmStep;
   if (opts.skipConfirm) {
-    confirmStep = Promise.resolve(true);
+    confirmStep = Promise.resolve({ ok: true });
   } else {
     var cname = opts.contractName || resolveContractName(opts.address, opts.chainId);
     var payload = {
@@ -724,28 +864,37 @@ export function executeTransaction(opts) {
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
       payload.erc20Approval = { token: opts.tokenAddr, spender: opts.spenderAddr, amount: opts.approvalAmount };
     }
-    confirmStep = confirmTransactionModal(payload, { title: opts.confirmTitle || 'Confirm transaction', confirmText: opts.confirmText, note: opts.confirmNote });
+    confirmStep = confirmTransactionModal(payload, { title: opts.confirmTitle || 'Confirm transaction', confirmText: opts.confirmText, note: opts.confirmNote, description: opts.confirmDescription, keepOpenForProgress: true });
   }
 
-  confirmStep.then(function (ok) {
-    if (!ok) { opts.onError('Transaction cancelled'); return; }
+  confirmStep.then(function (r) {
+    if (!r || !r.ok) { (opts.onError || function () {})('Transaction cancelled'); return; }
+    // Modal stayed open → mirror status into it and close it on success; still call the caller's handlers.
+    if (r.showStatus) {
+      var base = cbs;
+      cbs = {
+        onStatus: function (m, k, meta) { r.showStatus(m, k); base.onStatus(m, k, meta); },
+        onSuccess: function (m, meta) { if (r.close) r.close(); base.onSuccess(m, meta); },
+        onError: function (m, meta) { r.showStatus(m, 'error'); base.onError(m, meta); },
+      };
+    }
     sendNow();
   });
 
   function sendNow() {
-  opts.onStatus('Checking wallet network...', 'pending');
+  cbs.onStatus('Checking wallet network...', 'pending');
 
   wallet.getChainId().then(function(walletChainId) {
     if (walletChainId !== opts.chainId) {
-      opts.onStatus('Switching to ' + (CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : 'chain ' + opts.chainId) + '...', 'pending');
+      cbs.onStatus('Switching to ' + (CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : 'chain ' + opts.chainId) + '...', 'pending');
       return switchChain(opts.chainId);
     }
   }).then(function() {
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
-      return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, opts.onStatus);
+      return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, cbs.onStatus);
     }
   }).then(function() {
-    opts.onStatus('Awaiting wallet confirmation...', 'pending');
+    cbs.onStatus('Awaiting wallet confirmation...', 'pending');
     return wallet.writeContract({
       account: account,
       chain: CHAINS[opts.chainId],
@@ -756,24 +905,24 @@ export function executeTransaction(opts) {
       value: opts.value || 0n,
     });
   }).then(function(hash) {
-    // Submitted to the mempool — now waiting to be included onchain. Keep a live "juicing"
-    // pending state up the whole time (waitForTransactionReceipt can take a while).
-    opts.onStatus('Juicing… confirming onchain · ' + truncAddr(hash), 'pending', { phase: 'submitted', hash: hash, chainId: opts.chainId });
+    // Submitted to the mempool — now waiting to be included onchain. Keep a live pending state up
+    // the whole time (waitForTransactionReceipt can take a while).
+    cbs.onStatus('Confirming onchain | ' + truncAddr(hash), 'pending', { phase: 'submitted', hash: hash, chainId: opts.chainId });
     var pub = createPublicClientForChain(opts.chainId);
     return pub.waitForTransactionReceipt({ hash: hash });
   }).then(function(receipt) {
-    opts.onSuccess('Confirmed in block ' + receipt.blockNumber + ' \u00b7 TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
+    cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' \u00b7 TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(function(err) {
     var msg = err.shortMessage || err.message || 'Unknown error';
     var full = ((err.message || '') + ' ' + (err.details || '') + ' ' + (err.cause && (err.cause.message || err.cause.shortMessage) || '')).toLowerCase();
     var chainName = CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : ('chain ' + opts.chainId);
     if (msg.indexOf('rejected') !== -1 || msg.indexOf('User rejected') !== -1 || /user rejected|denied transaction/i.test(full)) {
-      opts.onError('Transaction rejected by wallet');
+      cbs.onError('Transaction rejected by wallet');
     } else if (/insufficient funds|exceeds the balance|gas \* price|gas required exceeds/.test(full)) {
       // Most common real failure for destination-chain claims and any tx on a chain the wallet isn't funded on.
-      opts.onError('Not enough ' + chainName + ' ETH to cover gas. Fund your wallet on ' + chainName + ', then try again.');
+      cbs.onError('Not enough ' + chainName + ' ETH to cover gas. Fund your wallet on ' + chainName + ', then try again.');
     } else {
-      opts.onError(msg.length > 150 ? msg.slice(0, 150) + '...' : msg);
+      cbs.onError(msg.length > 150 ? msg.slice(0, 150) + '...' : msg);
     }
   });
   }

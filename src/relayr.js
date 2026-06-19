@@ -13,7 +13,7 @@
 // No API key. Host confirmed from juice-sdk-v4: https://api.relayr.ba5ed.com
 
 import { encodeFunctionData } from 'viem';
-import { getWalletClient, getAccount, createPublicClientForChain, getAddress } from './component-base.js';
+import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain } from './component-base.js';
 import { CHAINS } from './chain.js';
 
 var RELAYR_API = 'https://api.relayr.ba5ed.com';
@@ -44,6 +44,19 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
   var val = value || 0n;
+
+  // MetaMask (and especially a Ledger via MetaMask) reject eth_signTypedData_v4 when the EIP-712 domain's
+  // chainId differs from the wallet's ACTIVE chain ("Provided chainId X must match the active chainId Y").
+  // Each forward request is domain-bound to its target chain, so switch the wallet there before signing.
+  try {
+    var active = await wallet.getChainId();
+    if (active !== Number(chainId)) {
+      await switchChain(Number(chainId));
+      wallet = getWalletClient(); // switchChain recreates the client on the new chain
+    }
+  } catch (e) {
+    throw new Error('Switch your wallet to ' + (CHAINS[chainId] && CHAINS[chainId].name || chainId) + ' to sign its request (' + ((e && e.message) || e) + ')');
+  }
 
   var domTuple = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'eip712Domain', args: [] });
   var domainName = domTuple[1], domainVersion = domTuple[2];

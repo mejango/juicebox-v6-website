@@ -63,7 +63,7 @@ var USDC_BY_CHAIN = {
   11155420: '0x5fd84259d66cd46123540766be93dfe6d43130d7', 421614: '0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d',
 };
 
-var DURATION_PRESETS = [
+export var DURATION_PRESETS = [
   { label: '1 day', seconds: 86400 }, { label: '3 days', seconds: 259200 },
   { label: '7 days', seconds: 604800 }, { label: '14 days', seconds: 1209600 },
   { label: '28 days', seconds: 2419200 }, { label: '30 days', seconds: 2592000 },
@@ -523,9 +523,6 @@ export function openCreateFlow() {
   function render() {
     sheet.innerHTML = '';
     sheet.appendChild(renderHeader(state, close, onImport, onExport));
-    var wip = el('div', 'create-wip');
-    wip.textContent = 'Work in progress';
-    sheet.appendChild(wip);
     sheet.appendChild(renderStepper(state, render));
     var body = el('div', 'create-step');
     body.appendChild(renderStep(state, render));
@@ -712,8 +709,8 @@ function textArea(value, placeholder, onInput) {
 // desc may be a string or a function(checked) → string, so the subtext reflects the toggle's state and
 // updates in place when toggled.
 // State-reflective subtext: prefix "On:"/"Off:" so the sentence reads as the current checkbox state.
-function dz(on, off) { return function (checked) { return checked ? 'On: ' + on : 'Off: ' + off; }; }
-function toggleRow(label, desc, checked, onChange) {
+export function dz(on, off) { return function (checked) { return checked ? 'On: ' + on : 'Off: ' + off; }; }
+export function toggleRow(label, desc, checked, onChange) {
   var w = el('div', 'create-toggle-row');
   var lbl = el('label', 'create-toggle');
   var cb = el('input', '');
@@ -915,7 +912,7 @@ function renderImagePicker(uri, busy, onChange) {
 
 // A stage === one JBRulesetConfig. Field names are chosen so the token/payouts/deadline
 // section renderers below read straight off the stage object.
-function createStage() {
+export function createStage() {
   return {
     expanded: false,         // collapsed by default — sensible defaults are summarized in the card head
     durationSeconds: 0,      // 0 = no expiry (final stage); non-final stages need a duration to advance
@@ -942,9 +939,10 @@ function createStage() {
   };
 }
 
-function renderStages(state, render) {
+export function renderStages(state, render, opts) {
+  opts = opts || {};
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Rulesets', 'Set the sequential rulesets your project follows over time.'));
+  if (!opts.noHead) wrap.appendChild(stepHead('Rulesets', 'Set the sequential rulesets your project follows over time.'));
 
   state.stages.forEach(function (stage, idx) {
     wrap.appendChild(renderStageCard(stage, idx, state, render));
@@ -1108,7 +1106,7 @@ function revStageSummary(stage, idx, state) {
   var splitTotal = revSplitTotalPct(stage);
   if (splitTotal > 0) parts.push(round2(splitTotal) + '% to splits');
   parts.push(round2(Number(stage.cashOutTaxRate)) + '% cash-out tax');
-  return parts.join(' · ');
+  return parts.join(' | ');
 }
 
 function revSplitTotalPct(stage) {
@@ -1121,7 +1119,7 @@ function revStageEditor(stage, idx, state, render) {
 
   // 1. Issuance
   var s1 = el('div', 'create-rev-sec');
-  var h1 = el('div', 'create-rev-h'); h1.textContent = '1. $' + tk + ' issuance'; s1.appendChild(h1);
+  var h1 = el('div', 'create-rev-h'); h1.textContent = '$' + tk + ' issuance'; s1.appendChild(h1);
   var d1 = el('div', 'create-hint'); d1.textContent = 'How many $' + tk + ' to issue when receiving ETH.'; s1.appendChild(d1);
   // Issuance row: "[10000] $TOKEN / ETH"
   var issRow = el('div', 'create-inline-row');
@@ -1191,7 +1189,7 @@ function revStageEditor(stage, idx, state, render) {
   // 2. Cash outs (always on for a revnet — the only exit besides loans)
   var acctSym = (state.accepts[0] || 'eth') === 'usdc' ? 'USDC' : 'ETH';
   var s2 = el('div', 'create-rev-sec');
-  var h2 = el('div', 'create-rev-h'); h2.textContent = '2. $' + tk + ' cash outs'; s2.appendChild(h2);
+  var h2 = el('div', 'create-rev-h'); h2.textContent = '$' + tk + ' cash outs'; s2.appendChild(h2);
   var d2 = el('div', 'create-hint'); d2.textContent = 'The only way to access the ' + acctSym + ' used to issue $' + tk + ' is by cashing out or taking a loan. A tax makes cashing out and loans more expensive, rewarding $' + tk + ' holders who stick around.'; s2.appendChild(d2);
   stage.cashOutEnabled = true; // revnets always allow cash outs
   s2.appendChild(cashOutTaxCard(stage, render, acctSym, tk, true));
@@ -1199,7 +1197,7 @@ function revStageEditor(stage, idx, state, render) {
 
   // 3. Start time
   var s3 = el('div', 'create-rev-sec');
-  var h3 = el('div', 'create-rev-h'); h3.textContent = '3. Start time'; s3.appendChild(h3);
+  var h3 = el('div', 'create-rev-h'); h3.textContent = 'Start time'; s3.appendChild(h3);
   s3.appendChild(revStageTiming(state, stage, idx, render));
   w.appendChild(s3);
 
@@ -1443,7 +1441,7 @@ function choiceCardsInline(opts, current, onPick) {
 
 // ETH/USD currency <select> (JBCurrencyIds 1/2). `onChange` receives the numeric id; `cls` overrides the
 // default compact inline style. Consolidates the identical option-loop used across the wizard.
-function currencySelect(current, onChange, cls) {
+export function currencySelect(current, onChange, cls) {
   var sel = el('select', cls || 'create-amount-cur');
   [['ETH', 1], ['USD', 2]].forEach(function (o) {
     var op = el('option'); op.value = String(o[1]); op.textContent = o[0];
@@ -1524,7 +1522,7 @@ function payoutsSection(stage, render) {
     }));
     var mode = stage.payoutMode === 'unlimited' ? 'percent' : 'amount';
     stage.payoutRecipients.forEach(function (rec, i) { card.appendChild(payoutRow(stage, rec, i, mode, render)); });
-    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = 'add payout +';
+    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add payout';
     add.style.marginTop = stage.payoutRecipients.length ? '14px' : '4px'; // only need the gap when there are rows above
     add.addEventListener('click', function (e) { e.preventDefault(); stage.payoutRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); });
     card.appendChild(add);
@@ -1574,10 +1572,15 @@ function reservedSplitRow(t, rec, idx, render, onTotal) {
   pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; if (onTotal) onTotal(); }); row.appendChild(pct);
   var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
   var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
+  var hookAddr = getAddress('BannyLPSplitHook', 1);
+  var isLp = rec.type === 'lphook';
   var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
-  recip.value = rec.type === 'project' ? String(rec.projectId || '') : (rec.address || '');
+  // When this split funds the market, the recipient IS the shared LP split hook — show it (read-only).
+  recip.value = isLp ? (hookAddr || '') : (rec.type === 'project' ? String(rec.projectId || '') : (rec.address || ''));
+  if (isLp) recip.readOnly = true;
   var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
-  row.appendChild(recipBoxWith(recip, ensHint));
+  var recipBox = recipBoxWith(recip, ensHint);
+  row.appendChild(recipBox);
   var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = t.reservedRecipients.indexOf(rec); if (i >= 0) t.reservedRecipients.splice(i, 1); render(); });
   row.appendChild(rm);
@@ -1590,13 +1593,45 @@ function reservedSplitRow(t, rec, idx, render, onTotal) {
   benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
   var benefHint = attachEns(benef, function () {}); // resolves on Ethereum mainnet; populates the global ENS cache resolvedStr reads
   benefRow.appendChild(recipBoxWith(benef, benefHint)); wrap.appendChild(benefRow);
+  // "fund market" chip — routes this split to the shared zero-fee BannyLPSplitHook. Offered only when this
+  // row is already the market-funder OR no other row is (one buyback market per project). Sits under the
+  // field (inside recipBox) so it left-aligns with it.
+  var otherLp = t.reservedRecipients.some(function (r) { return r !== rec && r.type === 'lphook'; });
+  var lpChip = null;
+  if (hookAddr && (isLp || !otherLp)) {
+    lpChip = el('button', 'create-split-chip'); lpChip.type = 'button'; lpChip.textContent = 'fund market';
+    if (isLp) lpChip.classList.add('active');
+    lpChip.title = 'Pool reserved tokens into a Uniswap V4 buyback position for your token';
+    lpChip.addEventListener('click', function () {
+      if (rec.type === 'lphook') { rec.type = 'wallet'; rec.address = ''; rec.projectId = 0; }
+      else { rec.type = 'lphook'; }
+      render();
+    });
+    recipBox.appendChild(lpChip);
+    if (isLp) {
+      var lpHint = el('div', 'create-split-lphint');
+      lpHint.textContent = 'Pools splits tokens into a Uniswap V4 position. Trading fees route back to your project.';
+      wrap.appendChild(lpHint);
+    }
+  }
+  // The chip only makes sense on an empty row — once a real recipient is typed, hide it (and drop the
+  // top-align so the row centers normally). When this row IS the market-funder it stays shown + active.
+  function updateChip() {
+    if (!lpChip) return;
+    var show = isLp || !(recip.value || '').trim();
+    lpChip.style.display = show ? '' : 'none';
+    row.classList.toggle('has-chip', show);
+  }
   function refresh() {
+    if (rec.type === 'lphook') return; // handled by the chip
     var v = (recip.value || '').trim();
     if (/^[0-9]+$/.test(v) && Number(v) > 0) { rec.type = 'project'; rec.projectId = Number(v); benefRow.style.display = ''; }
     else { rec.type = 'wallet'; rec.projectId = 0; rec.address = v; benefRow.style.display = 'none'; }
+    updateChip();
   }
   recip.addEventListener('input', refresh);
-  refresh();
+  if (isLp) row.classList.add('has-chip');
+  else refresh();
   return wrap;
 }
 
@@ -1656,7 +1691,7 @@ function idleToggle(label, subtext) {
 
 // Cash-out access for token holders — they reclaim a share of the project's surplus by burning tokens.
 // Lives next to the owner's surplus allowance (both draw from surplus). Tax rate shapes the bonding curve.
-function cashOutSection(stage, render) {
+export function cashOutSection(stage, render) {
   var t = stage;
   var wrap = el('div', '');
   var acctSym = t.baseCurrency === 2 ? 'USDC' : 'ETH';
@@ -1756,7 +1791,7 @@ function tokenSection(stage, render) {
       sumNote.className = 'create-hint' + (tot > 100 ? ' warn' : '');
     }
     t.reservedRecipients.forEach(function (rec, i) { card.appendChild(reservedSplitRow(t, rec, i, render, updateReservedSummary)); });
-    var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = 'add split +'; addSplit.style.marginTop = '14px';
+    var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = '+ Add split'; addSplit.style.marginTop = '14px';
     addSplit.addEventListener('click', function (e) { e.preventDefault(); t.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
     card.appendChild(addSplit);
     updateReservedSummary(); card.appendChild(sumNote);
@@ -1855,7 +1890,7 @@ function renderNfts(state, render) {
   if (state.shopEnabled) {
     state.nfts.forEach(function (nft, idx) { wrap.appendChild(itemCard(state, nft, idx, render)); });
 
-    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = 'add item +';
+    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add item';
     add.style.marginTop = state.nfts.length ? '14px' : '4px';
     add.addEventListener('click', function (e) {
       e.preventDefault();
@@ -1903,14 +1938,14 @@ function itemSummary(state, nft) {
   if (nft.splitOn) parts.push('split sales');
   if (nft.discountOn && Number(nft.discountPct) > 0) parts.push(round2(Number(nft.discountPct)) + '% off');
   if (nft.reserveOn) parts.push('reserved');
-  return parts.join(' · ');
+  return parts.join(' | ');
 }
 
 // Inline media picker — pins the chosen file immediately (any type) and stores imageUri + mediaType.
 function itemMediaPicker(state, nft, render) {
   var w = el('div', 'operator-edit-logo');
   if (nft.imageUri && (nft.mediaType || '').indexOf('image') === 0) { var prev = el('img', 'operator-edit-logo-prev'); prev.src = ipfsHttp(nft.imageUri); w.appendChild(prev); }
-  else if (nft.imageUri) { var hint = el('span', 'operator-edit-hint'); hint.textContent = (nft.mediaType || 'file') + ' · pinned'; w.appendChild(hint); }
+  else if (nft.imageUri) { var hint = el('span', 'operator-edit-hint'); hint.textContent = (nft.mediaType || 'file') + ' | pinned'; w.appendChild(hint); }
   var file = el('input', 'operator-edit-logo-file'); file.type = 'file';
   file.accept = 'image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown';
   file.addEventListener('change', function () {
@@ -1953,7 +1988,7 @@ function itemEditor(state, nft, idx, render) {
     if (nft.splitOn) {
       var sc = el('div', 'create-subcard');
       nft.splitRecipients.forEach(function (rec, i) { sc.appendChild(itemSplitRow(nft, rec, i, render)); });
-      var addS = el('a', 'operator-cta create-add-link'); addS.href = '#'; addS.textContent = 'add recipient +'; addS.style.marginTop = '12px';
+      var addS = el('a', 'operator-cta create-add-link'); addS.href = '#'; addS.textContent = '+ Add recipient'; addS.style.marginTop = '12px';
       addS.addEventListener('click', function (e) { e.preventDefault(); nft.splitRecipients.push({ pct: '', recip: '', benef: '' }); render(); });
       sc.appendChild(addS);
       c.appendChild(sc);
@@ -2182,7 +2217,7 @@ function renderDeploy(state, render) {
   // The exact transaction for each chain is shown in a confirmation screen (with a copy-able LLM audit
   // prompt) right before you sign it — no need to re-review raw calldata here.
   if (state.chainIds.length > 1) {
-    wrap.appendChild(pinkNote('Your wallet will prompt you ' + state.chainIds.length + ' times — one signature per chain (' + state.chainIds.length + ' chains). After signing all ' + state.chainIds.length + ', you pay gas once and Relayr deploys to every chain.'));
+    wrap.appendChild(pinkNote('Your wallet will switch networks and prompt for a signature once per chain (' + state.chainIds.length + ' chains) — each request is bound to its own chain, so the wallet must be on that network to sign it. After signing all ' + state.chainIds.length + ', you pay gas once and Relayr deploys to every chain.'));
     wrap.appendChild(infoNote('Each chain’s exact transaction is shown for review before you sign it.'));
   } else {
     wrap.appendChild(infoNote('The exact transaction data is shown for review before you sign it.'));
@@ -2227,6 +2262,25 @@ function renderDeploy(state, render) {
     if (state.deploying && !last.err && !state.quoteChoice) statusRow.appendChild(el('span', 'create-spinner'));
     var stx = el('span'); stx.textContent = last.text; statusRow.appendChild(stx);
     wrap.appendChild(statusRow);
+  }
+
+  // Multichain deploy: a friendly per-chain checklist (chain name + Deploying…/Deployed/Failed).
+  if (state.deployProgress && state.deployProgress.length) {
+    var prog = el('div', 'create-deploy-progress');
+    state.deployProgress.forEach(function (p) {
+      var row = el('div', 'create-deploy-row');
+      if (p.status.kind === 'pending') {
+        row.appendChild(el('span', 'create-spinner'));
+      } else {
+        var ic = el('span', 'create-deploy-ic create-deploy-' + p.status.kind);
+        ic.textContent = p.status.kind === 'ok' ? '✓' : '✕';
+        row.appendChild(ic);
+      }
+      var nm = el('span', 'create-deploy-name'); nm.textContent = chainName(p.chainId); row.appendChild(nm);
+      var st = el('span', 'create-deploy-state create-deploy-' + p.status.kind); st.textContent = p.status.label; row.appendChild(st);
+      prog.appendChild(row);
+    });
+    wrap.appendChild(prog);
   }
 
   // Relayr quote returned (multichain) → let the user pick which chain to pay gas on, then pay. Shown in
@@ -2567,9 +2621,19 @@ function friendlyDeployError(err) {
   return raw;
 }
 
+// Friendly label + icon kind for a relayr per-chain execution state (raw states: Quoted, PaymentReceived,
+// Mempool, Pending, Submitted, Success/Completed, Failed).
+function relayrChainStatus(t) {
+  var s = (t && t.status && t.status.state) || '';
+  if (s === 'Success' || s === 'Completed') return { label: 'Deployed', kind: 'ok' };
+  if (s === 'Failed') return { label: 'Failed', kind: 'err' };
+  return { label: 'Deploying…', kind: 'pending' };
+}
+
 function deploy(state, render) {
   state.statusLines = [];
   state.done = false;
+  state._render = render; // so async deploy progress (relayr poll) can re-render outside the push() log
   // A connected wallet is always required — it signs/sends (and pays once, for multichain via Relayr).
   var signer = getAccount && getAccount();
   if (!signer) {
@@ -2726,10 +2790,17 @@ async function runDeploy(state, owner) {
   if (cur !== pay.chain) { push('Switching wallet to ' + chainName(pay.chain) + '…'); await switchChain(pay.chain); }
   push('Pay once on ' + chainName(pay.chain) + ' (~' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains — confirm in wallet…');
   var payHash = await relayrPay(pay);
-  push('Payment sent · ' + truncAddr(payHash) + ' — relayers launching on each chain…');
+  push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');
+  // Relayr's per-tx records don't carry a chain field, but they come back in submission order — map by
+  // index to the chains we deployed, and render a friendly per-chain checklist (see renderDeploy).
+  state.deployChains = plans.map(function (p) { return p.chainId; });
   await relayrPoll(quote.bundle_uuid, function (txList) {
-    push((txList || []).map(function (t) { return chainName(t.chain) + ': ' + (t.status && t.status.state || '…'); }).join(' · '));
+    state.deployProgress = (txList || []).map(function (t, i) {
+      return { chainId: state.deployChains[i], status: relayrChainStatus(t) };
+    });
+    if (state._render) state._render();
   });
+  state.deployProgress = null;
   push('Reading the new project…');
   await captureDeployed(state, plans[0].chainId, null);
 }
@@ -2983,6 +3054,19 @@ function buildRevStage(state, stage, idx, chainId, start) {
 // Assemble a single ruleset state object (createDefaultRuleset shape) from the wizard steps.
 // Build one JBRulesetConfig from a stage. isFirst => stage 1 (honors scheduled launch); later stages
 // queue with mustStartAtOrAfter 0 so the controller chains them after the previous stage's duration.
+// Encode a queue's rulesets for one chain — the same stage→JBRulesetConfig[] mapping the launcher uses
+// (resolveStages applies the "Afterwards" choice; assembleRuleset encodes each), minus the NFT/terminal
+// scaffolding. `immediateStart` aligns the first ruleset across chains for an omnichain queue (0 = next
+// cycle on a single chain). Returns the JBRulesetConfig[] for JBController/JBOmnichainDeployer.queueRulesetsOf.
+export function buildQueueRulesetConfigs(state, chainId, immediateStart) {
+  var effectiveStages = resolveStages(state);
+  var deadlineOn = deadlineApplies(state);
+  return buildRulesetConfigs(effectiveStages.map(function (s, i) {
+    var userIdx = Math.min(i, state.stages.length - 1);
+    return assembleRuleset(state, s, userIdx, chainId, i === 0, deadlineOn, immediateStart || 0);
+  }));
+}
+
 function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn, immediateStart) {
   // Per-chain overrides (amount + beneficiary), keyed by user-stage + recipient index; fall back to defaults.
   var amtAt = function (x, idx) { return chainPayoutAmount(state, chainId, userStageIdx, idx); };
@@ -3052,7 +3136,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     var rshares = fillSplits(rrows.map(function (e) { return Math.round((Number(e.x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL); }));
     rs.splitGroups.push({
       groupId: '1',
-      splits: rrows.map(function (e, k) { return splitState(e.x, rshares[k], reservedBenef(e.x, e.origIdx)); }),
+      splits: rrows.map(function (e, k) { return splitState(e.x, rshares[k], reservedBenef(e.x, e.origIdx), chainId); }),
     });
   }
 
@@ -3097,7 +3181,17 @@ function fillSplits(rawShares) {
   return rawShares;
 }
 
-function splitState(rec, rawPercent, beneficiaryOverride) {
+function splitState(rec, rawPercent, beneficiaryOverride, chainId) {
+  // "Buyback liquidity" reserved split → routes to the shared BannyLPSplitHook (same address on every
+  // chain). The hook keys off the distributing project, so projectId/beneficiary are pass-through.
+  if (rec.type === 'lphook' && chainId != null) {
+    var hookAddr = getAddress('BannyLPSplitHook', chainId);
+    if (hookAddr) {
+      var b = getAccount && getAccount();
+      return { preferAddToBalance: false, percent: rawPercent, projectId: 0,
+        beneficiary: (b && /^0x[0-9a-fA-F]{40}$/.test(b)) ? b : ZERO, lockedUntil: 0, hook: hookAddr };
+    }
+  }
   var addr = (beneficiaryOverride != null) ? beneficiaryOverride : pickResolved(rec.address, rec); // resolve ENS → 0x
   return {
     preferAddToBalance: false,
@@ -3218,7 +3312,7 @@ function secondsLabel(s) {
   return s + 's';
 }
 var DURATION_UNIT_SECONDS = { hours: 3600, days: 86400, weeks: 604800, years: 31536000 };
-var FOREVER_SECONDS = 4294967295; // uint32 max (~136 years) — the "Forever" option's max duration
+export var FOREVER_SECONDS = 4294967295; // uint32 max (~136 years) — the "Forever" option's max duration
 function recomputeCustomDuration(stage) {
   var v = parseFloat(stage.customDurVal);
   stage.durationSeconds = (v > 0) ? Math.round(v * (DURATION_UNIT_SECONDS[stage.customDurUnit] || 86400)) : 0;
@@ -3239,6 +3333,14 @@ function resolveEns(name) {
   if (_ensCache[name] !== undefined) return Promise.resolve(_ensCache[name]);
   var norm; try { norm = ensNormalize(name); } catch (_) { return Promise.resolve(null); }
   return ensClient().getEnsAddress({ name: norm }).then(function (addr) { _ensCache[name] = addr || null; return addr || null; })
+    .catch(function () { return null; });
+}
+// Reverse ENS: a 0x address → its primary ENS name (or null). Cached.
+var _ensRevCache = {};
+function reverseEns(address) {
+  var a = (address || '').toLowerCase();
+  if (_ensRevCache[a] !== undefined) return Promise.resolve(_ensRevCache[a]);
+  return ensClient().getEnsName({ address: address }).then(function (name) { _ensRevCache[a] = name || null; return name || null; })
     .catch(function () { return null; });
 }
 // The usable 0x address for a recipient: the resolved ENS address if it still matches the typed name, else
@@ -3264,9 +3366,17 @@ function attachEns(input, store) {
     var v = (input.value || '').trim();
     if (!isEnsName(v)) {
       store(v, null);
-      // Flag a malformed 0x address right under the field (valid 0x = 40 hex chars). Empty / clearly-not-an-
-      // address (e.g. a half-typed ENS name without a dot) stays silent so we don't nag mid-typing.
-      if (/^0x/i.test(v) && !/^0x[0-9a-fA-F]{40}$/.test(v)) {
+      if (/^0x[0-9a-fA-F]{40}$/.test(v)) {
+        // Valid address → reverse-resolve and show its ENS name underneath (only if one exists).
+        hint.style.display = ''; hint.className = 'create-resolve-hint'; hint.textContent = 'Looking up ENS…';
+        var myR = ++token;
+        reverseEns(v).then(function (name) {
+          if (myR !== token) return;
+          if (name) { hint.style.display = ''; hint.className = 'create-resolve-hint ok'; hint.textContent = name; }
+          else hint.style.display = 'none';
+        });
+      } else if (/^0x/i.test(v)) {
+        // Malformed 0x (valid = 40 hex chars). Half-typed ENS without a dot stays silent (no mid-typing nag).
         hint.style.display = ''; hint.className = 'create-resolve-hint warn';
         hint.textContent = 'Not a valid address — needs 0x followed by 40 hex characters.';
       } else { hint.style.display = 'none'; }

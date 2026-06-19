@@ -10,10 +10,33 @@ let publicClient = null;
 let account = null;
 const listeners = [];
 const WALLET_FLAG = 'jb-wallet-connected'; // remember a prior connection so we can silently restore it
+const WALLET_RDNS = 'jb-wallet-rdns';      // which wallet (EIP-6963 rdns) to restore on refresh
+
+// EIP-6963 multi-wallet discovery: wallets announce themselves so the user can pick which to connect.
+// `activeProvider` is the one we actually talk to (defaults to the legacy injected `window.ethereum`).
+const _providers = []; // [{ info: { uuid, name, icon, rdns }, provider }]
+let activeProvider = (typeof window !== 'undefined' && window.ethereum) || null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('eip6963:announceProvider', function (e) {
+    var d = e && e.detail;
+    if (!d || !d.info || !d.provider) return;
+    if (!_providers.some(function (x) { return x.info.uuid === d.info.uuid; })) _providers.push(d);
+  });
+  try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+}
+
+// All detected wallets (EIP-6963), or a single generic entry for a legacy-only injected provider.
+export function getProviders() {
+  if (_providers.length) return _providers.slice();
+  if (typeof window !== 'undefined' && window.ethereum) {
+    return [{ info: { uuid: 'injected', name: 'Browser wallet', rdns: 'injected', icon: '' }, provider: window.ethereum }];
+  }
+  return [];
+}
 
 function setupClients(chain) {
-  walletClient = createWalletClient({ chain, transport: custom(window.ethereum) });
-  publicClient = createPublicClient({ chain, transport: custom(window.ethereum) });
+  walletClient = createWalletClient({ chain, transport: custom(activeProvider) });
+  publicClient = createPublicClient({ chain, transport: custom(activeProvider) });
 }
 
 export function getAccount() {
@@ -53,38 +76,72 @@ function notify() {
   listeners.forEach(fn => fn({ account, connected: !!account }));
 }
 
-export async function connect() {
-  if (!window.ethereum) {
+export async function connect(chosen) {
+  // `chosen` is an entry from getProviders() ({ info, provider }); when the user picks from the wallet
+  // list we switch to that provider. Otherwise we use the current/active (legacy injected) provider.
+  if (chosen && chosen.provider) {
+    activeProvider = chosen.provider;
+    bindEvents(activeProvider);
+    try { localStorage.setItem(WALLET_RDNS, (chosen.info && chosen.info.rdns) || ''); } catch (_) {}
+  }
+  if (!activeProvider) {
     throw new Error('No wallet detected. Install MetaMask or another browser wallet.');
   }
 
   const chain = CHAINS[getCurrentChainId()] || CHAINS[11155111];
-
   setupClients(chain);
 
-  const [addr] = await walletClient.requestAddresses();
-  account = addr;
+  // Re-request the `eth_accounts` permission so the wallet shows its account picker rather than silently
+  // reusing the last grant. Only abort on an explicit user rejection (4001); other errors mean the wallet
+  // doesn't implement it → fall through to eth_requestAccounts.
+  try {
+    await activeProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });
+  } catch (e) {
+    if (e && e.code === 4001) throw e;
+  }
+
+  const accounts = await activeProvider.request({ method: 'eth_requestAccounts' });
+  account = (accounts && accounts[0]) || null;
+  bindEvents(activeProvider);
   try { localStorage.setItem(WALLET_FLAG, '1'); } catch (_) {}
   notify();
 }
 
 export async function disconnect() {
+  // Revoke the dapp's account permission so the NEXT connect re-prompts the wallet's account picker
+  // instead of silently re-granting the same account. Newer wallets support wallet_revokePermissions;
+  // older ones don't — ignore failures.
+  try {
+    if (activeProvider) await activeProvider.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] });
+  } catch (_) {}
   walletClient = null;
   publicClient = null;
   account = null;
-  try { localStorage.removeItem(WALLET_FLAG); } catch (_) {}
+  try { localStorage.removeItem(WALLET_FLAG); localStorage.removeItem(WALLET_RDNS); } catch (_) {}
   notify();
 }
 
 // Silently restore a prior connection on page load — `eth_accounts` returns already-authorized
 // accounts without prompting, so the user stays "connected" across refreshes.
 export async function eagerConnect() {
-  if (!window.ethereum) return;
   var wasConnected = false;
   try { wasConnected = localStorage.getItem(WALLET_FLAG) === '1'; } catch (_) {}
   if (!wasConnected) return;
+  // Restore the previously-chosen wallet (by EIP-6963 rdns) if it's still present; else fall back to the
+  // legacy injected provider. Discovery announcements may land a tick after load, so retry briefly.
+  var rdns = ''; try { rdns = localStorage.getItem(WALLET_RDNS) || ''; } catch (_) {}
+  function pickByRdns() {
+    if (rdns && rdns !== 'injected') {
+      var m = _providers.filter(function (x) { return x.info.rdns === rdns; })[0];
+      if (m) activeProvider = m.provider;
+    }
+  }
+  pickByRdns();
+  if (!activeProvider) { try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {} }
+  if (!activeProvider) return;
+  bindEvents(activeProvider);
   try {
-    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+    const accounts = await activeProvider.request({ method: 'eth_accounts' });
     if (accounts && accounts.length) {
       const chain = CHAINS[getCurrentChainId()] || CHAINS[11155111];
       setupClients(chain);
@@ -97,19 +154,19 @@ export async function eagerConnect() {
 }
 
 export async function switchChain(chainId) {
-  if (!window.ethereum) return;
+  if (!activeProvider) return;
   const chain = CHAINS[chainId];
   if (!chain) return;
 
   try {
-    await window.ethereum.request({
+    await activeProvider.request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: '0x' + chainId.toString(16) }],
     });
   } catch (err) {
     // Chain not added to wallet — try adding it
     if (err.code === 4902 && chain) {
-      await window.ethereum.request({
+      await activeProvider.request({
         method: 'wallet_addEthereumChain',
         params: [{
           chainId: '0x' + chainId.toString(16),
@@ -124,31 +181,36 @@ export async function switchChain(chainId) {
     }
   }
 
-  // Recreate clients for new chain
-  walletClient = createWalletClient({
-    chain,
-    transport: custom(window.ethereum),
-  });
-  publicClient = createPublicClient({
-    chain,
-    transport: custom(window.ethereum),
-  });
+  setupClients(chain); // recreate clients for the new chain on the active provider
 }
 
-// Listen for account/chain changes from wallet
-if (typeof window !== 'undefined' && window.ethereum) {
-  window.ethereum.on('accountsChanged', (accounts) => {
-    account = accounts[0] || null;
-    if (account) {
-      setupClients(CHAINS[getCurrentChainId()] || CHAINS[11155111]);
-      try { localStorage.setItem(WALLET_FLAG, '1'); } catch (_) {}
-    } else {
-      walletClient = null; publicClient = null;
-      try { localStorage.removeItem(WALLET_FLAG); } catch (_) {}
-    }
-    notify();
-  });
-  window.ethereum.on('chainChanged', () => {
-    if (account) connect();
-  });
+// Wallet event handlers, (re)bound to whichever provider is active so switching wallets keeps them live.
+let _boundProvider = null;
+function onAccountsChanged(accounts) {
+  account = (accounts && accounts[0]) || null;
+  if (account) {
+    setupClients(CHAINS[getCurrentChainId()] || CHAINS[11155111]);
+    try { localStorage.setItem(WALLET_FLAG, '1'); } catch (_) {}
+  } else {
+    walletClient = null; publicClient = null;
+    try { localStorage.removeItem(WALLET_FLAG); } catch (_) {}
+  }
+  notify();
 }
+function onChainChanged() {
+  // Re-create clients silently for the app's selected chain — never re-prompt on a wallet chain switch.
+  if (account) setupClients(CHAINS[getCurrentChainId()] || CHAINS[11155111]);
+}
+function bindEvents(p) {
+  if (_boundProvider && _boundProvider.removeListener) {
+    try {
+      _boundProvider.removeListener('accountsChanged', onAccountsChanged);
+      _boundProvider.removeListener('chainChanged', onChainChanged);
+    } catch (_) {}
+  }
+  if (p && p.on) {
+    try { p.on('accountsChanged', onAccountsChanged); p.on('chainChanged', onChainChanged); } catch (_) {}
+  }
+  _boundProvider = p;
+}
+if (typeof window !== 'undefined' && activeProvider) bindEvents(activeProvider);

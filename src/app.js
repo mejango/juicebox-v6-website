@@ -6,7 +6,7 @@ import { registry, contracts, meta, natspec, categories, commonActions, getFunct
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
-import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr } from './component-base.js';
+import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute } from './discover.js';
 import { renderDataTab } from './data-tab.js';
@@ -123,8 +123,30 @@ function initTabs() {
       document.body.appendChild(walletMenu);
       setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
     }
+    // When not connected, show a list of detected wallets (EIP-6963). One wallet → connect directly.
+    function openWalletPicker() {
+      closeWalletMenu();
+      var providers = getProviders();
+      if (providers.length <= 1) { connect(providers[0]).catch(function () {}); return; }
+      walletMenu = document.createElement('div');
+      walletMenu.className = 'wallet-menu';
+      var r = connectBtn.getBoundingClientRect();
+      walletMenu.style.top = (r.bottom + 6) + 'px';
+      walletMenu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+      providers.forEach(function (p) {
+        var item = document.createElement('button'); item.className = 'wallet-menu-item wallet-pick';
+        if (p.info && p.info.icon) {
+          var img = document.createElement('img'); img.className = 'wallet-pick-icon'; img.src = p.info.icon; img.alt = ''; item.appendChild(img);
+        }
+        var nm = document.createElement('span'); nm.textContent = (p.info && p.info.name) || 'Wallet'; item.appendChild(nm);
+        item.addEventListener('click', function () { closeWalletMenu(); connect(p).catch(function () {}); });
+        walletMenu.appendChild(item);
+      });
+      document.body.appendChild(walletMenu);
+      setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
+    }
     connectBtn.addEventListener('click', function () {
-      if (!getAccount()) { connect().catch(function () {}); return; }
+      if (!getAccount()) { if (walletMenu) closeWalletMenu(); else openWalletPicker(); return; }
       if (walletMenu) closeWalletMenu(); else openWalletMenu();
     });
   }

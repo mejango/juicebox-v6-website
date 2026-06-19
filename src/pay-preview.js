@@ -53,7 +53,7 @@ export function renderAmmSub(amm) {
   var bits = ['via Uniswap pool ' + shortHex(amm.poolId)];
   if (amm.minOut) bits.push('~' + formatTokenCount(amm.minOut) + ' out (min)');
   bits.push(amm.hasUserSpecifiedQuote ? 'client quote' : 'TWAP quote');
-  div.textContent = bits.join(' · ');
+  div.textContent = bits.join(' | ');
   return div;
 }
 
