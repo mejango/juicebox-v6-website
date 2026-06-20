@@ -1,10 +1,10 @@
 // src/ipfs-pin.js
 // IPFS pinning for the project-create flow, via Pinata.
 //
-// A default JWT is baked in at build time from `.env` (injected as `__PINATA_JWT__` by esbuild) so the
-// site can pin without the user supplying one. A user's own JWT in localStorage ('jb-pinata-jwt') still
-// takes precedence. NOTE: the published bundle is public, so the baked-in JWT is publicly extractable —
-// use a scoped, rotatable Pinata key.
+// A SCOPED, PUBLIC Pinata key is baked in at build time (from `PINATA_PUBLIC_JWT` via esbuild's
+// `__PINATA_JWT__` define) so the Create flow pins on users' behalf without per-user setup. It is public/
+// extractable by design — must be scoped to pinFileToIPFS + pinJSONToIPFS and rate-limited. A user's own JWT
+// in localStorage ('jb-pinata-jwt', set via the create-flow inline field) still takes precedence if present.
 //
 // Endpoints (classic Pinata API, scoped-key friendly):
 //   POST https://api.pinata.cloud/pinning/pinFileToIPFS   (multipart, for logo / NFT images)
@@ -18,7 +18,7 @@ var JWT_KEY = 'jb-pinata-jwt';
 // 403 NO_SCOPES_FOUND for these keys). Multipart `file` + `network: public`; response is { data: { cid } }.
 var UPLOAD_URL = 'https://uploads.pinata.cloud/v3/files';
 
-// Build-time default (injected from .env via esbuild `define`). The user's own JWT takes precedence.
+// No baked-in JWT in the public bundle (see header). Defined empty by esbuild; kept guarded for safety.
 var BUILTIN_JWT = (typeof __PINATA_JWT__ === 'string' && __PINATA_JWT__) ? __PINATA_JWT__ : '';
 
 export function getPinataJwt() {

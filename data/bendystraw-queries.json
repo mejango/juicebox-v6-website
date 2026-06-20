@@ -1,8 +1,34 @@
 {
   "_schema": {
-    "variable_types": ["int", "bigint", "chain", "chain_multi", "address", "string", "enum"],
-    "format_types": ["text", "number", "address", "txHash", "timestamp", "amount", "volumeUsd", "bigint", "bool", "chainName", "uri", "json", "svg", "permissionList"],
-    "kind": ["single", "list"]
+    "variable_types": [
+      "int",
+      "bigint",
+      "chain",
+      "chain_multi",
+      "address",
+      "string",
+      "enum"
+    ],
+    "format_types": [
+      "text",
+      "number",
+      "address",
+      "txHash",
+      "timestamp",
+      "amount",
+      "volumeUsd",
+      "bigint",
+      "bool",
+      "chainName",
+      "uri",
+      "json",
+      "svg",
+      "permissionList"
+    ],
+    "kind": [
+      "single",
+      "list"
+    ]
   },
   "sections": [
     {
@@ -14,25 +40,85 @@
           "hint": "Single project by projectId + chain.",
           "kind": "single",
           "path": "project",
-          "query": "query($projectId: Float!, $chainId: Float!) { project(projectId: $projectId, chainId: $chainId) { projectId chainId version name handle owner balance volume volumeUsd tokenSupply paymentsCount contributorsCount suckerGroupId createdAt } }",
+          "query": "query($projectId: Float!, $chainId: Float!) { project(version: 6, projectId: $projectId, chainId: $chainId) { projectId chainId version name handle owner balance volume volumeUsd tokenSupply paymentsCount contributorsCount suckerGroupId createdAt } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            }
           ],
           "columns": [
-            { "key": "projectId", "label": "ID", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "version", "label": "v", "format": "number" },
-            { "key": "name", "label": "Name", "format": "text" },
-            { "key": "handle", "label": "Handle", "format": "text" },
-            { "key": "owner", "label": "Owner", "format": "address" },
-            { "key": "balance", "label": "Balance", "format": "amount" },
-            { "key": "volumeUsd", "label": "Vol USD", "format": "volumeUsd" },
-            { "key": "tokenSupply", "label": "Supply", "format": "bigint" },
-            { "key": "paymentsCount", "label": "Pays", "format": "number" },
-            { "key": "contributorsCount", "label": "Contribs", "format": "number" },
-            { "key": "suckerGroupId", "label": "Sucker grp", "format": "text" },
-            { "key": "createdAt", "label": "Created", "format": "timestamp" }
+            {
+              "key": "projectId",
+              "label": "ID",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "version",
+              "label": "v",
+              "format": "number"
+            },
+            {
+              "key": "name",
+              "label": "Name",
+              "format": "text"
+            },
+            {
+              "key": "handle",
+              "label": "Handle",
+              "format": "text"
+            },
+            {
+              "key": "owner",
+              "label": "Owner",
+              "format": "address"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "amount"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "Vol USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "tokenSupply",
+              "label": "Supply",
+              "format": "bigint"
+            },
+            {
+              "key": "paymentsCount",
+              "label": "Pays",
+              "format": "number"
+            },
+            {
+              "key": "contributorsCount",
+              "label": "Contribs",
+              "format": "number"
+            },
+            {
+              "key": "suckerGroupId",
+              "label": "Sucker grp",
+              "format": "text"
+            },
+            {
+              "key": "createdAt",
+              "label": "Created",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -43,22 +129,80 @@
           "path": "projects",
           "query": "query($chainIds: [Int!], $version: Int, $limit: Int!, $offset: Int!) { projects(where: { chainId_in: $chainIds, version: $version }, orderBy: \"volumeUsd\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId version name handle owner volumeUsd balance paymentsCount contributorsCount } totalCount } }",
           "variables": [
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "version", "type": "int", "default": "6", "hidden": true },
-            { "name": "limit", "type": "int", "default": "20" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "version",
+              "type": "int",
+              "default": "6",
+              "hidden": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "20"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "projectId", "label": "ID", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "version", "label": "v", "format": "number" },
-            { "key": "name", "label": "Name", "format": "text" },
-            { "key": "handle", "label": "Handle", "format": "text" },
-            { "key": "owner", "label": "Owner", "format": "address" },
-            { "key": "volumeUsd", "label": "Vol USD", "format": "volumeUsd" },
-            { "key": "balance", "label": "Balance", "format": "amount" },
-            { "key": "paymentsCount", "label": "Pays", "format": "number" },
-            { "key": "contributorsCount", "label": "Contribs", "format": "number" }
+            {
+              "key": "projectId",
+              "label": "ID",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "version",
+              "label": "v",
+              "format": "number"
+            },
+            {
+              "key": "name",
+              "label": "Name",
+              "format": "text"
+            },
+            {
+              "key": "handle",
+              "label": "Handle",
+              "format": "text"
+            },
+            {
+              "key": "owner",
+              "label": "Owner",
+              "format": "address"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "Vol USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "amount"
+            },
+            {
+              "key": "paymentsCount",
+              "label": "Pays",
+              "format": "number"
+            },
+            {
+              "key": "contributorsCount",
+              "label": "Contribs",
+              "format": "number"
+            }
           ]
         },
         {
@@ -69,19 +213,65 @@
           "path": "projects",
           "query": "query($chainIds: [Int!], $version: Int, $limit: Int!, $offset: Int!) { projects(where: { chainId_in: $chainIds, version: $version }, orderBy: \"trendingScore\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId version name handle trendingScore trendingVolume trendingPaymentsCount } totalCount } }",
           "variables": [
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "version", "type": "int", "default": "6", "hidden": true },
-            { "name": "limit", "type": "int", "default": "20" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "version",
+              "type": "int",
+              "default": "6",
+              "hidden": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "20"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "projectId", "label": "ID", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "name", "label": "Name", "format": "text" },
-            { "key": "handle", "label": "Handle", "format": "text" },
-            { "key": "trendingScore", "label": "Score", "format": "number" },
-            { "key": "trendingVolume", "label": "7d Vol", "format": "amount" },
-            { "key": "trendingPaymentsCount", "label": "7d Pays", "format": "number" }
+            {
+              "key": "projectId",
+              "label": "ID",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "name",
+              "label": "Name",
+              "format": "text"
+            },
+            {
+              "key": "handle",
+              "label": "Handle",
+              "format": "text"
+            },
+            {
+              "key": "trendingScore",
+              "label": "Score",
+              "format": "number"
+            },
+            {
+              "key": "trendingVolume",
+              "label": "7d Vol",
+              "format": "amount"
+            },
+            {
+              "key": "trendingPaymentsCount",
+              "label": "7d Pays",
+              "format": "number"
+            }
           ]
         },
         {
@@ -90,21 +280,65 @@
           "hint": "All projects owned by a given address.",
           "kind": "list",
           "path": "projects",
-          "query": "query($owner: String!, $limit: Int!, $offset: Int!) { projects(where: { owner: $owner }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId version name handle volumeUsd balance createdAt } totalCount } }",
+          "query": "query($owner: String!, $limit: Int!, $offset: Int!) { projects(where: { version: 6, owner: $owner }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId version name handle volumeUsd balance createdAt } totalCount } }",
           "variables": [
-            { "name": "owner", "type": "address" },
-            { "name": "limit", "type": "int", "default": "20" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "20"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "projectId", "label": "ID", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "version", "label": "v", "format": "number" },
-            { "key": "name", "label": "Name", "format": "text" },
-            { "key": "handle", "label": "Handle", "format": "text" },
-            { "key": "volumeUsd", "label": "Vol USD", "format": "volumeUsd" },
-            { "key": "balance", "label": "Balance", "format": "amount" },
-            { "key": "createdAt", "label": "Created", "format": "timestamp" }
+            {
+              "key": "projectId",
+              "label": "ID",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "version",
+              "label": "v",
+              "format": "number"
+            },
+            {
+              "key": "name",
+              "label": "Name",
+              "format": "text"
+            },
+            {
+              "key": "handle",
+              "label": "Handle",
+              "format": "text"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "Vol USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "amount"
+            },
+            {
+              "key": "createdAt",
+              "label": "Created",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -113,23 +347,65 @@
           "hint": "Point-in-time snapshots of project volume + balance across the sucker group.",
           "kind": "list",
           "path": "projectMoments",
-          "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { projectMoments(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId block timestamp volume volumeUsd balance trendingScore } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { projectMoments(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId block timestamp volume volumeUsd balance trendingScore } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "30" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "30"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0"
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "block", "label": "Block", "format": "number" },
-            { "key": "volume", "label": "Volume", "format": "amount" },
-            { "key": "volumeUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "balance", "label": "Balance", "format": "amount" },
-            { "key": "trendingScore", "label": "Score", "format": "bigint" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "block",
+              "label": "Block",
+              "format": "number"
+            },
+            {
+              "key": "volume",
+              "label": "Volume",
+              "format": "amount"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "amount"
+            },
+            {
+              "key": "trendingScore",
+              "label": "Score",
+              "format": "bigint"
+            }
           ]
         },
         {
@@ -139,20 +415,61 @@
           "kind": "list",
           "path": "cashOutTaxSnapshots",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { cashOutTaxSnapshots(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"start\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId start duration rulesetId cashOutTax } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { cashOutTaxSnapshots(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"start\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId start duration rulesetId cashOutTax } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "20" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "20"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "start", "label": "Start", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "duration", "label": "Duration (s)", "format": "bigint" },
-            { "key": "rulesetId", "label": "Ruleset", "format": "bigint" },
-            { "key": "cashOutTax", "label": "Tax bps", "format": "number" }
+            {
+              "key": "start",
+              "label": "Start",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "duration",
+              "label": "Duration (s)",
+              "format": "bigint"
+            },
+            {
+              "key": "rulesetId",
+              "label": "Ruleset",
+              "format": "bigint"
+            },
+            {
+              "key": "cashOutTax",
+              "label": "Tax bps",
+              "format": "number"
+            }
           ]
         }
       ]
@@ -167,20 +484,60 @@
           "kind": "single",
           "path": "suckerGroup",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!) { suckerGroup(id: $suckerGroupId) { id volume volumeUsd balance tokenSupply paymentsCount contributorsCount projects_rel { projectId chainId name balance volume } } }",
+          "query": "query($suckerGroupId: String!) { suckerGroup(id: $suckerGroupId) { id volume volumeUsd balance tokenSupply paymentsCount contributorsCount projects { items { projectId chainId name balance volume } } } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            }
           ],
           "columns": [
-            { "key": "id", "label": "Group ID", "format": "text" },
-            { "key": "volume", "label": "Volume", "format": "amount" },
-            { "key": "volumeUsd", "label": "Vol USD", "format": "volumeUsd" },
-            { "key": "balance", "label": "Balance", "format": "amount" },
-            { "key": "tokenSupply", "label": "Supply", "format": "bigint" },
-            { "key": "paymentsCount", "label": "Pays", "format": "number" },
-            { "key": "contributorsCount", "label": "Contribs", "format": "number" },
-            { "key": "projects_rel", "label": "Members", "format": "json" }
+            {
+              "key": "id",
+              "label": "Group ID",
+              "format": "text"
+            },
+            {
+              "key": "volume",
+              "label": "Volume",
+              "format": "amount"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "Vol USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "amount"
+            },
+            {
+              "key": "tokenSupply",
+              "label": "Supply",
+              "format": "bigint"
+            },
+            {
+              "key": "paymentsCount",
+              "label": "Pays",
+              "format": "number"
+            },
+            {
+              "key": "contributorsCount",
+              "label": "Contribs",
+              "format": "number"
+            },
+            {
+              "key": "projects_rel",
+              "label": "Members",
+              "format": "json"
+            }
           ]
         },
         {
@@ -190,20 +547,56 @@
           "kind": "list",
           "path": "suckerGroupMoments",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $limit: Int!, $offset: Int!) { suckerGroupMoments(where: { suckerGroupId: $suckerGroupId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { block timestamp volume volumeUsd balance tokenSupply } totalCount } }",
+          "query": "query($suckerGroupId: String!, $limit: Int!, $offset: Int!) { suckerGroupMoments(where: { version: 6, suckerGroupId: $suckerGroupId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp volume volumeUsd balance tokenSupply } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "30" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "30"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "block", "label": "Block", "format": "number" },
-            { "key": "volume", "label": "Volume", "format": "amount" },
-            { "key": "volumeUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "balance", "label": "Balance", "format": "amount" },
-            { "key": "tokenSupply", "label": "Supply", "format": "bigint" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "volume",
+              "label": "Volume",
+              "format": "amount"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "amount"
+            },
+            {
+              "key": "tokenSupply",
+              "label": "Supply",
+              "format": "bigint"
+            }
           ]
         },
         {
@@ -213,22 +606,71 @@
           "kind": "list",
           "path": "suckerTransactions",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $limit: Int!, $offset: Int!) { suckerTransactions(where: { suckerGroupId: $suckerGroupId }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { index chainId peerChainId beneficiary projectTokenCount terminalTokenAmount status createdAt } totalCount } }",
+          "query": "query($suckerGroupId: String!, $limit: Int!, $offset: Int!) { suckerTransactions(where: { version: 6, suckerGroupId: $suckerGroupId }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { index chainId peerChainId beneficiary projectTokenCount terminalTokenAmount status createdAt } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "20" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "20"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "createdAt", "label": "When", "format": "timestamp" },
-            { "key": "index", "label": "Idx", "format": "number" },
-            { "key": "chainId", "label": "From", "format": "chainName" },
-            { "key": "peerChainId", "label": "To", "format": "chainName" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "projectTokenCount", "label": "Tokens", "format": "bigint" },
-            { "key": "terminalTokenAmount", "label": "Terminal amt", "format": "bigint" },
-            { "key": "status", "label": "Status", "format": "text" }
+            {
+              "key": "createdAt",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "index",
+              "label": "Idx",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "From",
+              "format": "chainName"
+            },
+            {
+              "key": "peerChainId",
+              "label": "To",
+              "format": "chainName"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "projectTokenCount",
+              "label": "Tokens",
+              "format": "bigint"
+            },
+            {
+              "key": "terminalTokenAmount",
+              "label": "Terminal amt",
+              "format": "bigint"
+            },
+            {
+              "key": "status",
+              "label": "Status",
+              "format": "text"
+            }
           ]
         },
         {
@@ -237,19 +679,56 @@
           "hint": "Bridges that haven't completed yet.",
           "kind": "list",
           "path": "suckerTransactions",
-          "query": "query($limit: Int!, $offset: Int!) { suckerTransactions(where: { status: \"pending\" }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { index chainId peerChainId beneficiary projectTokenCount terminalTokenAmount status createdAt suckerGroupId } totalCount } }",
+          "query": "query($limit: Int!, $offset: Int!) { suckerTransactions(where: { version: 6, status: pending }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { index chainId peerChainId beneficiary projectTokenCount terminalTokenAmount status createdAt suckerGroupId } totalCount } }",
           "variables": [
-            { "name": "limit", "type": "int", "default": "20" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "20"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "createdAt", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "From", "format": "chainName" },
-            { "key": "peerChainId", "label": "To", "format": "chainName" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "projectTokenCount", "label": "Tokens", "format": "bigint" },
-            { "key": "status", "label": "Status", "format": "text" },
-            { "key": "suckerGroupId", "label": "Group", "format": "text" }
+            {
+              "key": "createdAt",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "From",
+              "format": "chainName"
+            },
+            {
+              "key": "peerChainId",
+              "label": "To",
+              "format": "chainName"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "projectTokenCount",
+              "label": "Tokens",
+              "format": "bigint"
+            },
+            {
+              "key": "status",
+              "label": "Status",
+              "format": "text"
+            },
+            {
+              "key": "suckerGroupId",
+              "label": "Group",
+              "format": "text"
+            }
           ]
         }
       ]
@@ -263,21 +742,64 @@
           "hint": "Token holder balance for a single project + address.",
           "kind": "single",
           "path": "participant",
-          "query": "query($projectId: Int!, $chainId: Int, $address: String!) { participant(projectId: $projectId, chainId: $chainId, address: $address) { address balance creditBalance erc20Balance volume volumeUsd paymentsCount lastPaidAt } }",
+          "query": "query($projectId: Float!, $chainId: Float!, $address: String!) { participant(version: 6, projectId: $projectId, chainId: $chainId, address: $address) { address balance creditBalance erc20Balance volume volumeUsd paymentsCount lastPaidTimestamp } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "address", "type": "address" }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "address",
+              "type": "address"
+            }
           ],
           "columns": [
-            { "key": "address", "label": "Address", "format": "address" },
-            { "key": "balance", "label": "Balance", "format": "bigint" },
-            { "key": "creditBalance", "label": "Credits", "format": "bigint" },
-            { "key": "erc20Balance", "label": "ERC20", "format": "bigint" },
-            { "key": "volume", "label": "Volume", "format": "amount" },
-            { "key": "volumeUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "paymentsCount", "label": "Pays", "format": "number" },
-            { "key": "lastPaidAt", "label": "Last paid", "format": "timestamp" }
+            {
+              "key": "address",
+              "label": "Address",
+              "format": "address"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "bigint"
+            },
+            {
+              "key": "creditBalance",
+              "label": "Credits",
+              "format": "bigint"
+            },
+            {
+              "key": "erc20Balance",
+              "label": "ERC20",
+              "format": "bigint"
+            },
+            {
+              "key": "volume",
+              "label": "Volume",
+              "format": "amount"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "paymentsCount",
+              "label": "Pays",
+              "format": "number"
+            },
+            {
+              "key": "lastPaidTimestamp",
+              "label": "Last paid",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -286,21 +808,66 @@
           "hint": "Holders of a project's token, ordered by balance.",
           "kind": "list",
           "path": "participants",
-          "query": "query($projectId: Int!, $chainId: Int, $limit: Int!, $offset: Int!) { participants(where: { projectId: $projectId, chainId: $chainId }, orderBy: \"balance\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { address balance creditBalance erc20Balance volume paymentsCount lastPaidAt } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int, $limit: Int!, $offset: Int!) { participants(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"balance\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { address balance creditBalance erc20Balance volume paymentsCount lastPaidTimestamp } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "address", "label": "Address", "format": "address" },
-            { "key": "balance", "label": "Balance", "format": "bigint" },
-            { "key": "creditBalance", "label": "Credits", "format": "bigint" },
-            { "key": "erc20Balance", "label": "ERC20", "format": "bigint" },
-            { "key": "volume", "label": "Volume", "format": "amount" },
-            { "key": "paymentsCount", "label": "Pays", "format": "number" },
-            { "key": "lastPaidAt", "label": "Last paid", "format": "timestamp" }
+            {
+              "key": "address",
+              "label": "Address",
+              "format": "address"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "bigint"
+            },
+            {
+              "key": "creditBalance",
+              "label": "Credits",
+              "format": "bigint"
+            },
+            {
+              "key": "erc20Balance",
+              "label": "ERC20",
+              "format": "bigint"
+            },
+            {
+              "key": "volume",
+              "label": "Volume",
+              "format": "amount"
+            },
+            {
+              "key": "paymentsCount",
+              "label": "Pays",
+              "format": "number"
+            },
+            {
+              "key": "lastPaidTimestamp",
+              "label": "Last paid",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -309,21 +876,61 @@
           "hint": "Participants ordered by lifetime volume paid in.",
           "kind": "list",
           "path": "participants",
-          "query": "query($projectId: Int!, $chainId: Int, $limit: Int!, $offset: Int!) { participants(where: { projectId: $projectId, chainId: $chainId }, orderBy: \"volume\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { address volume volumeUsd balance paymentsCount firstPaidAt lastPaidAt } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int, $limit: Int!, $offset: Int!) { participants(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"volume\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { address volume volumeUsd balance paymentsCount lastPaidTimestamp } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "address", "label": "Address", "format": "address" },
-            { "key": "volume", "label": "Volume", "format": "amount" },
-            { "key": "volumeUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "balance", "label": "Balance", "format": "bigint" },
-            { "key": "paymentsCount", "label": "Pays", "format": "number" },
-            { "key": "firstPaidAt", "label": "First paid", "format": "timestamp" },
-            { "key": "lastPaidAt", "label": "Last paid", "format": "timestamp" }
+            {
+              "key": "address",
+              "label": "Address",
+              "format": "address"
+            },
+            {
+              "key": "volume",
+              "label": "Volume",
+              "format": "amount"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "bigint"
+            },
+            {
+              "key": "paymentsCount",
+              "label": "Pays",
+              "format": "number"
+            },
+            {
+              "key": "lastPaidTimestamp",
+              "label": "Last paid",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -333,24 +940,80 @@
           "kind": "list",
           "path": "participantSnapshots",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $address: String!, $limit: Int!, $offset: Int!) { participantSnapshots(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds, address: $address }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId block timestamp balance creditBalance erc20Balance volume volumeUsd } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $address: String!, $limit: Int!, $offset: Int!) { participantSnapshots(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds, address: $address }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId block timestamp balance creditBalance erc20Balance volume volumeUsd } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "address", "type": "address" },
-            { "name": "limit", "type": "int", "default": "30" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "address",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "30"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "block", "label": "Block", "format": "number" },
-            { "key": "balance", "label": "Balance", "format": "bigint" },
-            { "key": "creditBalance", "label": "Credits", "format": "bigint" },
-            { "key": "erc20Balance", "label": "ERC20", "format": "bigint" },
-            { "key": "volume", "label": "Volume", "format": "amount" },
-            { "key": "volumeUsd", "label": "USD", "format": "volumeUsd" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "block",
+              "label": "Block",
+              "format": "number"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "bigint"
+            },
+            {
+              "key": "creditBalance",
+              "label": "Credits",
+              "format": "bigint"
+            },
+            {
+              "key": "erc20Balance",
+              "label": "ERC20",
+              "format": "bigint"
+            },
+            {
+              "key": "volume",
+              "label": "Volume",
+              "format": "amount"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            }
           ]
         },
         {
@@ -361,13 +1024,32 @@
           "path": "wallet",
           "query": "query($address: String!) { wallet(address: $address) { address volume volumeUsd lastPaidTimestamp } }",
           "variables": [
-            { "name": "address", "type": "address" }
+            {
+              "name": "address",
+              "type": "address"
+            }
           ],
           "columns": [
-            { "key": "address", "label": "Address", "format": "address" },
-            { "key": "volume", "label": "Total volume", "format": "amount" },
-            { "key": "volumeUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "lastPaidTimestamp", "label": "Last paid", "format": "timestamp" }
+            {
+              "key": "address",
+              "label": "Address",
+              "format": "address"
+            },
+            {
+              "key": "volume",
+              "label": "Total volume",
+              "format": "amount"
+            },
+            {
+              "key": "volumeUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "lastPaidTimestamp",
+              "label": "Last paid",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -376,20 +1058,60 @@
           "hint": "Every project + chain this address holds tokens in.",
           "kind": "list",
           "path": "participants",
-          "query": "query($address: String!, $limit: Int!, $offset: Int!) { participants(where: { address: $address }, orderBy: \"balance\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId balance creditBalance erc20Balance volume paymentsCount } totalCount } }",
+          "query": "query($address: String!, $limit: Int!, $offset: Int!) { participants(where: { version: 6, address: $address }, orderBy: \"balance\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId balance creditBalance erc20Balance volume paymentsCount } totalCount } }",
           "variables": [
-            { "name": "address", "type": "address" },
-            { "name": "limit", "type": "int", "default": "50" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "address",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "50"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "balance", "label": "Balance", "format": "bigint" },
-            { "key": "creditBalance", "label": "Credits", "format": "bigint" },
-            { "key": "erc20Balance", "label": "ERC20", "format": "bigint" },
-            { "key": "volume", "label": "Volume", "format": "amount" },
-            { "key": "paymentsCount", "label": "Pays", "format": "number" }
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "balance",
+              "label": "Balance",
+              "format": "bigint"
+            },
+            {
+              "key": "creditBalance",
+              "label": "Credits",
+              "format": "bigint"
+            },
+            {
+              "key": "erc20Balance",
+              "label": "ERC20",
+              "format": "bigint"
+            },
+            {
+              "key": "volume",
+              "label": "Volume",
+              "format": "amount"
+            },
+            {
+              "key": "paymentsCount",
+              "label": "Pays",
+              "format": "number"
+            }
           ]
         },
         {
@@ -398,20 +1120,60 @@
           "hint": "All Juicebox 721 NFTs owned by this address.",
           "kind": "list",
           "path": "nfts",
-          "query": "query($owner: String!, $limit: Int!, $offset: Int!) { nfts(where: { owner: $owner }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { tokenId projectId chainId tierId tierCategory createdAt tokenUri } totalCount } }",
+          "query": "query($owner: String!, $limit: Int!, $offset: Int!) { nfts(where: { version: 6, owner: $owner }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { tokenId projectId chainId tierId category createdAt tokenUri } totalCount } }",
           "variables": [
-            { "name": "owner", "type": "address" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "tokenId", "label": "Token ID", "format": "bigint" },
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "tierId", "label": "Tier", "format": "number" },
-            { "key": "tierCategory", "label": "Category", "format": "number" },
-            { "key": "createdAt", "label": "Minted", "format": "timestamp" },
-            { "key": "tokenUri", "label": "URI", "format": "uri" }
+            {
+              "key": "tokenId",
+              "label": "Token ID",
+              "format": "bigint"
+            },
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "tierId",
+              "label": "Tier",
+              "format": "number"
+            },
+            {
+              "key": "category",
+              "label": "Category",
+              "format": "number"
+            },
+            {
+              "key": "createdAt",
+              "label": "Minted",
+              "format": "timestamp"
+            },
+            {
+              "key": "tokenUri",
+              "label": "URI",
+              "format": "uri"
+            }
           ]
         }
       ]
@@ -426,26 +1188,91 @@
           "kind": "list",
           "path": "activityEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { activityEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { id chainId timestamp txHash from type payEvent { amount amountUsd beneficiary memo } cashOutTokensEvent { cashOutCount reclaimAmount holder } mintNftEvent { tierId tokenId } sendPayoutsEvent { amount amountPaidOut fee } borrowLoanEvent { borrowAmount collateral } repayLoanEvent { repayBorrowAmount collateralCountToReturn } } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { activityEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { id chainId timestamp txHash from type payEvent { amount amountUsd beneficiary memo } cashOutTokensEvent { cashOutCount reclaimAmount holder } mintNftEvent { tierId tokenId } sendPayoutsEvent { amount amountPaidOut fee } borrowLoanEvent { borrowAmount collateral } repayLoanEvent { repayBorrowAmount collateralCountToReturn } } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "30" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "30"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "type", "label": "Type", "format": "text" },
-            { "key": "from", "label": "From", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" },
-            { "key": "payEvent", "label": "Pay", "format": "json" },
-            { "key": "cashOutTokensEvent", "label": "Cash-out", "format": "json" },
-            { "key": "mintNftEvent", "label": "Mint NFT", "format": "json" },
-            { "key": "sendPayoutsEvent", "label": "Payouts", "format": "json" },
-            { "key": "borrowLoanEvent", "label": "Borrow", "format": "json" },
-            { "key": "repayLoanEvent", "label": "Repay", "format": "json" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "type",
+              "label": "Type",
+              "format": "text"
+            },
+            {
+              "key": "from",
+              "label": "From",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            },
+            {
+              "key": "payEvent",
+              "label": "Pay",
+              "format": "json"
+            },
+            {
+              "key": "cashOutTokensEvent",
+              "label": "Cash-out",
+              "format": "json"
+            },
+            {
+              "key": "mintNftEvent",
+              "label": "Mint NFT",
+              "format": "json"
+            },
+            {
+              "key": "sendPayoutsEvent",
+              "label": "Payouts",
+              "format": "json"
+            },
+            {
+              "key": "borrowLoanEvent",
+              "label": "Borrow",
+              "format": "json"
+            },
+            {
+              "key": "repayLoanEvent",
+              "label": "Repay",
+              "format": "json"
+            }
           ]
         },
         {
@@ -455,22 +1282,71 @@
           "kind": "list",
           "path": "activityEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { activityEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId type txHash from payEvent { amount memo } cashOutTokensEvent { cashOutCount reclaimAmount } } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { activityEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId type txHash from payEvent { amount memo } cashOutTokensEvent { cashOutCount reclaimAmount } } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "30" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "30"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "type", "label": "Type", "format": "text" },
-            { "key": "from", "label": "From", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" },
-            { "key": "payEvent", "label": "Pay", "format": "json" },
-            { "key": "cashOutTokensEvent", "label": "Cash-out", "format": "json" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "type",
+              "label": "Type",
+              "format": "text"
+            },
+            {
+              "key": "from",
+              "label": "From",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            },
+            {
+              "key": "payEvent",
+              "label": "Pay",
+              "format": "json"
+            },
+            {
+              "key": "cashOutTokensEvent",
+              "label": "Cash-out",
+              "format": "json"
+            }
           ]
         },
         {
@@ -479,20 +1355,60 @@
           "hint": "All events initiated by a specific address.",
           "kind": "list",
           "path": "activityEvents",
-          "query": "query($from: String!, $limit: Int!, $offset: Int!) { activityEvents(where: { from: $from }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId type txHash payEvent { amount memo } cashOutTokensEvent { cashOutCount reclaimAmount } } totalCount } }",
+          "query": "query($from: String!, $limit: Int!, $offset: Int!) { activityEvents(where: { version: 6, from: $from }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId type txHash payEvent { amount memo } cashOutTokensEvent { cashOutCount reclaimAmount } } totalCount } }",
           "variables": [
-            { "name": "from", "type": "address" },
-            { "name": "limit", "type": "int", "default": "30" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "from",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "30"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "type", "label": "Type", "format": "text" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" },
-            { "key": "payEvent", "label": "Pay", "format": "json" },
-            { "key": "cashOutTokensEvent", "label": "Cash-out", "format": "json" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "type",
+              "label": "Type",
+              "format": "text"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            },
+            {
+              "key": "payEvent",
+              "label": "Pay",
+              "format": "json"
+            },
+            {
+              "key": "cashOutTokensEvent",
+              "label": "Cash-out",
+              "format": "json"
+            }
           ]
         }
       ]
@@ -507,24 +1423,76 @@
           "kind": "list",
           "path": "payEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { payEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from beneficiary amount amountUsd memo newlyIssuedTokenCount beneficiaryTokenCount } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from beneficiary amount amountUsd memo newlyIssuedTokenCount } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "from", "label": "Payer", "format": "address" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "amount", "label": "Amount", "format": "amount" },
-            { "key": "amountUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "beneficiaryTokenCount", "label": "Tokens", "format": "bigint" },
-            { "key": "memo", "label": "Memo", "format": "text" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "from",
+              "label": "Payer",
+              "format": "address"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "amount",
+              "label": "Amount",
+              "format": "amount"
+            },
+            {
+              "key": "amountUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "memo",
+              "label": "Memo",
+              "format": "text"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -533,21 +1501,65 @@
           "hint": "All payments made by an address (across projects).",
           "kind": "list",
           "path": "payEvents",
-          "query": "query($from: String!, $limit: Int!, $offset: Int!) { payEvents(where: { from: $from }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary amount amountUsd memo txHash } totalCount } }",
+          "query": "query($from: String!, $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, from: $from }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary amount amountUsd memo txHash } totalCount } }",
           "variables": [
-            { "name": "from", "type": "address" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "from",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "amount", "label": "Amount", "format": "amount" },
-            { "key": "amountUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "memo", "label": "Memo", "format": "text" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "amount",
+              "label": "Amount",
+              "format": "amount"
+            },
+            {
+              "key": "amountUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "memo",
+              "label": "Memo",
+              "format": "text"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -556,21 +1568,65 @@
           "hint": "All payments routed to a specific beneficiary.",
           "kind": "list",
           "path": "payEvents",
-          "query": "query($beneficiary: String!, $limit: Int!, $offset: Int!) { payEvents(where: { beneficiary: $beneficiary }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId from amount amountUsd memo txHash } totalCount } }",
+          "query": "query($beneficiary: String!, $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, beneficiary: $beneficiary }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId from amount amountUsd memo txHash } totalCount } }",
           "variables": [
-            { "name": "beneficiary", "type": "address" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "beneficiary",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "from", "label": "Payer", "format": "address" },
-            { "key": "amount", "label": "Amount", "format": "amount" },
-            { "key": "amountUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "memo", "label": "Memo", "format": "text" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "from",
+              "label": "Payer",
+              "format": "address"
+            },
+            {
+              "key": "amount",
+              "label": "Amount",
+              "format": "amount"
+            },
+            {
+              "key": "amountUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "memo",
+              "label": "Memo",
+              "format": "text"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -580,23 +1636,76 @@
           "kind": "list",
           "path": "cashOutTokensEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash holder beneficiary cashOutCount reclaimAmount reclaimAmountUsd } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash holder beneficiary cashOutCount reclaimAmount reclaimAmountUsd } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "holder", "label": "Holder", "format": "address" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "cashOutCount", "label": "Tokens burned", "format": "bigint" },
-            { "key": "reclaimAmount", "label": "Reclaim", "format": "amount" },
-            { "key": "reclaimAmountUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "holder",
+              "label": "Holder",
+              "format": "address"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "cashOutCount",
+              "label": "Tokens burned",
+              "format": "bigint"
+            },
+            {
+              "key": "reclaimAmount",
+              "label": "Reclaim",
+              "format": "amount"
+            },
+            {
+              "key": "reclaimAmountUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -605,21 +1714,65 @@
           "hint": "All cash-outs by a specific token holder.",
           "kind": "list",
           "path": "cashOutTokensEvents",
-          "query": "query($holder: String!, $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { holder: $holder }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary cashOutCount reclaimAmount reclaimAmountUsd txHash } totalCount } }",
+          "query": "query($holder: String!, $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { version: 6, holder: $holder }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary cashOutCount reclaimAmount reclaimAmountUsd txHash } totalCount } }",
           "variables": [
-            { "name": "holder", "type": "address" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "holder",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "cashOutCount", "label": "Burned", "format": "bigint" },
-            { "key": "reclaimAmount", "label": "Reclaim", "format": "amount" },
-            { "key": "reclaimAmountUsd", "label": "USD", "format": "volumeUsd" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "cashOutCount",
+              "label": "Burned",
+              "format": "bigint"
+            },
+            {
+              "key": "reclaimAmount",
+              "label": "Reclaim",
+              "format": "amount"
+            },
+            {
+              "key": "reclaimAmountUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -629,23 +1782,76 @@
           "kind": "list",
           "path": "addToBalanceEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { addToBalanceEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from caller amount memo returnedFees } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { addToBalanceEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from caller amount memo returnedFees } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "from", "label": "From", "format": "address" },
-            { "key": "caller", "label": "Caller", "format": "address" },
-            { "key": "amount", "label": "Amount", "format": "amount" },
-            { "key": "memo", "label": "Memo", "format": "text" },
-            { "key": "returnedFees", "label": "Returned fees", "format": "amount" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "from",
+              "label": "From",
+              "format": "address"
+            },
+            {
+              "key": "caller",
+              "label": "Caller",
+              "format": "address"
+            },
+            {
+              "key": "amount",
+              "label": "Amount",
+              "format": "amount"
+            },
+            {
+              "key": "memo",
+              "label": "Memo",
+              "format": "text"
+            },
+            {
+              "key": "returnedFees",
+              "label": "Returned fees",
+              "format": "amount"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -655,23 +1861,76 @@
           "kind": "list",
           "path": "useAllowanceEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { useAllowanceEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller beneficiary amount netAmount rulesetCycleNumber } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { useAllowanceEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller beneficiary amount netAmountPaidOut rulesetCycleNumber } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "caller", "label": "Caller", "format": "address" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "amount", "label": "Gross", "format": "amount" },
-            { "key": "netAmount", "label": "Net", "format": "amount" },
-            { "key": "rulesetCycleNumber", "label": "Cycle", "format": "number" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "caller",
+              "label": "Caller",
+              "format": "address"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "amount",
+              "label": "Gross",
+              "format": "amount"
+            },
+            {
+              "key": "netAmountPaidOut",
+              "label": "Net",
+              "format": "amount"
+            },
+            {
+              "key": "rulesetCycleNumber",
+              "label": "Cycle",
+              "format": "number"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         }
       ]
@@ -686,23 +1945,76 @@
           "kind": "list",
           "path": "mintTokensEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { mintTokensEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary beneficiaryTokenCount reservedPercent tokenCount memo } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { mintTokensEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary beneficiaryTokenCount reservedPercent tokenCount memo } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "tokenCount", "label": "Minted", "format": "bigint" },
-            { "key": "beneficiaryTokenCount", "label": "To benef.", "format": "bigint" },
-            { "key": "reservedPercent", "label": "Reserved %", "format": "bigint" },
-            { "key": "memo", "label": "Memo", "format": "text" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "tokenCount",
+              "label": "Minted",
+              "format": "bigint"
+            },
+            {
+              "key": "beneficiaryTokenCount",
+              "label": "To benef.",
+              "format": "bigint"
+            },
+            {
+              "key": "reservedPercent",
+              "label": "Reserved %",
+              "format": "bigint"
+            },
+            {
+              "key": "memo",
+              "label": "Memo",
+              "format": "text"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -712,22 +2024,71 @@
           "kind": "list",
           "path": "manualMintTokensEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { manualMintTokensEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller beneficiary tokenCount memo } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { manualMintTokensEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller beneficiary tokenCount memo } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "caller", "label": "Caller", "format": "address" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "tokenCount", "label": "Minted", "format": "bigint" },
-            { "key": "memo", "label": "Memo", "format": "text" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "caller",
+              "label": "Caller",
+              "format": "address"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "tokenCount",
+              "label": "Minted",
+              "format": "bigint"
+            },
+            {
+              "key": "memo",
+              "label": "Memo",
+              "format": "text"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -736,20 +2097,61 @@
           "hint": "Tokens auto-issued at revnet stage transitions.",
           "kind": "list",
           "path": "autoIssueEvents",
-          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { autoIssueEvents(where: { projectId: $projectId, chainId: $chainId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp txHash caller beneficiary stageId count } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { autoIssueEvents(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp txHash caller beneficiary stageId count } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "stageId", "label": "Stage", "format": "bigint" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "count", "label": "Issued", "format": "bigint" },
-            { "key": "caller", "label": "Caller", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "stageId",
+              "label": "Stage",
+              "format": "bigint"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "count",
+              "label": "Issued",
+              "format": "bigint"
+            },
+            {
+              "key": "caller",
+              "label": "Caller",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -758,20 +2160,61 @@
           "hint": "Stored auto-issuance amounts per revnet stage.",
           "kind": "list",
           "path": "storeAutoIssuanceAmountEvents",
-          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { storeAutoIssuanceAmountEvents(where: { projectId: $projectId, chainId: $chainId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp txHash caller beneficiary stageId count } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { storeAutoIssuanceAmountEvents(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp txHash caller beneficiary stageId count } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "stageId", "label": "Stage", "format": "bigint" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "count", "label": "Amount", "format": "bigint" },
-            { "key": "caller", "label": "Caller", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "stageId",
+              "label": "Stage",
+              "format": "bigint"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "count",
+              "label": "Amount",
+              "format": "bigint"
+            },
+            {
+              "key": "caller",
+              "label": "Caller",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -781,22 +2224,71 @@
           "kind": "list",
           "path": "burnEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { burnEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from amount creditAmount erc20Amount } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { burnEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from amount creditAmount erc20Amount } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "from", "label": "Holder", "format": "address" },
-            { "key": "amount", "label": "Burned", "format": "bigint" },
-            { "key": "creditAmount", "label": "Credits", "format": "bigint" },
-            { "key": "erc20Amount", "label": "ERC20", "format": "bigint" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "from",
+              "label": "Holder",
+              "format": "address"
+            },
+            {
+              "key": "amount",
+              "label": "Burned",
+              "format": "bigint"
+            },
+            {
+              "key": "creditAmount",
+              "label": "Credits",
+              "format": "bigint"
+            },
+            {
+              "key": "erc20Amount",
+              "label": "ERC20",
+              "format": "bigint"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -806,22 +2298,71 @@
           "kind": "list",
           "path": "manualBurnEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { manualBurnEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from amount creditAmount erc20Amount } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { manualBurnEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from amount creditAmount erc20Amount } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "from", "label": "Holder", "format": "address" },
-            { "key": "amount", "label": "Burned", "format": "bigint" },
-            { "key": "creditAmount", "label": "Credits", "format": "bigint" },
-            { "key": "erc20Amount", "label": "ERC20", "format": "bigint" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "from",
+              "label": "Holder",
+              "format": "address"
+            },
+            {
+              "key": "amount",
+              "label": "Burned",
+              "format": "bigint"
+            },
+            {
+              "key": "creditAmount",
+              "label": "Credits",
+              "format": "bigint"
+            },
+            {
+              "key": "erc20Amount",
+              "label": "ERC20",
+              "format": "bigint"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -831,22 +2372,71 @@
           "kind": "list",
           "path": "deployErc20Events",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { deployErc20Events(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash symbol name token caller } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { deployErc20Events(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash symbol name token caller } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "10" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "10"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "symbol", "label": "Symbol", "format": "text" },
-            { "key": "name", "label": "Name", "format": "text" },
-            { "key": "token", "label": "Address", "format": "address" },
-            { "key": "caller", "label": "Caller", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "symbol",
+              "label": "Symbol",
+              "format": "text"
+            },
+            {
+              "key": "name",
+              "label": "Name",
+              "format": "text"
+            },
+            {
+              "key": "token",
+              "label": "Address",
+              "format": "address"
+            },
+            {
+              "key": "caller",
+              "label": "Caller",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         }
       ]
@@ -861,24 +2451,81 @@
           "kind": "list",
           "path": "sendPayoutsEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendPayoutsEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller rulesetCycleNumber amount amountPaidOut fee netLeftoverPayoutAmount } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendPayoutsEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller rulesetCycleNumber amount amountPaidOut fee netLeftoverPayoutAmount } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "caller", "label": "Caller", "format": "address" },
-            { "key": "rulesetCycleNumber", "label": "Cycle", "format": "number" },
-            { "key": "amount", "label": "Total", "format": "amount" },
-            { "key": "amountPaidOut", "label": "Paid out", "format": "amount" },
-            { "key": "fee", "label": "Fee", "format": "amount" },
-            { "key": "netLeftoverPayoutAmount", "label": "Leftover", "format": "amount" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "caller",
+              "label": "Caller",
+              "format": "address"
+            },
+            {
+              "key": "rulesetCycleNumber",
+              "label": "Cycle",
+              "format": "number"
+            },
+            {
+              "key": "amount",
+              "label": "Total",
+              "format": "amount"
+            },
+            {
+              "key": "amountPaidOut",
+              "label": "Paid out",
+              "format": "amount"
+            },
+            {
+              "key": "fee",
+              "label": "Fee",
+              "format": "amount"
+            },
+            {
+              "key": "netLeftoverPayoutAmount",
+              "label": "Leftover",
+              "format": "amount"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -888,25 +2535,86 @@
           "kind": "list",
           "path": "sendPayoutToSplitEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendPayoutToSplitEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary splitProjectId amount netAmount percent rulesetId hook } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendPayoutToSplitEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary splitProjectId amount netAmount percent rulesetId hook } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "splitProjectId", "label": "→ Project", "format": "number" },
-            { "key": "percent", "label": "Pct (1e9)", "format": "number" },
-            { "key": "amount", "label": "Gross", "format": "amount" },
-            { "key": "netAmount", "label": "Net", "format": "amount" },
-            { "key": "rulesetId", "label": "Ruleset", "format": "number" },
-            { "key": "hook", "label": "Hook", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "splitProjectId",
+              "label": "→ Project",
+              "format": "number"
+            },
+            {
+              "key": "percent",
+              "label": "Pct (1e9)",
+              "format": "number"
+            },
+            {
+              "key": "amount",
+              "label": "Gross",
+              "format": "amount"
+            },
+            {
+              "key": "netAmount",
+              "label": "Net",
+              "format": "amount"
+            },
+            {
+              "key": "rulesetId",
+              "label": "Ruleset",
+              "format": "number"
+            },
+            {
+              "key": "hook",
+              "label": "Hook",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -916,22 +2624,71 @@
           "kind": "list",
           "path": "sendReservedTokensToSplitsEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendReservedTokensToSplitsEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash owner tokenCount leftoverAmount rulesetCycleNumber } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendReservedTokensToSplitsEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash owner tokenCount leftoverAmount rulesetCycleNumber } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "owner", "label": "Owner", "format": "address" },
-            { "key": "tokenCount", "label": "Distributed", "format": "bigint" },
-            { "key": "leftoverAmount", "label": "Leftover", "format": "bigint" },
-            { "key": "rulesetCycleNumber", "label": "Cycle", "format": "number" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "owner",
+              "label": "Owner",
+              "format": "address"
+            },
+            {
+              "key": "tokenCount",
+              "label": "Distributed",
+              "format": "bigint"
+            },
+            {
+              "key": "leftoverAmount",
+              "label": "Leftover",
+              "format": "bigint"
+            },
+            {
+              "key": "rulesetCycleNumber",
+              "label": "Cycle",
+              "format": "number"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -941,24 +2698,81 @@
           "kind": "list",
           "path": "sendReservedTokensToSplitEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendReservedTokensToSplitEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary splitProjectId tokenCount percent rulesetId hook } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendReservedTokensToSplitEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary splitProjectId tokenCount percent rulesetId hook } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "splitProjectId", "label": "→ Project", "format": "number" },
-            { "key": "percent", "label": "Pct (1e9)", "format": "number" },
-            { "key": "tokenCount", "label": "Tokens", "format": "bigint" },
-            { "key": "rulesetId", "label": "Ruleset", "format": "number" },
-            { "key": "hook", "label": "Hook", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "splitProjectId",
+              "label": "→ Project",
+              "format": "number"
+            },
+            {
+              "key": "percent",
+              "label": "Pct (1e9)",
+              "format": "number"
+            },
+            {
+              "key": "tokenCount",
+              "label": "Tokens",
+              "format": "bigint"
+            },
+            {
+              "key": "rulesetId",
+              "label": "Ruleset",
+              "format": "number"
+            },
+            {
+              "key": "hook",
+              "label": "Hook",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         }
       ]
@@ -972,22 +2786,71 @@
           "hint": "All active loans against a revnet.",
           "kind": "list",
           "path": "loans",
-          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { loans(where: { projectId: $projectId, chainId: $chainId }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { id borrowAmount collateral prepaidDuration prepaidFeePercent owner beneficiary createdAt } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { loans(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { id borrowAmount collateral prepaidDuration prepaidFeePercent owner beneficiary createdAt } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "id", "label": "Loan ID", "format": "bigint" },
-            { "key": "borrowAmount", "label": "Borrow", "format": "amount" },
-            { "key": "collateral", "label": "Collateral", "format": "bigint" },
-            { "key": "prepaidDuration", "label": "Prepaid (s)", "format": "number" },
-            { "key": "prepaidFeePercent", "label": "Fee bps", "format": "number" },
-            { "key": "owner", "label": "Owner", "format": "address" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "createdAt", "label": "Created", "format": "timestamp" }
+            {
+              "key": "id",
+              "label": "Loan ID",
+              "format": "bigint"
+            },
+            {
+              "key": "borrowAmount",
+              "label": "Borrow",
+              "format": "amount"
+            },
+            {
+              "key": "collateral",
+              "label": "Collateral",
+              "format": "bigint"
+            },
+            {
+              "key": "prepaidDuration",
+              "label": "Prepaid (s)",
+              "format": "number"
+            },
+            {
+              "key": "prepaidFeePercent",
+              "label": "Fee bps",
+              "format": "number"
+            },
+            {
+              "key": "owner",
+              "label": "Owner",
+              "format": "address"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "createdAt",
+              "label": "Created",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -996,21 +2859,65 @@
           "hint": "Active loans owned by an address.",
           "kind": "list",
           "path": "loans",
-          "query": "query($owner: String!, $limit: Int!, $offset: Int!) { loans(where: { owner: $owner }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { id projectId chainId borrowAmount collateral prepaidDuration beneficiary createdAt } totalCount } }",
+          "query": "query($owner: String!, $limit: Int!, $offset: Int!) { loans(where: { version: 6, owner: $owner }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { id projectId chainId borrowAmount collateral prepaidDuration beneficiary createdAt } totalCount } }",
           "variables": [
-            { "name": "owner", "type": "address" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "id", "label": "Loan ID", "format": "bigint" },
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "borrowAmount", "label": "Borrow", "format": "amount" },
-            { "key": "collateral", "label": "Collateral", "format": "bigint" },
-            { "key": "prepaidDuration", "label": "Prepaid (s)", "format": "number" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "createdAt", "label": "Created", "format": "timestamp" }
+            {
+              "key": "id",
+              "label": "Loan ID",
+              "format": "bigint"
+            },
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "borrowAmount",
+              "label": "Borrow",
+              "format": "amount"
+            },
+            {
+              "key": "collateral",
+              "label": "Collateral",
+              "format": "bigint"
+            },
+            {
+              "key": "prepaidDuration",
+              "label": "Prepaid (s)",
+              "format": "number"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "createdAt",
+              "label": "Created",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -1019,25 +2926,90 @@
           "hint": "Single loan by its NFT token ID.",
           "kind": "single",
           "path": "loan",
-          "query": "query($id: BigInt!) { loan(id: $id) { id projectId chainId borrowAmount collateral sourceFeeAmount prepaidDuration prepaidFeePercent beneficiary owner token terminal tokenUri createdAt } }",
+          "query": "query($id: BigInt!, $chainId: Float!) { loan(version: 6, chainId: $chainId, id: $id) { id projectId chainId borrowAmount collateral sourceFeeAmount prepaidDuration prepaidFeePercent beneficiary owner token terminal tokenUri createdAt } }",
           "variables": [
-            { "name": "id", "type": "bigint" }
+            {
+              "name": "id",
+              "type": "bigint",
+              "default": ""
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            }
           ],
           "columns": [
-            { "key": "id", "label": "Loan ID", "format": "bigint" },
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "borrowAmount", "label": "Borrow", "format": "amount" },
-            { "key": "collateral", "label": "Collateral", "format": "bigint" },
-            { "key": "sourceFeeAmount", "label": "Fee", "format": "amount" },
-            { "key": "prepaidDuration", "label": "Prepaid (s)", "format": "number" },
-            { "key": "prepaidFeePercent", "label": "Fee bps", "format": "number" },
-            { "key": "owner", "label": "Owner", "format": "address" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "token", "label": "Token", "format": "address" },
-            { "key": "terminal", "label": "Terminal", "format": "address" },
-            { "key": "tokenUri", "label": "URI", "format": "uri" },
-            { "key": "createdAt", "label": "Created", "format": "timestamp" }
+            {
+              "key": "id",
+              "label": "Loan ID",
+              "format": "bigint"
+            },
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "borrowAmount",
+              "label": "Borrow",
+              "format": "amount"
+            },
+            {
+              "key": "collateral",
+              "label": "Collateral",
+              "format": "bigint"
+            },
+            {
+              "key": "sourceFeeAmount",
+              "label": "Fee",
+              "format": "amount"
+            },
+            {
+              "key": "prepaidDuration",
+              "label": "Prepaid (s)",
+              "format": "number"
+            },
+            {
+              "key": "prepaidFeePercent",
+              "label": "Fee bps",
+              "format": "number"
+            },
+            {
+              "key": "owner",
+              "label": "Owner",
+              "format": "address"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "token",
+              "label": "Token",
+              "format": "address"
+            },
+            {
+              "key": "terminal",
+              "label": "Terminal",
+              "format": "address"
+            },
+            {
+              "key": "tokenUri",
+              "label": "URI",
+              "format": "uri"
+            },
+            {
+              "key": "createdAt",
+              "label": "Created",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -1047,22 +3019,71 @@
           "kind": "list",
           "path": "borrowLoanEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { borrowLoanEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash borrowAmount collateral prepaidDuration beneficiary } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { borrowLoanEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash borrowAmount collateral prepaidDuration beneficiary } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "borrowAmount", "label": "Borrow", "format": "amount" },
-            { "key": "collateral", "label": "Collateral", "format": "bigint" },
-            { "key": "prepaidDuration", "label": "Prepaid (s)", "format": "number" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "borrowAmount",
+              "label": "Borrow",
+              "format": "amount"
+            },
+            {
+              "key": "collateral",
+              "label": "Collateral",
+              "format": "bigint"
+            },
+            {
+              "key": "prepaidDuration",
+              "label": "Prepaid (s)",
+              "format": "number"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -1072,22 +3093,71 @@
           "kind": "list",
           "path": "repayLoanEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { repayLoanEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash loanId paidOffLoanId repayBorrowAmount collateralCountToReturn } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { repayLoanEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash loanId paidOffLoanId repayBorrowAmount collateralCountToReturn } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "loanId", "label": "Loan", "format": "bigint" },
-            { "key": "paidOffLoanId", "label": "Paid off?", "format": "bigint" },
-            { "key": "repayBorrowAmount", "label": "Repaid", "format": "amount" },
-            { "key": "collateralCountToReturn", "label": "Collateral back", "format": "bigint" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "loanId",
+              "label": "Loan",
+              "format": "bigint"
+            },
+            {
+              "key": "paidOffLoanId",
+              "label": "Paid off?",
+              "format": "bigint"
+            },
+            {
+              "key": "repayBorrowAmount",
+              "label": "Repaid",
+              "format": "amount"
+            },
+            {
+              "key": "collateralCountToReturn",
+              "label": "Collateral back",
+              "format": "bigint"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -1097,21 +3167,66 @@
           "kind": "list",
           "path": "reallocateLoanEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { reallocateLoanEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash loanId reallocatedLoanId removedCollateralCount } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { reallocateLoanEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash loanId reallocatedLoanId removedCollateralCount } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "loanId", "label": "From loan", "format": "bigint" },
-            { "key": "reallocatedLoanId", "label": "To loan", "format": "bigint" },
-            { "key": "removedCollateralCount", "label": "Moved", "format": "bigint" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "loanId",
+              "label": "From loan",
+              "format": "bigint"
+            },
+            {
+              "key": "reallocatedLoanId",
+              "label": "To loan",
+              "format": "bigint"
+            },
+            {
+              "key": "removedCollateralCount",
+              "label": "Moved",
+              "format": "bigint"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -1121,21 +3236,66 @@
           "kind": "list",
           "path": "liquidateLoanEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { liquidateLoanEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash borrowAmount collateral caller } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { liquidateLoanEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash borrowAmount collateral caller } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "borrowAmount", "label": "Outstanding", "format": "amount" },
-            { "key": "collateral", "label": "Seized", "format": "bigint" },
-            { "key": "caller", "label": "Liquidator", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "borrowAmount",
+              "label": "Outstanding",
+              "format": "amount"
+            },
+            {
+              "key": "collateral",
+              "label": "Seized",
+              "format": "bigint"
+            },
+            {
+              "key": "caller",
+              "label": "Liquidator",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         }
       ]
@@ -1149,24 +3309,81 @@
           "hint": "Tier configuration: price, supply, metadata.",
           "kind": "list",
           "path": "nftTiers",
-          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { nftTiers(where: { projectId: $projectId, chainId: $chainId }, orderBy: \"tierId\", orderDirection: \"asc\", limit: $limit, offset: $offset) { items { tierId price initialSupply remainingSupply category votingUnits allowOwnerMint cannotBeRemoved resolvedUri svg } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { nftTiers(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"tierId\", orderDirection: \"asc\", limit: $limit, offset: $offset) { items { tierId price initialSupply remainingSupply category votingUnits allowOwnerMint cannotBeRemoved resolvedUri svg } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "50" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "50"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "tierId", "label": "Tier", "format": "number" },
-            { "key": "price", "label": "Price", "format": "amount" },
-            { "key": "initialSupply", "label": "Initial", "format": "number" },
-            { "key": "remainingSupply", "label": "Remaining", "format": "number" },
-            { "key": "category", "label": "Category", "format": "number" },
-            { "key": "votingUnits", "label": "Votes/NFT", "format": "bigint" },
-            { "key": "allowOwnerMint", "label": "Owner mint?", "format": "bool" },
-            { "key": "cannotBeRemoved", "label": "Permanent?", "format": "bool" },
-            { "key": "resolvedUri", "label": "URI", "format": "uri" },
-            { "key": "svg", "label": "SVG", "format": "svg" }
+            {
+              "key": "tierId",
+              "label": "Tier",
+              "format": "number"
+            },
+            {
+              "key": "price",
+              "label": "Price",
+              "format": "amount"
+            },
+            {
+              "key": "initialSupply",
+              "label": "Initial",
+              "format": "number"
+            },
+            {
+              "key": "remainingSupply",
+              "label": "Remaining",
+              "format": "number"
+            },
+            {
+              "key": "category",
+              "label": "Category",
+              "format": "number"
+            },
+            {
+              "key": "votingUnits",
+              "label": "Votes/NFT",
+              "format": "bigint"
+            },
+            {
+              "key": "allowOwnerMint",
+              "label": "Owner mint?",
+              "format": "bool"
+            },
+            {
+              "key": "cannotBeRemoved",
+              "label": "Permanent?",
+              "format": "bool"
+            },
+            {
+              "key": "resolvedUri",
+              "label": "URI",
+              "format": "uri"
+            },
+            {
+              "key": "svg",
+              "label": "SVG",
+              "format": "svg"
+            }
           ]
         },
         {
@@ -1176,23 +3393,76 @@
           "kind": "list",
           "path": "mintNftEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { mintNftEvents(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary tierId tokenId totalAmountPaid hook } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { mintNftEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary tierId tokenId totalAmountPaid hook } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "beneficiary", "label": "Beneficiary", "format": "address" },
-            { "key": "tierId", "label": "Tier", "format": "number" },
-            { "key": "tokenId", "label": "Token ID", "format": "bigint" },
-            { "key": "totalAmountPaid", "label": "Paid", "format": "amount" },
-            { "key": "hook", "label": "Hook", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "beneficiary",
+              "label": "Beneficiary",
+              "format": "address"
+            },
+            {
+              "key": "tierId",
+              "label": "Tier",
+              "format": "number"
+            },
+            {
+              "key": "tokenId",
+              "label": "Token ID",
+              "format": "bigint"
+            },
+            {
+              "key": "totalAmountPaid",
+              "label": "Paid",
+              "format": "amount"
+            },
+            {
+              "key": "hook",
+              "label": "Hook",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -1201,20 +3471,61 @@
           "hint": "All NFTs in a project (newest first).",
           "kind": "list",
           "path": "nfts",
-          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { nfts(where: { projectId: $projectId, chainId: $chainId }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { tokenId tierId tierCategory owner createdAt tokenUri } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { nfts(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { tokenId tierId category owner createdAt tokenUri } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "tokenId", "label": "Token ID", "format": "bigint" },
-            { "key": "tierId", "label": "Tier", "format": "number" },
-            { "key": "tierCategory", "label": "Category", "format": "number" },
-            { "key": "owner", "label": "Owner", "format": "address" },
-            { "key": "createdAt", "label": "Minted", "format": "timestamp" },
-            { "key": "tokenUri", "label": "URI", "format": "uri" }
+            {
+              "key": "tokenId",
+              "label": "Token ID",
+              "format": "bigint"
+            },
+            {
+              "key": "tierId",
+              "label": "Tier",
+              "format": "number"
+            },
+            {
+              "key": "category",
+              "label": "Category",
+              "format": "number"
+            },
+            {
+              "key": "owner",
+              "label": "Owner",
+              "format": "address"
+            },
+            {
+              "key": "createdAt",
+              "label": "Minted",
+              "format": "timestamp"
+            },
+            {
+              "key": "tokenUri",
+              "label": "URI",
+              "format": "uri"
+            }
           ]
         },
         {
@@ -1223,18 +3534,51 @@
           "hint": "Deployed 721 hook contracts.",
           "kind": "list",
           "path": "nftHooks",
-          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { nftHooks(where: { projectId: $projectId, chainId: $chainId }, limit: $limit, offset: $offset) { items { address name symbol createdAt } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { nftHooks(where: { version: 6, projectId: $projectId, chainId: $chainId }, limit: $limit, offset: $offset) { items { address name symbol createdAt } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "10" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "10"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "address", "label": "Address", "format": "address" },
-            { "key": "name", "label": "Name", "format": "text" },
-            { "key": "symbol", "label": "Symbol", "format": "text" },
-            { "key": "createdAt", "label": "Deployed", "format": "timestamp" }
+            {
+              "key": "address",
+              "label": "Address",
+              "format": "address"
+            },
+            {
+              "key": "name",
+              "label": "Name",
+              "format": "text"
+            },
+            {
+              "key": "symbol",
+              "label": "Symbol",
+              "format": "text"
+            },
+            {
+              "key": "createdAt",
+              "label": "Deployed",
+              "format": "timestamp"
+            }
           ]
         },
         {
@@ -1245,17 +3589,54 @@
           "path": "decorateBannyEvents",
           "query": "query($limit: Int!, $offset: Int!) { decorateBannyEvents(orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp txHash chainId bannyBodyId outfitIds backgroundId tokenUri } totalCount } }",
           "variables": [
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "bannyBodyId", "label": "Banny", "format": "bigint" },
-            { "key": "outfitIds", "label": "Outfits", "format": "json" },
-            { "key": "backgroundId", "label": "Bg", "format": "bigint" },
-            { "key": "tokenUri", "label": "URI", "format": "uri" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "bannyBodyId",
+              "label": "Banny",
+              "format": "bigint"
+            },
+            {
+              "key": "outfitIds",
+              "label": "Outfits",
+              "format": "json"
+            },
+            {
+              "key": "backgroundId",
+              "label": "Bg",
+              "format": "bigint"
+            },
+            {
+              "key": "tokenUri",
+              "label": "URI",
+              "format": "uri"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         }
       ]
@@ -1269,18 +3650,51 @@
           "hint": "Operators with permissions on this project.",
           "kind": "list",
           "path": "permissionHolders",
-          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { permissionHolders(where: { projectId: $projectId, chainId: $chainId }, limit: $limit, offset: $offset) { items { account operator permissions isRevnetOperator } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { permissionHolders(where: { version: 6, projectId: $projectId, chainId: $chainId }, limit: $limit, offset: $offset) { items { account operator permissions isRevnetOperator } totalCount } }",
           "variables": [
-            { "name": "projectId", "type": "int", "default": "1" },
-            { "name": "chainId", "type": "chain", "default": "11155111" },
-            { "name": "limit", "type": "int", "default": "50" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "50"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "account", "label": "Account", "format": "address" },
-            { "key": "operator", "label": "Operator", "format": "address" },
-            { "key": "permissions", "label": "Permission IDs", "format": "permissionList" },
-            { "key": "isRevnetOperator", "label": "Revnet op?", "format": "bool" }
+            {
+              "key": "account",
+              "label": "Account",
+              "format": "address"
+            },
+            {
+              "key": "operator",
+              "label": "Operator",
+              "format": "address"
+            },
+            {
+              "key": "permissions",
+              "label": "Permission IDs",
+              "format": "permissionList"
+            },
+            {
+              "key": "isRevnetOperator",
+              "label": "Revnet op?",
+              "format": "bool"
+            }
           ]
         },
         {
@@ -1289,18 +3703,50 @@
           "hint": "All projects where an account has granted permissions.",
           "kind": "list",
           "path": "permissionHolders",
-          "query": "query($account: String!, $limit: Int!, $offset: Int!) { permissionHolders(where: { account: $account }, limit: $limit, offset: $offset) { items { projectId chainId operator permissions isRevnetOperator } totalCount } }",
+          "query": "query($account: String!, $limit: Int!, $offset: Int!) { permissionHolders(where: { version: 6, account: $account }, limit: $limit, offset: $offset) { items { projectId chainId operator permissions isRevnetOperator } totalCount } }",
           "variables": [
-            { "name": "account", "type": "address" },
-            { "name": "limit", "type": "int", "default": "50" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "50"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "operator", "label": "Operator", "format": "address" },
-            { "key": "permissions", "label": "Permission IDs", "format": "permissionList" },
-            { "key": "isRevnetOperator", "label": "Revnet op?", "format": "bool" }
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "operator",
+              "label": "Operator",
+              "format": "address"
+            },
+            {
+              "key": "permissions",
+              "label": "Permission IDs",
+              "format": "permissionList"
+            },
+            {
+              "key": "isRevnetOperator",
+              "label": "Revnet op?",
+              "format": "bool"
+            }
           ]
         }
       ]
@@ -1314,19 +3760,56 @@
           "hint": "Newest projects across one or more chains.",
           "kind": "list",
           "path": "projectCreateEvents",
-          "query": "query($chainIds: [Int!], $limit: Int!, $offset: Int!) { projectCreateEvents(where: { chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId caller txHash project { name handle owner } } totalCount } }",
+          "query": "query($chainIds: [Int!], $limit: Int!, $offset: Int!) { projectCreateEvents(where: { version: 6, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId caller txHash project { name handle owner } } totalCount } }",
           "variables": [
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "projectId", "label": "ID", "format": "number" },
-            { "key": "caller", "label": "Deployer", "format": "address" },
-            { "key": "project", "label": "Project info", "format": "json" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "projectId",
+              "label": "ID",
+              "format": "number"
+            },
+            {
+              "key": "caller",
+              "label": "Deployer",
+              "format": "address"
+            },
+            {
+              "key": "project",
+              "label": "Project info",
+              "format": "json"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         },
         {
@@ -1335,20 +3818,61 @@
           "hint": "Newest project ERC20s across one or more chains.",
           "kind": "list",
           "path": "deployErc20Events",
-          "query": "query($chainIds: [Int!], $limit: Int!, $offset: Int!) { deployErc20Events(where: { chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId name symbol token txHash } totalCount } }",
+          "query": "query($chainIds: [Int!], $limit: Int!, $offset: Int!) { deployErc20Events(where: { version: 6, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId name symbol token txHash } totalCount } }",
           "variables": [
-            { "name": "chainIds", "type": "chain_multi", "optional": true },
-            { "name": "limit", "type": "int", "default": "25" },
-            { "name": "offset", "type": "int", "default": "0", "hidden": true }
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
           ],
           "columns": [
-            { "key": "timestamp", "label": "When", "format": "timestamp" },
-            { "key": "chainId", "label": "Chain", "format": "chainName" },
-            { "key": "projectId", "label": "Project", "format": "number" },
-            { "key": "name", "label": "Name", "format": "text" },
-            { "key": "symbol", "label": "Symbol", "format": "text" },
-            { "key": "token", "label": "Token", "format": "address" },
-            { "key": "txHash", "label": "Tx", "format": "txHash" }
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "projectId",
+              "label": "Project",
+              "format": "number"
+            },
+            {
+              "key": "name",
+              "label": "Name",
+              "format": "text"
+            },
+            {
+              "key": "symbol",
+              "label": "Symbol",
+              "format": "text"
+            },
+            {
+              "key": "token",
+              "label": "Token",
+              "format": "address"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
           ]
         }
       ]

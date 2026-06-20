@@ -734,7 +734,7 @@ function infoNote(text) {
 }
 
 function warnNote(text) {
-  var n = el('div', 'create-note warn');
+  var n = el('div', 'create-banner'); // soft pink band (palette), not the harsh red note
   n.textContent = text;
   return n;
 }
@@ -896,7 +896,7 @@ function renderImagePicker(uri, busy, onChange) {
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
     if (!f) { onChange('', false); return; } // picker dismissed → clear
-    if (!hasPinata()) { alert('Add a Pinata JWT in DATA → settings to upload images.'); return; }
+    if (!hasPinata()) { alert('IPFS pinning isn’t available right now — you can add a logo later by editing the project.'); return; }
     onChange(uri, true);
     pinFile(f, f.name).then(function (ipfs) { onChange(ipfs, false); })
       .catch(function (e) { alert('Upload failed: ' + (e && e.message || e)); onChange(uri, false); });
@@ -926,8 +926,8 @@ export function createStage() {
     reservedRecipients: [], tokenAdvancedOpen: false,
     // revnet-only stage fields (ignored by the custom flow)
     cutFreqDays: '30', autoIssuances: [], startDaysAfter: '30',
-    // payouts
-    payoutMode: 'none', payoutRecipients: [],
+    // payouts (single-token). Multi-accounting-context queues use payoutByKind instead (keyed by token kind).
+    payoutMode: 'none', payoutRecipients: [], payoutByKind: {},
     // surplus allowance — owner can withdraw from surplus (beyond payouts) up to a cap each ruleset
     surplusAllowanceOn: false, surplusAllowanceUnlimited: false, surplusAllowanceAmount: '', surplusAllowanceCurrency: 1,
     // deadline + rules
@@ -1011,7 +1011,7 @@ export function renderStages(state, render, opts) {
     });
     dSel.addEventListener('change', function () { state.stages.forEach(function (s) { s.deadline = dSel.value; }); render(); });
     dField.appendChild(dSel);
-    if (cur === 'none') dField.appendChild(warnNote('⚠ No deadline lets the owner make last-second edits before a ruleset takes effect, which supporters may see as risky.'));
+    if (cur === 'none') dField.appendChild(warnNote('No deadline lets the owner make last-second edits before a ruleset takes effect, which supporters may see as risky.'));
     wrap.appendChild(dField);
   }
   return wrap;
@@ -1357,7 +1357,7 @@ function renderStageEditor(stage, idx, state, render) {
   var c = el('div', 'create-stage-body');
   c.appendChild(stageTiming(stage, idx, idx === state.stages.length - 1, render));
   c.appendChild(tokenSection(stage, render));
-  c.appendChild(payoutsSection(stage, render)); // Schedule payouts + Surplus allowance — top-level, no disclosure
+  c.appendChild(payoutsSection(stage, render, state)); // Schedule payouts + Surplus allowance — top-level, no disclosure
   c.appendChild(collapse(stage, 'otherOpen', 'Other rules', true, render, function () { return otherRulesSection(stage, render); }));
   return c;
 }
@@ -1423,7 +1423,7 @@ function stageTiming(stage, idx, isLast, render) {
   // A non-final stage with no duration would never advance — the next stage would start at the same
   // instant and immediately clobber it. Require a duration on every non-final stage.
   if (!isLast && !stage.durationSeconds) {
-    w.appendChild(warnNote('⚠ This stage isn’t the last, so it needs a duration. With “no expiry”, the next stage would start at the same moment and override this one. Set a duration so Stage ' + (idx + 2) + ' begins when this stage’s cycle ends.'));
+    w.appendChild(warnNote('This stage isn’t the last, so it needs a duration. With “no expiry”, the next stage would start at the same moment and override this one. Set a duration so Stage ' + (idx + 2) + ' begins when this stage’s cycle ends.'));
   }
   return w;
 }
@@ -1508,8 +1508,85 @@ function payoutRow(stage, rec, idx, mode, render) {
   return wrap;
 }
 
-function payoutsSection(stage, render) {
+// Per-accounting-context payout state (multi-token queues): { mode:'none'|'unlimited'|'limited', recipients[] }.
+function pkState(stage, key) {
+  if (!stage.payoutByKind) stage.payoutByKind = {};
+  if (!stage.payoutByKind[key]) stage.payoutByKind[key] = { mode: 'none', recipients: [] };
+  return stage.payoutByKind[key];
+}
+// One recipient row for a per-token payout block. `kind` provides the token symbol for limited amounts.
+function payoutKindRow(pk, kind, rec, idx, render) {
+  var mode = pk.mode === 'unlimited' ? 'percent' : 'amount';
+  var wrap = el('div', 'create-split-wrap'); if (idx > 0) wrap.style.marginTop = '18px';
+  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
+  recip.value = rec.type === 'project' ? String(rec.projectId || '') : (rec.address || '');
+  var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
+  rm.addEventListener('click', function () { var i = pk.recipients.indexOf(rec); if (i >= 0) pk.recipients.splice(i, 1); render(); });
+  var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
+  if (mode === 'percent') {
+    var row = el('div', 'create-split-row');
+    var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Split' : '… and'; row.appendChild(lead);
+    var pct = el('input', 'field create-split-pct'); pct.type = 'number'; pct.min = '0'; pct.max = '100'; pct.step = 'any'; pct.placeholder = '10';
+    pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; }); row.appendChild(pct);
+    var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
+    var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
+    row.appendChild(recipBoxWith(recip, ensHint)); row.appendChild(rm); wrap.appendChild(row);
+  } else {
+    var lockLast = pk.recipients.length <= 1;
+    var leadText = idx === 0 ? 'Payout' : '… and';
+    var l1 = el('div', 'create-split-row'); var lead1 = el('span', 'create-split-lead'); lead1.textContent = leadText; l1.appendChild(lead1);
+    var amt = el('input', 'field create-inline-num'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
+    amt.value = rec.amountEth || ''; amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); }); l1.appendChild(amt);
+    var u = el('span', 'create-suffix'); u.textContent = ' ' + kind.symbol + ' '; l1.appendChild(u);
+    var toEnd = el('span', 'create-split-to'); toEnd.textContent = 'to'; l1.appendChild(toEnd); wrap.appendChild(l1);
+    var l2 = el('div', 'create-split-row payout-line2'); var lead2 = el('span', 'create-split-lead'); lead2.textContent = leadText; lead2.style.visibility = 'hidden'; l2.appendChild(lead2);
+    l2.appendChild(recipBoxWith(recip, ensHint)); if (!lockLast) l2.appendChild(rm); wrap.appendChild(l2);
+  }
+  var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
+  var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
+  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… or name.eth';
+  benef.value = rec.type === 'project' ? (rec.address || '') : '';
+  benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
+  var benefHint = attachEns(benef, function () {}); benefRow.appendChild(recipBoxWith(benef, benefHint)); wrap.appendChild(benefRow);
+  function refresh() { var v = (recip.value || '').trim(); if (/^[0-9]+$/.test(v) && Number(v) > 0) { rec.type = 'project'; rec.projectId = Number(v); benefRow.style.display = ''; } else { rec.type = 'wallet'; rec.projectId = 0; rec.address = v; benefRow.style.display = 'none'; } }
+  recip.addEventListener('input', refresh); refresh();
+  return wrap;
+}
+// A "Payout <SYM> funds" block for one accounting context.
+function payoutKindBlock(stage, kind, render) {
+  var pk = pkState(stage, kind.key);
   var wrap = el('div', '');
+  wrap.appendChild(toggleRow('Payout ' + kind.symbol + ' funds', dz('Routing some of the project’s ' + kind.symbol + ' to other accounts or projects.', 'All ' + kind.symbol + ' stays in the project for cash outs / later cycles.'), pk.mode !== 'none', function (v) { pk.mode = v ? 'unlimited' : 'none'; render(); }));
+  if (pk.mode !== 'none') {
+    var card = el('div', 'create-subcard');
+    card.appendChild(toggleRow('Payout all received ' + kind.symbol, dz('Paying out everything received; recipients get a percentage and the rest goes to the owner.', 'Paying out fixed amounts; anything else stays in the project.'), pk.mode === 'unlimited', function (v) { pk.mode = v ? 'unlimited' : 'limited'; if (!v && !pk.recipients.length) pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); }));
+    pk.recipients.forEach(function (rec, i) { card.appendChild(payoutKindRow(pk, kind, rec, i, render)); });
+    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add payout'; add.style.marginTop = pk.recipients.length ? '14px' : '4px';
+    add.addEventListener('click', function (e) { e.preventDefault(); pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); });
+    card.appendChild(add);
+    if (pk.mode === 'unlimited') { var on = el('div', 'create-hint'); on.style.marginTop = '10px'; on.textContent = 'Any ' + kind.symbol + ' not allocated above goes to the project owner.'; card.appendChild(on); }
+    wrap.appendChild(card);
+  }
+  return wrap;
+}
+
+function payoutsSection(stage, render, state) {
+  var wrap = el('div', '');
+  // Multi-accounting-context (queue): one "Payout <SYM> funds" block per token; surplus is cumulative.
+  if (state && state.payoutKinds && state.payoutKinds.length) {
+    state.payoutKinds.forEach(function (kind) { wrap.appendChild(payoutKindBlock(stage, kind, render)); });
+    var allUnlimited = state.payoutKinds.every(function (k) { return pkState(stage, k.key).mode === 'unlimited'; });
+    if (allUnlimited) {
+      wrap.appendChild(idleToggle('Give owner access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus available.'));
+      wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus to cash out.'));
+    } else {
+      // Surplus is the project's TOTAL across all accepted tokens (cash-out reclaim prices against the
+      // cumulative surplus). Owner access is unlimited-across-tokens here to avoid per-token cap ambiguity.
+      wrap.appendChild(toggleRow('Give owner access to surplus funds', dz('The owner can withdraw the project’s surplus (funds beyond payouts), across every accepted token.', 'The owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; stage.surplusAllowanceUnlimited = true; render(); }));
+      wrap.appendChild(cashOutSection(stage, render));
+    }
+    return wrap;
+  }
   wrap.appendChild(toggleRow('Payout funds', dz('Routing some of the project’s funds to other accounts or projects.', 'All funds stay in the project for cash outs / later stages.'), stage.payoutMode !== 'none', function (v) { stage.payoutMode = v ? 'unlimited' : 'none'; render(); }));
 
   if (stage.payoutMode !== 'none') {
@@ -2191,7 +2268,7 @@ function chainBridgeBlock(state, render) {
     var bh = el('div', 'create-hint'); bh.textContent = 'Native bridges connect Ethereum with L2s (strongest guarantees). CCIP (Chainlink) connects any chains.'; bField.appendChild(bh);
     wrap.appendChild(bField);
     var unc = uncoveredPairs(state);
-    if (unc.length) wrap.appendChild(warnNote('⚠ ' + unc.length + ' chain pair' + (unc.length > 1 ? 's' : '') + ' can’t connect with native bridges (they only link Ethereum↔L2). Choose CCIP or Both to link L2↔L2 pairs.'));
+    if (unc.length) wrap.appendChild(warnNote('' + unc.length + ' chain pair' + (unc.length > 1 ? 's' : '') + ' can’t connect with native bridges (they only link Ethereum↔L2). Choose CCIP or Both to link L2↔L2 pairs.'));
   }
   return wrap;
 }
@@ -2231,7 +2308,7 @@ function renderDeploy(state, render) {
   tos.appendChild(document.createTextNode(' I understand this is a brand-new protocol and accept the risks of deploying.'));
   wrap.appendChild(tos);
 
-  if (!hasPinata()) wrap.appendChild(infoNote('No Pinata JWT set — add one in DATA → settings to pin your logo & metadata. Otherwise they’re skipped at launch and you can add them by editing the project later.'));
+  if (!hasPinata()) wrap.appendChild(infoNote('IPFS pinning isn’t configured, so your logo & metadata will be skipped at launch — you can add them later by editing the project.'));
 
   // Success panel — replaces the form once deployed: a clear confirmation + a "Go to project" CTA.
   if (state.done) {
@@ -3084,13 +3161,18 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   var custom = stage.tokenMode === 'custom';
   // Reserved rate = sum of the split-row percentages (each is a % of issuance reserved for that recipient).
   var reservedTotalPct = (stage.reservedRecipients || []).reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0);
+  // Multi-accounting-context (queue): payouts are per token (stage.payoutByKind). There's surplus to cash
+  // out / withdraw unless EVERY accepted token pays out everything (all unlimited).
+  var pkAll = (state.payoutKinds && state.payoutKinds.length) ? state.payoutKinds : null;
+  var allKindsUnlimited = pkAll ? pkAll.every(function (k) { return ((stage.payoutByKind || {})[k.key] || {}).mode === 'unlimited'; }) : false;
+  var noSurplus = pkAll ? allKindsUnlimited : (stage.payoutMode === 'unlimited');
   rs.weight = custom ? (stage.weight || '0') : '0';
   rs.reservedPercent = custom ? Math.max(0, Math.min(100, reservedTotalPct)) : 0;
   rs.weightCutPercent = custom ? Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) : 0;
   // Cash outs / owner minting / pausing apply to the project's tokens regardless of whether THIS stage
   // issues new tokens (tokens can exist from prior stages or owner mints). Clamp 0–100 so a stray value
   // can't overflow MAX_CASH_OUT_TAX_RATE and revert at deploy.
-  rs.cashOutTaxRate = (stage.cashOutEnabled && stage.payoutMode !== 'unlimited')
+  rs.cashOutTaxRate = (stage.cashOutEnabled && !noSurplus)
     ? Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) : 100; // 100% = cash outs off (no surplus under unlimited payouts)
   rs.allowOwnerMinting = !!stage.allowOwnerMinting;
   rs.pauseCreditTransfers = !!stage.pauseTransfers;
@@ -3105,61 +3187,84 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   rs.allowAddAccountingContext = !!stage.allowAddAccountingContext;
   rs.allowAddPriceFeed = !!stage.allowAddPriceFeed;
 
-  // Splits
+  // Splits + fund access.
   rs.splitGroups = [];
-  if (stage.payoutMode !== 'none' && stage.payoutRecipients.length) {
-    var payoutSplits;
-    if (stage.payoutMode === 'unlimited') {
-      // % of payouts each recipient gets; any unallocated remainder goes to the project owner. Clamp the
-      // running total to SPLITS_TOTAL so over-100% (or rounding drift) can't revert the group.
-      var pacc = 0;
-      payoutSplits = stage.payoutRecipients.map(function (x, idx) {
-        var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
-        if (pacc + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc);
-        pacc += raw;
-        return splitState(x, raw, payoutBenef(x, idx));
-      });
-    } else {
-      // Limited: the payout limit is the sum of the amounts; each recipient's split is its share of that sum.
-      var total = stage.payoutRecipients.reduce(function (s, x, idx) { return s + (Number(amtAt(x, idx)) || 0); }, 0) || 1;
-      var lshares = fillSplits(stage.payoutRecipients.map(function (x, idx) { return Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL); }));
-      payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares[idx], payoutBenef(x, idx)); });
+  rs.fundAccessLimitGroups = [];
+  if (pkAll) {
+    // MULTI-TOKEN: one payout split group + one fund-access group per accounting context, each denominated
+    // in that token's own currency/decimals. Surplus allowance (when owner access is on) is unlimited per
+    // token — surplus is the project's cumulative total across tokens.
+    var benefK = function (x) { return x.type === 'project' ? resolvedStr(x.address) : pickResolved(x.address, x); };
+    var puK = function (v, d) { try { return parseUnits(String(v || '0'), d); } catch (_) { return 0n; } };
+    pkAll.forEach(function (kind) {
+      var pk = (stage.payoutByKind || {})[kind.key] || { mode: 'none', recipients: [] };
+      var token = kind.addrForChain(chainId); if (!token) return;
+      var cur = Number(BigInt(token) & 0xffffffffn);
+      var payoutLimits = [], surplusAllowances = [], splits = [];
+      if (pk.mode === 'unlimited') {
+        payoutLimits.push({ amount: UINT224_MAX, currency: cur });
+        var pacc = 0;
+        splits = (pk.recipients || []).map(function (x) {
+          var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
+          if (pacc + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc);
+          pacc += raw;
+          return splitState(x, raw, benefK(x), chainId);
+        });
+      } else if (pk.mode === 'limited') {
+        var totalAmt = (pk.recipients || []).reduce(function (s, x) { return s + puK(x.amountEth, kind.decimals); }, 0n);
+        if (totalAmt > 0n) payoutLimits.push({ amount: totalAmt, currency: cur });
+        var totalNum = (pk.recipients || []).reduce(function (s, x) { return s + (Number(x.amountEth) || 0); }, 0) || 1;
+        var lshares = fillSplits((pk.recipients || []).map(function (x) { return Math.round(((Number(x.amountEth) || 0) / totalNum) * SPLITS_TOTAL); }));
+        splits = (pk.recipients || []).map(function (x, idx) { return splitState(x, lshares[idx], benefK(x), chainId); });
+      }
+      if (stage.surplusAllowanceOn && pk.mode !== 'unlimited') surplusAllowances.push({ amount: UINT224_MAX, currency: cur });
+      if (splits.length) rs.splitGroups.push({ groupId: uint256FromAddress(token), splits: splits });
+      if (payoutLimits.length || surplusAllowances.length) {
+        rs.fundAccessLimitGroups.push({ terminal: getAddress('JBMultiTerminal', chainId), token: token, payoutLimits: payoutLimits, surplusAllowances: surplusAllowances });
+      }
+    });
+  } else if (stage.payoutMode !== 'none' || (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited')) {
+    // SINGLE-TOKEN (create flow): one accounting token chosen at Settlement.
+    if (stage.payoutMode !== 'none' && stage.payoutRecipients.length) {
+      var payoutSplits;
+      if (stage.payoutMode === 'unlimited') {
+        var pacc1 = 0;
+        payoutSplits = stage.payoutRecipients.map(function (x, idx) {
+          var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
+          if (pacc1 + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc1);
+          pacc1 += raw;
+          return splitState(x, raw, payoutBenef(x, idx));
+        });
+      } else {
+        var total = stage.payoutRecipients.reduce(function (s, x, idx) { return s + (Number(amtAt(x, idx)) || 0); }, 0) || 1;
+        var lshares1 = fillSplits(stage.payoutRecipients.map(function (x, idx) { return Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL); }));
+        payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares1[idx], payoutBenef(x, idx)); });
+      }
+      rs.splitGroups.push({ groupId: uint256FromAddress(acctTokenFor(state, chainId).token), splits: payoutSplits });
     }
-    // Payout split group is keyed by the accounting token (uint256(uint160(token))) — USDC, not native.
-    rs.splitGroups.push({ groupId: uint256FromAddress(acctTokenFor(state, chainId).token), splits: payoutSplits });
+    var acct = acctTokenFor(state, chainId);
+    var payoutLimits1 = [];
+    if (stage.payoutMode !== 'none') {
+      if (stage.payoutMode === 'unlimited') payoutLimits1.push({ amount: UINT224_MAX, currency: acct.currency });
+      else payoutLimits1.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n), currency: stage.payoutCurrency || 1 });
+    }
+    var surplusAllowances1 = [];
+    if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
+      if (stage.surplusAllowanceUnlimited) surplusAllowances1.push({ amount: UINT224_MAX, currency: acct.currency });
+      else { var saAmt = safeParseEther(stage.surplusAllowanceAmount); if (saAmt > 0n) surplusAllowances1.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 }); }
+    }
+    if (payoutLimits1.length || surplusAllowances1.length) {
+      rs.fundAccessLimitGroups.push({ terminal: getAddress('JBMultiTerminal', chainId), token: acct.token, payoutLimits: payoutLimits1, surplusAllowances: surplusAllowances1 });
+    }
   }
+  // Reserved-token splits (group 1) — token-agnostic; same in both paths.
   if (custom && reservedTotalPct > 0) {
-    // Each recipient's share of the reserved group = its row % ÷ the total reserved %. fillSplits keeps the
-    // group summing to exactly SPLITS_TOTAL so rounding drift can't exceed it and revert.
     var rrows = stage.reservedRecipients.map(function (x, origIdx) { return { x: x, origIdx: origIdx }; })
       .filter(function (e) { return (Number(e.x.percent) || 0) > 0; });
     var rshares = fillSplits(rrows.map(function (e) { return Math.round((Number(e.x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL); }));
     rs.splitGroups.push({
       groupId: '1',
       splits: rrows.map(function (e, k) { return splitState(e.x, rshares[k], reservedBenef(e.x, e.origIdx), chainId); }),
-    });
-  }
-
-  // Fund access (payout limits + surplus allowance) — on the ACCOUNTING token's terminal (USDC, not native).
-  // An "unlimited" (uint224 max) limit must be denominated in the accounting token's own currency so the
-  // terminal doesn't try to JBPrices-convert MAX from ETH/USD (which would overflow); a finite/limited
-  // amount keeps the user's chosen ETH/USD denomination (JBPrices converts it to the token at payout).
-  var acct = acctTokenFor(state, chainId);
-  rs.fundAccessLimitGroups = [];
-  var payoutLimits = [];
-  if (stage.payoutMode !== 'none') {
-    if (stage.payoutMode === 'unlimited') payoutLimits.push({ amount: UINT224_MAX, currency: acct.currency });
-    else payoutLimits.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n), currency: stage.payoutCurrency || 1 });
-  }
-  var surplusAllowances = [];
-  if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
-    if (stage.surplusAllowanceUnlimited) surplusAllowances.push({ amount: UINT224_MAX, currency: acct.currency });
-    else { var saAmt = safeParseEther(stage.surplusAllowanceAmount); if (saAmt > 0n) surplusAllowances.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 }); }
-  }
-  if (payoutLimits.length || surplusAllowances.length) {
-    rs.fundAccessLimitGroups.push({
-      terminal: getAddress('JBMultiTerminal', chainId), token: acct.token,
-      payoutLimits: payoutLimits, surplusAllowances: surplusAllowances,
     });
   }
   return rs;

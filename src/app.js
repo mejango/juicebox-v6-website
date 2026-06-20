@@ -8,7 +8,7 @@ import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
 import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
-import { renderDiscoverTab, applyDiscoverRoute } from './discover.js';
+import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab } from './discover.js';
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 
@@ -71,8 +71,8 @@ var PRETTY_COMPONENTS = {
 // --- Tab switching ---
 
 // URL nav-name <-> data-tab id mapping (the hash uses friendly names).
-var NAV_TO_TAB = { discover: 'discover', actions: 'common', learn: 'learn', build: 'build', api: 'directory', data: 'data', why: 'why' };
-var TAB_TO_NAV = { discover: 'discover', common: 'actions', learn: 'learn', build: 'build', directory: 'api', data: 'data', why: 'why' };
+var NAV_TO_TAB = { discover: 'discover', actions: 'common', learn: 'learn', build: 'build', api: 'directory', data: 'data', admin: 'admin', why: 'why' };
+var TAB_TO_NAV = { discover: 'discover', common: 'actions', learn: 'learn', build: 'build', directory: 'api', data: 'data', admin: 'admin', why: 'why' };
 
 function activateNavTab(dataTab) {
   document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
@@ -884,6 +884,7 @@ function init() {
   renderDataTab();
   renderLearnTab();
   renderBuildTab();
+  renderAdminTab();
   renderWhyTab();
   window.addEventListener('hashchange', onHashChange);
   applyHash(); // restore the nav tab / deep-linked project from the URL on load

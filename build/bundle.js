@@ -21,9 +21,11 @@ async function build() {
     sourcemap: false,
     define: {
       __BENDYSTRAW_API_KEY__: JSON.stringify(process.env.BENDYSTRAW_API_KEY || ENV.BENDYSTRAW_API_KEY || ''),
-      // Baked-in default Pinata JWT (from .env) so users can pin without supplying their own. NOTE: the
-      // published bundle is public, so this JWT is publicly extractable — use a scoped key and rotate it.
-      __PINATA_JWT__: JSON.stringify(process.env.PINATA_JWT || ENV.PINATA_JWT || ''),
+      // Baked-in PUBLIC Pinata key so the Create flow pins logos/metadata on users' behalf (no per-user setup).
+      // This bundle is public, so the baked value IS extractable — use ONLY a SCOPED (pinFileToIPFS +
+      // pinJSONToIPFS only), rate-limited, rotatable key here. It is `PINATA_PUBLIC_JWT`, deliberately SEPARATE
+      // from `PINATA_JWT` (the full-access publish key used only by build/publish-ipfs.js, never baked in).
+      __PINATA_JWT__: JSON.stringify(process.env.PINATA_PUBLIC_JWT || ENV.PINATA_PUBLIC_JWT || ''),
     },
   });
   const js = jsResult.outputFiles[0].text;

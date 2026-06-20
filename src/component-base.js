@@ -720,6 +720,57 @@ export function decodeCallForDisplay(tx) {
   if (tx.function) return shapeDecoded(abi, tx.function, tx.args || []);
   return null;
 }
+// Rich decode that PRESERVES structure (nested tuples/arrays) so the renderer can build a tree, not a JSON
+// blob. Returns { fn, inputs:[abiInput]|null, values:[raw] } (inputs null when no ABI — caller falls back).
+function decodeCallRich(tx) {
+  if (!tx) return null;
+  var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
+  var abi = null; try { if (name) abi = getABI(name); } catch (_) {}
+  if (tx.calldata && tx.calldata !== '0x' && abi) {
+    try {
+      var dec = decodeFunctionData({ abi: abi, data: tx.calldata });
+      var frag = abi.filter(function (e) { return e.type === 'function' && e.name === dec.functionName; })[0];
+      return { fn: dec.functionName, inputs: (frag && frag.inputs) || [], values: Array.from(dec.args || []) };
+    } catch (_) {}
+  }
+  if (tx.function) {
+    var frag2 = abi && abi.filter(function (e) { return e.type === 'function' && e.name === tx.function; })[0];
+    if (frag2) return { fn: tx.function, inputs: frag2.inputs || [], values: tx.args || [] };
+    return { fn: tx.function, inputs: null, shaped: shapeDecoded(abi, tx.function, tx.args || []).args };
+  }
+  return null;
+}
+
+// One decoded arg as a DOM row. Recurses into tuples / tuple[] so each field sits on its own indented line
+// (the "pretty" tree view) instead of a single inline JSON blob.
+function renderArgNode(input, value, depth) {
+  var type = input.type || '';
+  var baseType = type.replace(/\[\]$/, '');
+  var isArray = /\[\]$/.test(type);
+  var label = (input.name || '') + (type ? ' (' + type + ')' : '');
+  if (input.components && baseType === 'tuple') {
+    var wrap = el('div', 'tx-decoded-arg'); wrap.style.marginLeft = (depth * 14) + 'px';
+    var head = el('span', 'tx-decoded-argname'); head.textContent = label + ':'; wrap.appendChild(head);
+    if (isArray) {
+      var arr = value || [];
+      if (!arr.length) { var empty = el('span', 'tx-decoded-argval'); empty.textContent = ' []'; wrap.appendChild(empty); return wrap; }
+      arr.forEach(function (item, idx) {
+        var ih = el('div', 'tx-decoded-arg'); ih.style.marginLeft = ((depth + 1) * 14) + 'px';
+        var ik = el('span', 'tx-decoded-argname'); ik.textContent = '[' + idx + ']:'; ih.appendChild(ik); wrap.appendChild(ih);
+        input.components.forEach(function (c, ci) { wrap.appendChild(renderArgNode(c, item ? (item[c.name] !== undefined ? item[c.name] : item[ci]) : undefined, depth + 2)); });
+      });
+    } else {
+      input.components.forEach(function (c, ci) { wrap.appendChild(renderArgNode(c, value ? (value[c.name] !== undefined ? value[c.name] : value[ci]) : undefined, depth + 1)); });
+    }
+    return wrap;
+  }
+  var r = el('div', 'tx-decoded-arg'); r.style.marginLeft = (depth * 14) + 'px';
+  var k = el('span', 'tx-decoded-argname'); k.textContent = label + ': ';
+  var val = el('span', 'tx-decoded-argval'); val.textContent = formatArgValue(type, value);
+  r.appendChild(k); r.appendChild(val);
+  return r;
+}
+
 export function renderDecodedTx(tx) {
   var box = el('div', 'tx-decoded');
   if (tx.chain) { var ch = el('div', 'tx-decoded-chain'); ch.textContent = tx.chain; box.appendChild(ch); }
@@ -727,16 +778,21 @@ export function renderDecodedTx(tx) {
   var nm = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : null;
   who.textContent = (nm ? nm + ' | ' : '') + (tx.address || tx.to || tx.contract || '');
   box.appendChild(who);
-  var dec = decodeCallForDisplay(tx);
-  if (dec) {
+  var rich = decodeCallRich(tx);
+  if (rich) {
     var call = el('div', 'tx-decoded-call');
-    var fn = el('div', 'tx-decoded-fn'); fn.textContent = dec.fn + (dec.args.length ? '' : '()'); call.appendChild(fn);
-    dec.args.forEach(function (a) {
-      var r = el('div', 'tx-decoded-arg');
-      var k = el('span', 'tx-decoded-argname'); k.textContent = a.name + (a.type ? ' (' + a.type + ')' : '') + ': ';
-      var val = el('span', 'tx-decoded-argval'); val.textContent = a.value;
-      r.appendChild(k); r.appendChild(val); call.appendChild(r);
-    });
+    var hasArgs = rich.inputs ? rich.inputs.length : (rich.shaped && rich.shaped.length);
+    var fn = el('div', 'tx-decoded-fn'); fn.textContent = rich.fn + (hasArgs ? '' : '()'); call.appendChild(fn);
+    if (rich.inputs) {
+      rich.inputs.forEach(function (inp, i) { call.appendChild(renderArgNode(inp, rich.values[i], 0)); });
+    } else {
+      (rich.shaped || []).forEach(function (a) {
+        var r = el('div', 'tx-decoded-arg');
+        var k = el('span', 'tx-decoded-argname'); k.textContent = a.name + (a.type ? ' (' + a.type + ')' : '') + ': ';
+        var val = el('span', 'tx-decoded-argval'); val.textContent = a.value;
+        r.appendChild(k); r.appendChild(val); call.appendChild(r);
+      });
+    }
     box.appendChild(call);
   } else {
     var raw = el('div', 'tx-decoded-unknown'); raw.textContent = 'Could not decode this call — review the raw data below before signing.'; box.appendChild(raw);
@@ -748,6 +804,41 @@ export function renderDecodedTx(tx) {
     var v = el('div', 'tx-decoded-value'); v.textContent = 'Value: ' + (typeof tx.value === 'bigint' ? tx.value.toString() + ' wei' : tx.value); box.appendChild(v);
   }
   return box;
+}
+
+// A full single-tx review block: the pretty decoded tree + a "Show raw data" toggle (named-arg JSON, with
+// addresses + start-times annotated). Used by the Safe-propose modal and anywhere a single call is reviewed.
+export function renderTxReview(tx) {
+  var wrap = el('div', 'tx-review');
+  wrap.appendChild(renderDecodedTx(tx));
+  var details = document.createElement('details'); details.className = 'tx-rawdata';
+  var sm = document.createElement('summary'); sm.textContent = 'Show raw data'; details.appendChild(sm);
+  var pre = el('pre', 'create-payload');
+  pre.textContent = annotateTimestamps(annotateAddresses(txRawJson(tx)));
+  details.appendChild(pre);
+  wrap.appendChild(details);
+  return wrap;
+}
+
+// The raw view: decoded function + NAMED args as indented JSON (tuples expanded), falling back to the raw
+// call fields when the ABI can't decode it.
+function txRawJson(tx) {
+  var obj = null;
+  try {
+    var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
+    var abi = name ? getABI(name) : null;
+    if (tx.calldata && tx.calldata !== '0x' && abi) {
+      var dec = decodeFunctionData({ abi: abi, data: tx.calldata });
+      var frag = abi.filter(function (e) { return e.type === 'function' && e.name === dec.functionName; })[0];
+      var inputs = (frag && frag.inputs) || [];
+      var named = {};
+      (dec.args || []).forEach(function (v, i) { named[(inputs[i] && inputs[i].name) || ('arg' + i)] = v; });
+      obj = { contract: name, address: tx.address || tx.to, chain: tx.chain, function: dec.functionName, args: named, calldata: tx.calldata };
+    }
+  } catch (_) {}
+  if (!obj) obj = { contract: tx.contract, address: tx.address || tx.to, chain: tx.chain, function: tx.function, args: tx.args, calldata: tx.calldata, value: tx.value };
+  return JSON.stringify(obj, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
+    .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
 }
 function renderDecodedSummary(payload) {
   var list = Array.isArray(payload.transactions) ? payload.transactions : (Array.isArray(payload.chains) ? payload.chains : null);
