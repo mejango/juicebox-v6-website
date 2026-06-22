@@ -126,11 +126,30 @@ export function addrOrZero(s) {
 
 // A status-line setter bound to an element: `set(msg, kind)` writes `<baseClass> <kind>` + text.
 // Replaces the ~7 copy-pasted `function setStatus(msg, kind){ status.className=…; status.textContent=… }`.
+// Block-explorer tx URL for a chain (Etherscan / Arbiscan / Basescan / Optimism), null if unknown.
+export function txExplorerUrl(chainId, hash) {
+  var be = CHAINS[chainId] && CHAINS[chainId].blockExplorers && CHAINS[chainId].blockExplorers.default;
+  return (be && be.url) ? (be.url.replace(/\/+$/, '') + '/tx/' + hash) : null;
+}
+// Render a status message into `elem`, turning the truncated tx hash (when meta carries {hash, chainId}) into a
+// link to that chain's block explorer. Falls back to plain text.
+export function setStatusContent(elem, msg, meta) {
+  var url = meta && meta.hash && meta.chainId ? txExplorerUrl(meta.chainId, meta.hash) : null;
+  var trunc = (url && meta.hash) ? truncAddr(meta.hash) : null;
+  var idx = trunc ? String(msg).lastIndexOf(trunc) : -1;
+  if (idx === -1) { elem.textContent = msg; return; }
+  elem.textContent = '';
+  elem.appendChild(document.createTextNode(msg.slice(0, idx)));
+  var a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.className = 'tx-status-hash'; a.textContent = trunc;
+  elem.appendChild(a);
+  elem.appendChild(document.createTextNode(msg.slice(idx + trunc.length)));
+}
+
 export function makeStatusSetter(elem, baseClass) {
   baseClass = baseClass || 'modal-status';
-  return function (msg, kind) {
+  return function (msg, kind, meta) {
     elem.className = baseClass + (kind ? ' ' + kind : '');
-    elem.textContent = msg;
+    setStatusContent(elem, msg, meta);
   };
 }
 
@@ -822,10 +841,10 @@ export function confirmTransactionModal(payload, opts) {
     function finish(result) { if (resolved) return; resolved = true; resolve(result); }
     function teardown() { document.removeEventListener('keydown', onKey); if (overlay.parentNode) overlay.remove(); }
     function close(result) { finish(result); teardown(); }
-    function showStatus(m, kind) {
+    function showStatus(m, kind, meta) {
       statusEl.style.display = '';
       statusEl.className = 'tx-confirm-status ' + (kind === 'error' ? 'error' : kind === 'success' ? 'success' : 'pending');
-      statusEl.textContent = m;
+      setStatusContent(statusEl, m, meta);
     }
     function onKey(e) { if (e.key === 'Escape' && !inFlight) close(cancelResult); }
     x.addEventListener('click', function () { if (!inFlight) close(cancelResult); });
@@ -886,7 +905,7 @@ export function executeTransaction(opts) {
     if (r.showStatus) {
       var base = cbs;
       cbs = {
-        onStatus: function (m, k, meta) { r.showStatus(m, k); base.onStatus(m, k, meta); },
+        onStatus: function (m, k, meta) { r.showStatus(m, k, meta); base.onStatus(m, k, meta); },
         onSuccess: function (m, meta) { if (r.close) r.close(); base.onSuccess(m, meta); },
         onError: function (m, meta) { r.showStatus(m, 'error'); base.onError(m, meta); },
       };
