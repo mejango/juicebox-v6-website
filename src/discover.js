@@ -4310,9 +4310,9 @@ function renderDetailHeader(project) {
     nodes.forEach(function (n) { p.appendChild(n); });
     return p;
   };
-  // Mirror the Discover card's stacked meta: "Flavor | On" on one row (the "|" is a ::after bar
-  // BETWEEN the two pairs), then the authority on its own row (no leading bar), then Site. Each row
-  // is a block, so they get clean vertical spacing and the separator never trails/orphans on a wrap.
+  // "Flavor | On | Operator" on one row (the "|" is a ::after bar BETWEEN pairs); the pairs are inline +
+  // nowrap, so the row stays on one line on desktop and only wraps to multiple lines when the viewport is
+  // too narrow (mobile). Site is its own row (a URL can be long).
   var ownerWarn = el('span', 'detail-head-ownerwarn');
   var row1 = el('div', 'detail-head-meta');
   var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
@@ -4323,10 +4323,9 @@ function renderDetailHeader(project) {
     for (var c = 0; c < project.chains.length; c++) logos.appendChild(projectChainLogo(project, project.chains[c]));
     row1.appendChild(mkPair('On: ', [logos]));
   }
+  row1.appendChild(document.createTextNode(' '));
+  row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)), ownerWarn]));
   header.appendChild(row1);
-  var row2 = el('div', 'detail-head-meta');
-  row2.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)), ownerWarn]));
-  header.appendChild(row2);
   if (project.infoUri) {
     var href = project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri);
     var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
@@ -11374,6 +11373,7 @@ function attachCardPromptLinks(contentArea) {
   if (!contentArea || typeof MutationObserver === 'undefined') return;
   var tag = function (card) {
     if (!card.classList || card.classList.contains('paybox')) return;
+    if (card.querySelector('.detail-card, .you-card')) return; // container card — only tag the leaf inside it
     if (card.dataset.promptLinked) return; // idempotent: never add a second link to the same card
     card.dataset.promptLinked = '1';
     var t = card.querySelector('.detail-card-title');
