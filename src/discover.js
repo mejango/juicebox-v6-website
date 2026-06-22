@@ -6829,15 +6829,28 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
     }).catch(function () {});
   }
 
-  fetchSafeInfo(safe, homeChainId).then(function (info) {
-    if (!info) { intro.textContent = 'This account isn’t a Safe — there’s no multisig queue.'; body.innerHTML = ''; return; }
-    intro.textContent = contextLabel + '-only actions are proposed here per chain; signers confirm + execute.';
-    loadQueues(info);
-  }).catch(function () { intro.textContent = 'Could not read the Safe.'; body.innerHTML = ''; });
+  function startLoad() {
+    fetchSafeInfo(safe, homeChainId).then(function (info) {
+      if (!info) { intro.textContent = 'This account isn’t a Safe — there’s no multisig queue.'; body.innerHTML = ''; return; }
+      intro.textContent = contextLabel + '-only actions are proposed here per chain; signers confirm + execute.';
+      loadQueues(info);
+    }).catch(function () { intro.textContent = 'Could not read the Safe.'; body.innerHTML = ''; });
+  }
+  // Only hit the rate-limited Safe Transaction Service when this card is actually ON SCREEN — i.e. the user is
+  // viewing the Owner/Operator/Admin tab. A project detail can sit mounted off-screen (e.g. restored under
+  // #discover), and we must NOT poll the Safe API from there. Load once, when the card first scrolls into view.
+  var loaded = false;
+  function maybeLoad() { if (loaded) return; loaded = true; startLoad(); }
+  if (typeof IntersectionObserver === 'function') {
+    var io = new IntersectionObserver(function (entries) {
+      if (entries.some(function (e) { return e.isIntersecting; })) { io.disconnect(); maybeLoad(); }
+    }, { rootMargin: '120px' });
+    io.observe(card);
+  } else { maybeLoad(); }
 
-  // Refresh when an action queues a new tx from a modal.
+  // Refresh when an action queues a new tx from a modal — but only for a card that's been viewed + is connected.
   document.addEventListener('jb:safe-queued', function () {
-    if (!card.isConnected) return;
+    if (!loaded || !card.isConnected) return;
     fetchSafeInfo(safe, homeChainId).then(function (info) { if (info) loadQueues(info); }).catch(function () {});
   });
   return card;
@@ -8427,7 +8440,7 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     if (t1 <= t0) t1 = t0 + YEAR;
   }
 
-  var W = 600, H = 200, padL = 8, padR = 8, padT = 10, padB = 22, N = 240;
+  var W = 600, H = 200, padL = 8, padR = 8, padT = 24, padB = 22, N = 240; // padT headroom so "Today" clears the line/now-line peak
   var pts = [];
   var maxV = 0;
   for (var i = 0; i <= N; i++) {
