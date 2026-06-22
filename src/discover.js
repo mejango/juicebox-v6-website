@@ -156,6 +156,18 @@ function routerSetHash(h) {
 // not even a JBRouterTerminal — no DIRECTORY()).
 function routerTerminalFor(chainId) { return getAddress('JBRouterTerminalRegistry', chainId); }
 
+// Pick the pay token after the on-chain accounting-context refine resolves the real token list. Preserve the
+// user's pick ONLY when they explicitly chose one (tokenTouched); otherwise default to the project's first
+// accounting token (list[0]). This is the fix for the fund-loss desync where a USDC-accounting project stayed
+// stuck on the native-ETH sync default (the dropdown showed USDC but the tx paid 1 ETH). Pure for testability.
+export function chooseRefinedPayToken(list, currentToken, tokenTouched) {
+  list = list || [];
+  var keep = tokenTouched && list.filter(function (t) {
+    return currentToken && t.address.toLowerCase() === currentToken.address.toLowerCase() && t.viaRouter === currentToken.viaRouter;
+  })[0];
+  return keep || list[0] || null;
+}
+
 // Canonical Circle testnet USDC (6 decimals), lowercased to avoid viem checksum validation. Offered as
 // a pay currency on revnets (which have the router); previewPayFor reads "unavailable" where no pool.
 var USDC_BY_CHAIN = {
@@ -3927,10 +3939,8 @@ function renderPayCard(project, cart) {
         if (state.chainId !== chainId) return;
         state.tokens = list;
         // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
-        // would shadow the project's real accounting token. A project that accepts USDC directly must default
-        // to USDC, not silently stay on native ETH (which would pay 1 ETH instead of 1 USDC).
-        var keep = state.tokenTouched && list.filter(function (t) { return state.token && t.address.toLowerCase() === state.token.address.toLowerCase() && t.viaRouter === state.token.viaRouter; })[0];
-        state.token = keep || list[0] || null;
+        // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
+        state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
         rebuildCurrency();
         schedulePreview();
       }).catch(function () {});
@@ -10226,7 +10236,7 @@ function polar(cx, cy, r, a) {
 // Paginate a long list: fills `rowsContainer` with one page (pageSize) of rows built by buildRow(item, idx)
 // and returns a nav bar (First / Prev / "page / total" / Next / Last). The nav hides itself for a single page.
 var LIST_PAGE_SIZE = 30;
-function attachPagination(rowsContainer, items, pageSize, buildRow) {
+export function attachPagination(rowsContainer, items, pageSize, buildRow) {
   var page = 0;
   var pages = Math.max(1, Math.ceil(items.length / pageSize));
   var nav = el('div', 'list-pagination');
