@@ -67,6 +67,10 @@ var AUTO_ISSUE_MAX_EVENTS = 1000;
 var PRICE_HISTORY_PAGE_SIZE = 1000;
 var PRICE_HISTORY_MAX_POINTS = 3000;
 var ACTIVITY_PAGE_SIZE = 10;
+// Total events to load per query. The pager stops early once a project's full history is fetched (short page /
+// totalCount), so this only costs extra requests on projects that actually have more than 10 events — it stops
+// the oldest events (project-create, earlier pay-ins) from being cut off at 10.
+var ACTIVITY_MAX_ITEMS = 100;
 var BENDYSTRAW_PARENT_CHAIN_ID = {
   11155111: 1,
   11155420: 10,
@@ -9612,11 +9616,11 @@ async function fetchProjectActivity(project) {
   if (groupId) {
     queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_QUERY, 'activityEvents', {
       suckerGroupId: groupId, version: BENDYSTRAW_VERSION, chainIds: chainIds,
-    }, ACTIVITY_PAGE_SIZE, ACTIVITY_PAGE_SIZE).catch(function () { return { items: [] }; }));
+    }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS).catch(function () { return { items: [] }; }));
   }
   queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
     projectId: Number(project.id), version: BENDYSTRAW_VERSION, chainIds: chainIds,
-  }, ACTIVITY_PAGE_SIZE, ACTIVITY_PAGE_SIZE).catch(function () { return { items: [] }; }));
+  }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS).catch(function () { return { items: [] }; }));
 
   var results = await Promise.all(queries);
   var seen = {}, merged = [];
@@ -14547,7 +14551,7 @@ function buildAddLiquidityModal(project) {
       if (ceiling > 0) maxInput.value = formatPrice(ceiling);
       rnote.textContent = hasFloor
         ? 'Defaults span the current cash-out floor to the issuance ceiling.'
-        : 'No cash-out value yet — Min mirrors the gap up to the issuance ceiling on the downside; Max is the ceiling.';
+        : 'No cash-out floor yet, so the range centers on the current pool price: Max is the issuance ceiling, and Min is set the same distance below the price.';
       onRangeChange();
     });
   }
