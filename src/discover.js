@@ -10207,7 +10207,8 @@ function attachPagination(rowsContainer, items, pageSize, buildRow) {
   var page = 0;
   var pages = Math.max(1, Math.ceil(items.length / pageSize));
   var nav = el('div', 'list-pagination');
-  function go(to) { page = Math.max(0, Math.min(pages - 1, to)); render(); rowsContainer.scrollIntoView({ block: 'nearest' }); }
+  // Keep the nav (where the user just clicked) in view — don't jump the page into the middle of the table.
+  function go(to) { page = Math.max(0, Math.min(pages - 1, to)); render(); nav.scrollIntoView({ block: 'nearest' }); }
   function render() {
     rowsContainer.innerHTML = '';
     var start = page * pageSize;
@@ -10231,6 +10232,7 @@ function attachPagination(rowsContainer, items, pageSize, buildRow) {
 }
 
 function renderOwnersTable(participants, totalSupply, sym, project, paidByToken) {
+  var outer = el('div', 'owners-table-outer');
   var wrap = el('div', 'owners-table-wrap');
   var table = el('div', 'owners-table');
   var head = el('div', 'owners-row owners-head');
@@ -10263,12 +10265,12 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
     }
     tr.appendChild(acct);
 
-    // Share: just the %, with the token balance on hover.
-    var bal = el('span', 'owners-balance');
-    bal.title = formatCompactTokenAmount(row.balance) + ' ' + sym;
+    // Share: just the %, with the token balance on an INSTANT hover tooltip (no native-title delay).
+    var bal = el('span', 'owners-balance has-instant-tip');
     var pct = el('strong');
     pct.textContent = formatOwnerPortion(row.balance, totalSupply);
     bal.appendChild(pct);
+    var btip = el('span', 'instant-tip'); btip.textContent = formatCompactTokenAmount(row.balance) + ' ' + sym; bal.appendChild(btip);
     tr.appendChild(bal);
 
     var chains = el('span', 'owners-chains');
@@ -10292,8 +10294,9 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
 
   var nav = attachPagination(body, participants, LIST_PAGE_SIZE, buildOwnerRow);
   wrap.appendChild(table);
-  wrap.appendChild(nav);
-  return wrap;
+  outer.appendChild(wrap);
+  outer.appendChild(nav);
+  return outer;
 }
 
 // Loans table (Owners-style). Columns: Address, Collateral, Borrowed, Opened, Prepaid, Prepaid until,
@@ -11966,7 +11969,7 @@ function opsChainSelect(project, onChange, opts) {
   // Compact dropdown styling (matches the cash-out selectors), not the heavy full-width bordered control.
   var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
   var sym = project.tokenSymbol || 'tokens';
-  (project.chains || []).forEach(function (c) {
+  (opts.chains || project.chains || []).forEach(function (c) {
     var o = document.createElement('option'); o.value = String(c.id); o.textContent = c.name; sel.appendChild(o);
     // Show the connected wallet's balance on each chain right in the option, so the user can pick the
     // chain with funds without switching first.
@@ -12502,13 +12505,16 @@ function buildLoanModal(project, requestClose) {
 
   var clbl = el('div', 'modal-label'); clbl.textContent = 'Collateral'; wrap.appendChild(clbl);
   var lbl = el('div', 'modal-balance'); lbl.textContent = 'How much ' + sym + ' do you want to collateralize?'; wrap.appendChild(lbl);
-  var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
 
-  // Chain selector on its own row above the amount (with per-chain balances).
+  // Chain selector on its own row above the amount.
   var chainRow = el('div', 'ops-chainrow');
-  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshBalance(); }, { withBalance: true });
+  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshBalance(); });
   chainRow.appendChild(chainSel);
   wrap.appendChild(chainRow);
+
+  // Your balance + project balances per chain (replaces the in-dropdown balance).
+  var balTable = el('div', 'ops-bal-tables'); wrap.appendChild(balTable);
+  renderBalanceTables(balTable, project, sym);
 
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field');
@@ -12683,11 +12689,7 @@ function buildLoanModal(project, requestClose) {
 
   var pid = BigInt(project.id);
   function refreshBalance() {
-    bal.textContent = 'Your balance: …';
-    readUserBalance(project, state.chainId).then(function (b) {
-      state.balance = b;
-      bal.textContent = b == null ? 'Connect a wallet to see your balance.' : ('Your balance: ' + formatTokens(b) + ' ' + sym);
-    });
+    readUserBalance(project, state.chainId).then(function (b) { state.balance = b; });
   }
   var previewSeq = 0;
   function updatePreview() {
@@ -14163,6 +14165,7 @@ function renderLpTable(lp, sym, chainId) {
   var owners = lp.owners.filter(function (o) { return o.valueEth > 0; });
   if (!owners.length) return null;
   var total = owners.reduce(function (s, o) { return s + o.valueEth; }, 0);
+  var outer = el('div', 'owners-table-outer lp-pos-table-outer');
   var wrap = el('div', 'owners-table-wrap lp-pos-table-wrap');
   var table = el('div', 'owners-table lp-pos-table');
   var pairSym = (lp.pair && lp.pair.symbol) || 'ETH';
@@ -14185,8 +14188,9 @@ function renderLpTable(lp, sym, chainId) {
   }
   var nav = attachPagination(body, owners, LIST_PAGE_SIZE, buildLpRow);
   wrap.appendChild(table);
-  wrap.appendChild(nav);
-  return wrap;
+  outer.appendChild(wrap);
+  outer.appendChild(nav);
+  return outer;
 }
 
 // Horizontal bar of the pool's pair (ETH/USDC) vs token split (by pair-value). Null if nothing to show.
@@ -14398,13 +14402,16 @@ function buildAddLiquidityModal(project) {
   intro.textContent = 'Seed the buyback pool so payers can route through the AMM. Liquidity is added at the current pool price.';
   wrap.appendChild(intro);
 
-  var lbl0 = el('div', 'modal-label'); lbl0.textContent = 'Chain'; wrap.appendChild(lbl0);
-  var chainSel = el('select', 'ops-select');
-  chainSel.style.maxWidth = '100%'; chainSel.style.borderRight = '2px solid var(--write)';
-  lpChains.forEach(function (c) { var o = document.createElement('option'); o.value = String(c.id); o.textContent = c.name; chainSel.appendChild(o); });
-  chainSel.addEventListener('change', function () { state.chainId = Number(chainSel.value); refreshPair(); });
-  wrap.appendChild(chainSel);
+  var chainRow = el('div', 'ops-chainrow');
+  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshPair(); }, { chains: lpChains });
+  chainRow.appendChild(chainSel);
+  wrap.appendChild(chainRow);
 
+  // Your balance + project balances per chain (replaces the inline "Your balance" line).
+  var balTable = el('div', 'ops-bal-tables'); wrap.appendChild(balTable);
+  renderBalanceTables(balTable, project, sym);
+
+  // Slim line for the pair token (ETH/USDC) balance — the table above covers the project token.
   var balLine = el('div', 'modal-balance'); balLine.style.marginTop = '8px'; wrap.appendChild(balLine);
   var priceLine = el('div', 'modal-balance'); wrap.appendChild(priceLine);
 
@@ -14512,13 +14519,12 @@ function buildAddLiquidityModal(project) {
 
   function refreshBalances() {
     var acct = getAccount && getAccount();
-    if (!acct) { balLine.textContent = 'Connect a wallet to see your balance.'; state.revBal = null; state.ethBal = null; return; }
-    balLine.textContent = 'Your balance: …';
+    if (!acct) { balLine.textContent = ''; state.revBal = null; state.ethBal = null; return; }
+    balLine.textContent = 'Your ' + pairSym() + ': …';
     var pairTokenAddr = state.pair.isNative ? NATIVE_TOKEN : state.pair.addr;
     Promise.all([readUserBalance(project, state.chainId), readWalletTokenBalance(state.chainId, pairTokenAddr, acct)]).then(function (r) {
       state.revBal = r[0]; state.ethBal = r[1];
-      balLine.textContent = 'Your balance: ' + (r[0] != null ? formatTokens(r[0]) : '—') + ' ' + sym
-        + ' | ' + (r[1] != null ? formatBalance(r[1], pairDec(), pairSym()) : '—');
+      balLine.textContent = 'Your ' + pairSym() + ': ' + (r[1] != null ? formatBalance(r[1], pairDec(), pairSym()) : '—');
     });
   }
 
