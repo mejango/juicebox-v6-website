@@ -282,6 +282,10 @@ function permit2MetadataId(target) {
 async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount, onStatus) {
   var client = clientFor(chainId);
   var wallet = getWalletClient();
+  // The Permit2 signTypedData domain pins chainId, and the ERC20 approve writes on the active chain — switch the
+  // wallet to the pay chain first or the signature targets the wrong chain / the approve lands elsewhere.
+  var wc0 = await wallet.getChainId().catch(function () { return null; });
+  if (wc0 !== chainId) { if (onStatus) onStatus('Switching to ' + chainNameOf(chainId) + '…', 'pending'); await switchChain(chainId); wallet = getWalletClient(); }
   // 1. One-time ERC20→Permit2 approval (to the canonical, audited Permit2 — recognized by wallets), only when short.
   var erc20Allow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [owner, PERMIT2_ADDRESS] });
   if (BigInt(erc20Allow) < amount) {
@@ -489,9 +493,10 @@ function tierMediaKind(m) {
   return m.image ? 'image' : (m.animationUrl ? 'file' : '');
 }
 function tierMediaBadge(label, alt, url) {
-  var node = url ? document.createElement('a') : el('div', 'tier-media-badge');
+  var safe = safeMediaUrl(url); // never let a javascript:/data:text URL become a clickable href
+  var node = safe ? document.createElement('a') : el('div', 'tier-media-badge');
   node.className = 'tier-media-badge';
-  if (url) { node.href = url; node.target = '_blank'; node.rel = 'noopener'; }
+  if (safe) { node.href = safe; node.target = '_blank'; node.rel = 'noopener'; }
   var t = el('span', 'tier-media-badge-ext'); t.textContent = label; node.appendChild(t);
   node.title = alt || '';
   return node;
@@ -503,23 +508,26 @@ function renderTierMediaInto(container, m, alt, mode) {
   if (!kind) return false;
   var media = m.animationUrl || m.image;
   if (kind === 'image') {
-    var img = document.createElement('img'); img.loading = 'lazy'; img.src = m.image || media; img.alt = alt || ''; container.appendChild(img); return true;
+    var img = document.createElement('img'); img.loading = 'lazy'; img.src = safeMediaUrl(m.image || media); img.alt = alt || ''; container.appendChild(img); return true;
   }
   if (kind === 'video') {
-    var v = document.createElement('video'); v.src = media; v.muted = true; v.loop = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
+    var v = document.createElement('video'); v.src = safeMediaUrl(media); v.muted = true; v.loop = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
     if (mode === 'full') { v.controls = true; v.autoplay = true; } else { v.autoplay = true; }
     container.appendChild(v); return true;
   }
   if (kind === 'audio') {
     if (mode === 'thumb') { container.appendChild(tierMediaBadge('AUDIO', alt, media)); return true; }
     var wrapA = el('div', 'tier-media-audio');
-    if (m.image) { var ai = document.createElement('img'); ai.loading = 'lazy'; ai.src = m.image; ai.alt = alt || ''; wrapA.appendChild(ai); }
-    var au = document.createElement('audio'); au.src = media; au.controls = true; wrapA.appendChild(au);
+    if (m.image) { var ai = document.createElement('img'); ai.loading = 'lazy'; ai.src = safeMediaUrl(m.image); ai.alt = alt || ''; wrapA.appendChild(ai); }
+    var au = document.createElement('audio'); au.src = safeMediaUrl(media); au.controls = true; wrapA.appendChild(au);
     container.appendChild(wrapA); return true;
   }
   if (kind === 'pdf') {
-    if (mode === 'thumb') { container.appendChild(tierMediaBadge('PDF', alt, media)); return true; }
-    var f = document.createElement('iframe'); f.src = media; f.className = 'tier-media-frame'; f.setAttribute('loading', 'lazy'); container.appendChild(f); return true;
+    // An <iframe src> executes its target — a data:text/html or javascript: media URL would run script. Only
+    // embed a real http(s) PDF; otherwise show a link badge (which itself sanitizes the href).
+    var pdfSrc = httpUrlOnly(media);
+    if (mode === 'thumb' || !pdfSrc) { container.appendChild(tierMediaBadge('PDF', alt, media)); return true; }
+    var f = document.createElement('iframe'); f.src = pdfSrc; f.className = 'tier-media-frame'; f.setAttribute('loading', 'lazy'); f.setAttribute('sandbox', ''); container.appendChild(f); return true;
   }
   if (kind === 'text') {
     if (mode === 'thumb') { container.appendChild(tierMediaBadge('TXT', alt, media)); return true; }
@@ -2190,6 +2198,9 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   var ur = UNIVERSAL_ROUTER_BY_CHAIN[chainId];
   var client = clientFor(chainId);
   var wallet = getWalletClient();
+  // Switch to the swap chain before signing — the Permit2 domain + the approve write both bind to the active chain.
+  var wc0 = await wallet.getChainId().catch(function () { return null; });
+  if (wc0 !== chainId) { if (onStatus) onStatus('Switching to ' + chainNameOf(chainId) + '…', 'pending'); await switchChain(chainId); wallet = getWalletClient(); }
   // 1. One-time ERC20→Permit2 approval (canonical Permit2; wallets recognize it).
   var erc20Allow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [recipient, PERMIT2_ADDRESS] });
   if (BigInt(erc20Allow) < amountIn) {
@@ -2571,11 +2582,27 @@ function ipfsToHttp(uri) {
   return uri;
 }
 
+// Tier media URLs (image / animation_url, or an href pulled out of a metadata SVG) are attacker-controlled.
+// Block script-bearing schemes before they reach a src/href. safeMediaUrl keeps http(s)/ipfs-gateway and
+// data:image|video|audio, dropping javascript:/vbscript:/blob: and data:text|application (HTML/script payloads).
+export function safeMediaUrl(url) {
+  var u = (url || '').trim();
+  if (!u) return '';
+  if (/^(javascript|vbscript|blob):/i.test(u)) return '';
+  if (/^data:/i.test(u) && !/^data:(image|video|audio)\//i.test(u)) return '';
+  return u;
+}
+// An <iframe> executes whatever its src resolves to — require a real http(s) URL (no data:/blob:/javascript:).
+export function httpUrlOnly(url) { var u = (url || '').trim(); return /^https?:\/\//i.test(u) ? u : ''; }
+
+// DOMParser is INERT — unlike `div.innerHTML = html`, the parsed document never loads <img src> (so an
+// `<img onerror>` in untrusted on-chain text can't fire) and never runs script. Use it everywhere we parse
+// project-controlled HTML to extract text/structure.
+function parseInertHtml(html) { return new DOMParser().parseFromString(String(html || ''), 'text/html').body; }
+
 function stripHtml(html) {
   if (!html) return '';
-  var tmp = document.createElement('div');
-  tmp.innerHTML = String(html);
-  return (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+  return (parseInertHtml(html).textContent || '').replace(/\s+/g, ' ').trim();
 }
 
 // Like stripHtml, but PRESERVES paragraph/line breaks. Rich-text descriptions are HTML
@@ -2584,8 +2611,7 @@ function stripHtml(html) {
 // extract text — never inject the raw HTML into the live DOM (untrusted on-chain content).
 function htmlToText(html) {
   if (!html) return '';
-  var tmp = document.createElement('div');
-  tmp.innerHTML = String(html);
+  var tmp = parseInertHtml(html);
   tmp.querySelectorAll('br').forEach(function (br) { br.replaceWith(document.createTextNode('\n')); });
   tmp.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6, blockquote, tr').forEach(function (b) { b.appendChild(document.createTextNode('\n\n')); });
   return (tmp.textContent || '')
@@ -2599,8 +2625,7 @@ function htmlToText(html) {
 // `<ul>`/`<ol>` keep their bullets/numbers instead of flattening to plain lines. Untrusted on-chain
 // content: parse into a detached node and copy only text + list structure (never inject raw HTML).
 function renderRichTextInto(container, html) {
-  var tmp = document.createElement('div');
-  tmp.innerHTML = String(html || '');
+  var tmp = parseInertHtml(html);
   var rendered = false;
   for (var i = 0; i < tmp.children.length; i++) {
     var b = tmp.children[i], tag = b.tagName;
@@ -4610,9 +4635,9 @@ function renderDetailHeader(project) {
     nodes.forEach(function (n) { p.appendChild(n); });
     return p;
   };
-  // "Flavor | On | Operator" on one row (the "|" is a ::after bar BETWEEN pairs); the pairs are inline +
-  // nowrap, so the row stays on one line on desktop and only wraps to multiple lines when the viewport is
-  // too narrow (mobile). Site is its own row (a URL can be long).
+  // "Flavor | On | Operator | Site" on one row (the "|" is a ::after bar BETWEEN pairs); each pair is inline +
+  // nowrap as a UNIT, so the row stays on one line on desktop and only wraps whole key:val pairs to the next
+  // line when the viewport is too narrow (mobile) — a label never separates from its value.
   var ownerWarn = el('span', 'detail-head-ownerwarn');
   var row1 = el('div', 'detail-head-meta');
   var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
@@ -4625,16 +4650,15 @@ function renderDetailHeader(project) {
   }
   row1.appendChild(document.createTextNode(' '));
   row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)), ownerWarn]));
-  header.appendChild(row1);
   if (project.infoUri) {
     var href = project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri);
     var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
-    a.className = 'detail-head-url'; // long URLs may wrap; the "Site:" label stays attached at the start
+    a.className = 'detail-head-url';
     a.textContent = project.infoUri.replace(/^https?:\/\//, '');
-    var row3 = el('div', 'detail-head-meta');
-    row3.appendChild(mkPair('Site: ', [a]));
-    header.appendChild(row3);
+    row1.appendChild(document.createTextNode(' '));
+    row1.appendChild(mkPair('Site: ', [a]));
   }
+  header.appendChild(row1);
   // Flag when the on-chain owner isn't the same on every chain (a per-chain ownership split).
   if (!project.isRevnet && (project.chains || []).length > 1) {
     fetchOwnersPerChain(project).then(function (res) { if (res.diverged && ownerWarn.isConnected) ownerWarn.textContent = ' differs by chain'; }).catch(function () {});
@@ -6571,6 +6595,21 @@ function labelForQueuedTx(tx) {
   var sel = (tx.data || '').slice(0, 10).toLowerCase();
   return SAFE_QUEUE_LABELS[sel] || ('Contract call' + (sel ? ' ' + sel : ''));
 }
+// Show the FULL decoded call before a co-signer approves OR executes a queued Safe tx — the one-line label
+// hides the recipient/amount/target a malicious co-signer could slip in. Folds the DELEGATECALL / ETH-value /
+// unrecognized-target warnings into the same review. Returns the user's confirm/cancel as a promise.
+function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
+  var nm = resolveContractName(tx.to, cid);
+  var warns = [];
+  if (Number(tx.operation) === 1) warns.push('⚠ DELEGATECALL — runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets).');
+  var ethVal; try { ethVal = BigInt(tx.value || 0); } catch (_) { ethVal = 0n; }
+  if (ethVal > 0n) warns.push('Sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe.');
+  if (!nm) warns.push('⚠ Targets an UNRECOGNIZED contract (' + tx.to + ') — not a known Juicebox/Revnet contract. Review the raw data below before approving.');
+  return confirmTransactionModal(
+    { chain: chainName, contract: nm || tx.to, address: tx.to, calldata: tx.data, value: tx.value },
+    { title: (actionLabel || 'Review') + ' Safe transaction #' + tx.nonce, confirmText: actionLabel || 'Confirm', description: warns.join(' ') || null }
+  );
+}
 
 // Back office: a Safe-owned project's per-chain multisig queue. Signers confirm queued owner-only txs
 // here (or open them in the Safe app); proposing happens from the action modals (Deploy token, etc.).
@@ -6729,22 +6768,20 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           if (isDelegate) { sub.appendChild(boSep()); var dc = el('span', 'backoffice-warn'); dc.textContent = '⚠ DELEGATECALL'; sub.appendChild(dc); }
           if (ethVal > 0n) { sub.appendChild(boSep()); sub.appendChild(document.createTextNode('sends ' + formatBalance(ethVal, 18, 'ETH'))); }
           main.appendChild(sub);
-          // Extra explicit confirmation for the dangerous cases before signing/executing.
-          var riskGate = function () {
-            if (isDelegate && !window.confirm('This Safe transaction is a DELEGATECALL — it runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets). Only proceed if you fully trust it. Continue?')) return false;
-            if (ethVal > 0n && !window.confirm('This transaction sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe. Continue?')) return false;
-            return true;
-          };
+          // The full decoded review (incl. these DELEGATECALL/ETH warnings) is shown by reviewQueuedSafeTx
+          // before Sign/Execute — see below.
           row.appendChild(main);
           var actions = el('div', 'backoffice-actions');
           var signed = (tx.confirmations || []).some(function (cf) { return acc && cf.owner && cf.owner.toLowerCase() === acc.toLowerCase(); });
           if (isSigner && !signed && nconf < need) {
             var signBtn = el('button', 'detail-check-btn'); signBtn.textContent = 'Sign';
             signBtn.addEventListener('click', function () {
-              if (!riskGate()) return;
-              signBtn.disabled = true; signBtn.textContent = 'Signing…';
-              confirmSafeTx(c.id, safe, tx, acc).then(function () { signBtn.textContent = 'Signed'; setTimeout(function () { loadQueues(info); }, 1200); })
-                .catch(function (e) { signBtn.disabled = false; signBtn.textContent = 'Sign'; alert((e && e.message) || e); });
+              reviewQueuedSafeTx(c.id, c.name, tx, 'Sign').then(function (ok) {
+                if (!ok) return;
+                signBtn.disabled = true; signBtn.textContent = 'Signing…';
+                confirmSafeTx(c.id, safe, tx, acc).then(function () { signBtn.textContent = 'Signed'; setTimeout(function () { loadQueues(info); }, 1200); })
+                  .catch(function (e) { signBtn.disabled = false; signBtn.textContent = 'Sign'; alert((e && e.message) || e); });
+              });
             });
             actions.appendChild(signBtn);
           } else if (signed) {
@@ -6756,10 +6793,12 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
             var execBtn = el('button', 'detail-check-btn'); execBtn.textContent = 'Execute';
             execBtn.addEventListener('click', function () {
               if (!(getAccount && getAccount())) { connect(); return; }
-              if (!riskGate()) return;
-              execBtn.disabled = true; execBtn.textContent = 'Executing…';
-              executeSafeTx(c.id, safe, tx).then(function () { execBtn.textContent = 'Sent'; setTimeout(function () { loadQueues(info); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }, 2000); })
-                .catch(function (e) { execBtn.disabled = false; execBtn.textContent = 'Execute'; alert((e && (e.shortMessage || e.message)) || e); });
+              reviewQueuedSafeTx(c.id, c.name, tx, 'Execute').then(function (ok) {
+                if (!ok) return;
+                execBtn.disabled = true; execBtn.textContent = 'Executing…';
+                executeSafeTx(c.id, safe, tx).then(function () { execBtn.textContent = 'Sent'; setTimeout(function () { loadQueues(info); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }, 2000); })
+                  .catch(function (e) { execBtn.disabled = false; execBtn.textContent = 'Execute'; alert((e && (e.shortMessage || e.message)) || e); });
+              });
             });
             actions.appendChild(execBtn);
           }
@@ -6782,7 +6821,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       allBtn.addEventListener('click', function () {
         if (!(getAccount && getAccount())) { connect(); return; }
         var entries = ready.map(function (r) { return safeExecRelayrTx(r.cid, safe, r.tx); });
-        var preview = ready.map(function (r) { return { cid: r.cid, chain: r.chain, label: labelForQueuedTx(r.tx) + ' (#' + r.tx.nonce + ')' }; });
+        var preview = ready.map(function (r) { return { cid: r.cid, chain: r.chain, label: labelForQueuedTx(r.tx) + ' → ' + (resolveContractName(r.tx.to, r.cid) || r.tx.to) + ' (#' + r.tx.nonce + ')' }; });
         runRelayrBundle(entries, { title: 'Execute on ' + ready.length + ' chains', preview: preview }).then(function (res) {
           if (res && res.done) loadQueues(info);
         });
@@ -13954,10 +13993,13 @@ function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
     var b = bands[idx];
     var hasLiq = b.eth > 0n || b.rev > 0n || b.liq > 0;
     var sideTxt = amm ? (b.mid < amm ? ' | buy-side' : ' | sell-side') : '';
-    tip.innerHTML = '<div class="lp-depth-tip-price">≈ ' + formatPrice(b.mid) + ' ' + pairSym + '/' + sym + sideTxt + '</div>'
-      + '<div class="lp-depth-tip-amt">' + (hasLiq
-        ? (formatCompactTokenAmount(b.rev) + ' ' + sym + ' + ' + formatPrice(Number(b.eth) / Math.pow(10, pairDec)) + ' ' + pairSym)
-        : 'no liquidity here') + '</div>';
+    // textContent, not innerHTML — `sym`/`pairSym` are project-controlled ERC-20 symbols (XSS sink otherwise).
+    tip.textContent = '';
+    var tipPrice = el('div', 'lp-depth-tip-price'); tipPrice.textContent = '≈ ' + formatPrice(b.mid) + ' ' + pairSym + '/' + sym + sideTxt;
+    var tipAmt = el('div', 'lp-depth-tip-amt'); tipAmt.textContent = hasLiq
+      ? (formatCompactTokenAmount(b.rev) + ' ' + sym + ' + ' + formatPrice(Number(b.eth) / Math.pow(10, pairDec)) + ' ' + pairSym)
+      : 'no liquidity here';
+    tip.appendChild(tipPrice); tip.appendChild(tipAmt);
     tip.style.display = '';
     tip.style.left = Math.max(2, Math.min(rect.width - 150, e.clientX - rect.left + 10)) + 'px';
   });

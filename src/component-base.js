@@ -547,7 +547,7 @@ function auditLinksFromPayload(payload) {
 
 // Append a subtle "[copy prompt to verify with your LLM]" link that copies buildTxAuditPrompt(payload).
 export function appendAuditPromptLink(container, payload) {
-  var DEFAULT = '[Copy tx audit prompt]';
+  var DEFAULT = '[copy tx audit prompt]';
   var wrap = el('div', 'tx-audit-prompt');
   var link = el('a', 'tx-audit-link'); link.href = '#'; link.textContent = DEFAULT;
   link.addEventListener('click', function (e) {
@@ -605,6 +605,13 @@ function formatArgValue(type, v) {
   if (Array.isArray(v)) return '[' + v.map(function (x) { return formatArgValue('', x); }).join(', ') + ']';
   try { return JSON.stringify(v, function (k, val) { return typeof val === 'bigint' ? val.toString() : val; }); } catch (_) { return String(v); }
 }
+// Normalize tx field aliases — builders disagree on names: calldata|data (the raw bytes), function|functionName
+// (viem's key), args|rawArgs (the positional array; some payloads also carry a named-object `args`, so only an
+// array counts here). Without this, payloads like the auto-issue confirm (data/functionName/rawArgs) render as
+// "could not decode" even though the ABI + calldata are present.
+function txCalldata(tx) { return tx.calldata || tx.data || null; }
+function txFnName(tx) { return tx.function || tx.functionName || null; }
+function txArgsArray(tx) { return Array.isArray(tx.args) ? tx.args : (Array.isArray(tx.rawArgs) ? tx.rawArgs : []); }
 function shapeDecoded(abi, fnName, argsArr) {
   var frag = abi && abi.filter(function (e) { return e.type === 'function' && e.name === fnName; })[0];
   var inputs = (frag && frag.inputs) || [];
@@ -616,10 +623,11 @@ export function decodeCallForDisplay(tx) {
   if (!tx) return null;
   var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
   var abi = null; try { if (name) abi = getABI(name); } catch (_) {}
-  if (tx.calldata && tx.calldata !== '0x' && abi) {
-    try { var dec = decodeFunctionData({ abi: abi, data: tx.calldata }); return shapeDecoded(abi, dec.functionName, dec.args); } catch (_) {}
+  var cd = txCalldata(tx), fn = txFnName(tx);
+  if (cd && cd !== '0x' && abi) {
+    try { var dec = decodeFunctionData({ abi: abi, data: cd }); return shapeDecoded(abi, dec.functionName, dec.args); } catch (_) {}
   }
-  if (tx.function) return shapeDecoded(abi, tx.function, tx.args || []);
+  if (fn) return shapeDecoded(abi, fn, txArgsArray(tx));
   return null;
 }
 // Rich decode that PRESERVES structure (nested tuples/arrays) so the renderer can build a tree, not a JSON
@@ -628,17 +636,18 @@ function decodeCallRich(tx) {
   if (!tx) return null;
   var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
   var abi = null; try { if (name) abi = getABI(name); } catch (_) {}
-  if (tx.calldata && tx.calldata !== '0x' && abi) {
+  var cd = txCalldata(tx), fn = txFnName(tx), ar = txArgsArray(tx);
+  if (cd && cd !== '0x' && abi) {
     try {
-      var dec = decodeFunctionData({ abi: abi, data: tx.calldata });
+      var dec = decodeFunctionData({ abi: abi, data: cd });
       var frag = abi.filter(function (e) { return e.type === 'function' && e.name === dec.functionName; })[0];
       return { fn: dec.functionName, inputs: (frag && frag.inputs) || [], values: Array.from(dec.args || []) };
     } catch (_) {}
   }
-  if (tx.function) {
-    var frag2 = abi && abi.filter(function (e) { return e.type === 'function' && e.name === tx.function; })[0];
-    if (frag2) return { fn: tx.function, inputs: frag2.inputs || [], values: tx.args || [] };
-    return { fn: tx.function, inputs: null, shaped: shapeDecoded(abi, tx.function, tx.args || []).args };
+  if (fn) {
+    var frag2 = abi && abi.filter(function (e) { return e.type === 'function' && e.name === fn; })[0];
+    if (frag2) return { fn: fn, inputs: frag2.inputs || [], values: ar };
+    return { fn: fn, inputs: null, shaped: shapeDecoded(abi, fn, ar).args };
   }
   return null;
 }
@@ -726,19 +735,20 @@ export function renderTxReview(tx) {
 // call fields when the ABI can't decode it.
 function txRawJson(tx) {
   var obj = null;
+  var cd = txCalldata(tx);
   try {
     var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
     var abi = name ? getABI(name) : null;
-    if (tx.calldata && tx.calldata !== '0x' && abi) {
-      var dec = decodeFunctionData({ abi: abi, data: tx.calldata });
+    if (cd && cd !== '0x' && abi) {
+      var dec = decodeFunctionData({ abi: abi, data: cd });
       var frag = abi.filter(function (e) { return e.type === 'function' && e.name === dec.functionName; })[0];
       var inputs = (frag && frag.inputs) || [];
       var named = {};
       (dec.args || []).forEach(function (v, i) { named[(inputs[i] && inputs[i].name) || ('arg' + i)] = v; });
-      obj = { contract: name, address: tx.address || tx.to, chain: tx.chain, function: dec.functionName, args: named, calldata: tx.calldata };
+      obj = { contract: name, address: tx.address || tx.to, chain: tx.chain, function: dec.functionName, args: named, calldata: cd };
     }
   } catch (_) {}
-  if (!obj) obj = { contract: tx.contract, address: tx.address || tx.to, chain: tx.chain, function: tx.function, args: tx.args, calldata: tx.calldata, value: tx.value };
+  if (!obj) obj = { contract: tx.contract, address: tx.address || tx.to, chain: tx.chain, function: txFnName(tx), args: (tx.args || tx.rawArgs), calldata: cd, value: tx.value };
   return formatPayloadJson(obj);
 }
 function renderDecodedSummary(payload) {

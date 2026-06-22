@@ -2,6 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Defense-in-depth backstop for HTML/SVG injection: strict script-src (the bundle is eval-free, no inline
+     scripts/handlers — verified) blocks injected <script> and inline on*= handlers; object-src 'none' + base-uri
+     'self' close plugin/base-tag vectors. img/media/connect/frame stay permissive so RPC/IPFS/wallet/PDF work. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; font-src 'self' data:; connect-src * wss: ws: data: blob:; frame-src https: blob:; object-src 'none'; base-uri 'self'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Juicebox Money Engine: Fund Your Thing</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">

@@ -4,7 +4,7 @@
 
 import {
   el, createComponentWrapper, createWalletButton, executeTransaction,
-  renderError, getAddress, getAccount, parseHashDefaults, isAddr,
+  renderError, getAddress, getAccount, parseHashDefaults, isAddr, truncAddr,
 } from './component-base.js';
 
 export var setPermissionsAbi = [{
@@ -270,8 +270,15 @@ export function renderPermissionsComponent() {
 
     var projectId = state.projectId ? Number(state.projectId) : 0;
 
+    // Flag the two highest-stakes grants explicitly in the confirm (the decoded `permissionIds: [1]` alone
+    // doesn't convey "full control"): ROOT (id 1) = every permission; projectId 0 = ALL of your projects.
+    var danger = [];
+    if (selectedArr.indexOf(1) !== -1) danger.push('⚠ ROOT grants ' + truncAddr(state.operator) + ' EVERY permission — full operator control of your project(s).');
+    if (projectId === 0) danger.push('⚠ Project ID 0 applies these permissions to ALL your projects on this chain, not just one.');
+
     executeTransaction({
       ...buildSetPermissionsArgs({ chainId: state.chainId, permissionsAddr: permissionsAddr, account: account, operator: state.operator, projectId: projectId, permissionIds: selectedArr }),
+      confirmDescription: danger.join(' ') || undefined,
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
