@@ -16,7 +16,7 @@ import { mainnet } from 'viem/chains';
 import { normalize as ensNormalize } from 'viem/ens';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
-  createPublicClientForChain, getWalletClient, switchChain, truncAddr, ZERO_ADDRESS as ZERO, errMessage, isAddr, addrOrZero,
+  createPublicClientForChain, getWalletClient, switchChain, truncAddr, ZERO_ADDRESS as ZERO, errMessage, isAddr, addrOrZero, promptFoot,
 } from './component-base.js';
 import {
   launchProjectAbi, buildRulesetConfigs, createDefaultRuleset,
@@ -543,6 +543,7 @@ export function openCreateFlow() {
     body.appendChild(renderStep(state, render));
     sheet.appendChild(body);
     sheet.appendChild(renderFooter(state, render, close));
+    sheet.appendChild(promptFoot('Launch a project', 'launch')); // [copy build prompt] for the whole create flow
     // Persist the draft after every render so a refresh restores the work. Clear it once deployed.
     if (state.done) clearDraft(); else saveDraft(state);
   }

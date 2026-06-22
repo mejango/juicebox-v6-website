@@ -547,15 +547,15 @@ function auditLinksFromPayload(payload) {
 
 // Append a subtle "[copy prompt to verify with your LLM]" link that copies buildTxAuditPrompt(payload).
 export function appendAuditPromptLink(container, payload) {
-  var DEFAULT = 'Copy tx audit prompt';
+  var DEFAULT = '[Copy tx audit prompt]';
   var wrap = el('div', 'tx-audit-prompt');
   var link = el('a', 'tx-audit-link'); link.href = '#'; link.textContent = DEFAULT;
   link.addEventListener('click', function (e) {
     e.preventDefault();
     var text = buildTxAuditPrompt(payload);
     var p = (navigator.clipboard && navigator.clipboard.writeText) ? navigator.clipboard.writeText(text) : Promise.reject();
-    p.then(function () { link.textContent = 'Copied — paste into your LLM'; })
-     .catch(function () { link.textContent = 'Copy failed — select the payload above'; });
+    p.then(function () { link.textContent = '[copied — paste into your LLM]'; })
+     .catch(function () { link.textContent = '[copy failed — select the payload above]'; });
     setTimeout(function () { link.textContent = DEFAULT; }, 2200);
   });
   wrap.appendChild(link); container.appendChild(wrap);

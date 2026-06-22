@@ -943,15 +943,20 @@ export function renderBuildTab() {
       'Mirror the pattern: every transaction is a pure buildXArgs() that round-trips through the contract ABI — copy the builder and keep its round-trip test.'
     ]),
     (function () {
-      var box = document.createElement('div'); box.className = 'guide-info';
+      var box = document.createElement('p'); box.className = 'guide-text';
       box.appendChild(document.createTextNode('Reference: '));
       var lk = function (href, text) { var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
       box.appendChild(lk('https://github.com/mejango/juicebox-v6-website', 'this site’s repo (README + tests)'));
-      box.appendChild(document.createTextNode('  ·  '));
+      box.appendChild(document.createTextNode(' and '));
       box.appendChild(lk('https://github.com/Bananapus/version-6', 'V6 contracts (version-6)'));
+      box.appendChild(document.createTextNode('.'));
       return box;
     })(),
-    infoBox('The whole app is the source you are looking at — fetch the IPFS bundle and read app.js, or clone the repo. Nothing is hidden server-side: the transaction your wallet signs is built entirely in this code.')
+    (function () {
+      var p = document.createElement('p'); p.className = 'guide-text';
+      p.textContent = 'The whole app is the source you are looking at — fetch the IPFS bundle and read app.js, or clone the repo. Nothing is hidden server-side: the transaction your wallet signs is built entirely in this code.';
+      return p;
+    })()
   ]));
 
   container.appendChild(wrap);

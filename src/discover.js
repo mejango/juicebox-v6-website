@@ -3100,6 +3100,9 @@ function renderGrid() {
 
   var grid = el('div', 'discover-grid');
   _gridWrapper.appendChild(grid);
+  var gridFoot = discoverPromptFoot('Discover explorer (project grid)'); // [copy build prompt] for the grid
+  gridFoot.classList.add('comp-prompt-foot--left');
+  _gridWrapper.appendChild(gridFoot);
   _container.appendChild(_gridWrapper);
 
   var status = el('div', 'discover-card-desc');
@@ -3425,7 +3428,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   if (activityAsTab) { builders.Activity = function () { return activityCardEl; }; tabs.unshift('Activity'); }
   var tabRow = el('div', 'project-detail-tabs');
   var contentArea = el('div', 'project-detail-content');
-  attachCardPromptLinks(contentArea); // every card on every tab gets a "[copy build prompt]" link
+  attachCardPromptLinks(wrap); // every card across the whole detail (tabs + activity + side cards) gets a link
   var built = {};
   // Resolve the initial tab (from a deep link) case-insensitively; fall back to the first tab.
   var startTab = tabs[0];
@@ -11371,7 +11374,8 @@ function attachCardPromptLinks(contentArea) {
   if (!contentArea || typeof MutationObserver === 'undefined') return;
   var tag = function (card) {
     if (!card.classList || card.classList.contains('paybox')) return;
-    if (card.querySelector(':scope > .comp-prompt-foot')) return;
+    if (card.dataset.promptLinked) return; // idempotent: never add a second link to the same card
+    card.dataset.promptLinked = '1';
     var t = card.querySelector('.detail-card-title');
     var title = t ? (t.textContent || '').trim().split('\n')[0]
       : (card.classList.contains('you-card') ? 'Your holdings & actions' : 'this section');
