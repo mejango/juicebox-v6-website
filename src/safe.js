@@ -54,12 +54,18 @@ function headers(json) {
 // rate-limits bursts with 429, and a multi-chain Back-office load — each chain does a nonce read + a
 // pending-list read, with retries — used to fire ~8-16 requests at once and trip it. Trickling them keeps the
 // app well under the limit; total latency for a 4-chain load is ~1s, which is fine for an on-demand tab.
-var _safeApiQueue = Promise.resolve();
+// Cap CONCURRENT requests (not strictly serial). Concurrency 1 made a multi-chain Back-office load crawl —
+// 8+ requests ran one-at-a-time. A small cap loads several chains at once while staying well under the burst
+// threshold that triggers the gateway's 429.
+var SAFE_MAX_CONCURRENT = 3;
+var _safeActive = 0;
+var _safeWaiters = [];
 function safeFetch(url, opts) {
-  var run = function () { return fetch(url, opts); };
-  var p = _safeApiQueue.then(run, run);
-  _safeApiQueue = p.then(function () {}, function () {}); // keep the chain alive regardless of outcome
-  return p;
+  return new Promise(function (resolve, reject) {
+    function release() { _safeActive--; var next = _safeWaiters.shift(); if (next) next(); }
+    function run() { _safeActive++; fetch(url, opts).then(function (r) { release(); resolve(r); }, function (e) { release(); reject(e); }); }
+    if (_safeActive < SAFE_MAX_CONCURRENT) run(); else _safeWaiters.push(run);
+  });
 }
 // Collapse concurrent identical nonce reads (listPendingSafeTxs reads the nonce too) — in-flight only, no TTL,
 // so the propose path never sees a stale nonce.

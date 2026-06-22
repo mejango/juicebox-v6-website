@@ -644,6 +644,17 @@ function decodeCallRich(tx) {
       return { fn: dec.functionName, inputs: (frag && frag.inputs) || [], values: Array.from(dec.args || []) };
     } catch (_) {}
   }
+  // Curated named-object args: the pay/swap/add-liquidity confirms pass a human-readable { name: value } object
+  // (values already formatted, e.g. "…wei (1 ETH)") instead of a positional array. Render its entries directly
+  // so the values aren't blank — mapping it onto the ABI's positional inputs would leave every value undefined.
+  if (tx.args && typeof tx.args === 'object' && !Array.isArray(tx.args)) {
+    return { fn: fn || '(call)', inputs: null, shaped: Object.keys(tx.args).map(function (k) {
+      var v = tx.args[k];
+      // Curated values are already display strings (e.g. a full beneficiary address) — show them as-is, NOT
+      // through formatArgValue, which truncates addresses (a confirm must show the full recipient).
+      return { name: k, type: '', value: typeof v === 'string' ? v : formatArgValue('', v) };
+    }) };
+  }
   if (fn) {
     var frag2 = abi && abi.filter(function (e) { return e.type === 'function' && e.name === fn; })[0];
     if (frag2) return { fn: fn, inputs: frag2.inputs || [], values: ar };

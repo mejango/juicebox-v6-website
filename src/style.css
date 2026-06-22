@@ -2022,7 +2022,7 @@ input[type="checkbox"].field {
 .guide-copy-link--ok { opacity: 1; color: var(--c-teal); }
 .guide-info a, .guide-text a { color: var(--c-teal); text-decoration: none; border-bottom: 1px solid currentColor; }
 /* "[copy build prompt]" text link, tight in the card's bottom-right corner (no padding of its own). */
-.comp-prompt-foot { display: flex; justify-content: flex-end; padding: 0; margin-top: 4px; }
+.comp-prompt-foot { display: flex; justify-content: flex-end; padding: 0; margin-top: 12px; }
 .comp-prompt-foot--left { justify-content: flex-start; }
 .comp-prompt-link { font-family: inherit; font-size: 11px; color: var(--muted-2); background: none; border: none; cursor: pointer; padding: 0; opacity: 0.55; white-space: nowrap; }
 .comp-prompt-link:hover { opacity: 1; color: var(--c-teal); }
