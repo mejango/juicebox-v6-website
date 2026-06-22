@@ -1020,7 +1020,10 @@ function openAddTierModal(project, shop) {
   var votingInput = el('input', 'operator-edit-jwt'); votingInput.type = 'number'; votingInput.step = '1'; votingInput.min = '0'; votingInput.placeholder = '0'; votingWrap.appendChild(votingInput);
   votingCb.addEventListener('change', function () { votingWrap.style.display = votingCb.checked ? '' : 'none'; if (!votingCb.checked) votingInput.value = ''; });
 
-  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '24px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
+  // "+ Add another item" sits above the chain selector (the chains apply to every staged item).
+  var addAnother = el('a', 'operator-cta'); addAnother.href = '#'; addAnother.textContent = '+ Add another item';
+  addAnother.style.display = 'inline-block'; addAnother.style.marginTop = '24px'; content.appendChild(addAnother);
+  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '24px'; clbl.textContent = 'On'; content.appendChild(clbl);
   var chainBox = el('div', 'splits-edit-chains');
   var chainChecks = allChains.map(function (c) {
     var row = el('label', 'splits-edit-chain');
@@ -1095,7 +1098,6 @@ function openAddTierModal(project, shop) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var addAnother = el('a', 'operator-cta'); addAnother.href = '#'; addAnother.textContent = '+ Save & add another item'; actions.appendChild(addAnother);
   var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Add items for sale'; actions.appendChild(submit);
   content.appendChild(actions);
 
@@ -1349,7 +1351,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   });
 
   // Click the art or name to open the full item detail (per-chain supply, config, operator edit/remove).
-  function openDetail() { openTierDetail(project, shop, tier, refreshers); }
+  function openDetail() { openTierDetail(project, shop, tier, cart, refreshers); }
   imgWrap.style.cursor = 'pointer'; imgWrap.addEventListener('click', openDetail);
   nameEl.style.cursor = 'pointer'; nameEl.addEventListener('click', openDetail);
   return c;
@@ -1378,7 +1380,7 @@ function readTierSupplyAcrossChains(project, tierId) {
 }
 
 // Item-detail popup: large art, name, price (+ discount), per-chain supply, and the full tier config.
-function openTierDetail(project, shop, tier, refreshers) {
+function openTierDetail(project, shop, tier, cart, refreshers) {
   var content = el('div', 'tier-detail');
   var art = el('div', 'tier-detail-art'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tier.id; art.appendChild(ph); content.appendChild(art);
   var nameEl = el('div', 'tier-detail-name'); nameEl.textContent = 'Tier ' + tier.id; content.appendChild(nameEl);
@@ -1395,6 +1397,25 @@ function openTierDetail(project, shop, tier, refreshers) {
     var badge = el('span', 'tier-detail-discount'); badge.textContent = disc; priceRow.appendChild(badge);
   }
   content.appendChild(priceRow);
+
+  // Buy controls — add this item to the shared cart right from the popup (stays in sync with the shop card +
+  // pay strip via the cart subscription; sold-out tiers are inert; unlimited tiers have no per-tx cap).
+  if (cart) {
+    var soldOut = tier.remaining === 0;
+    var cap = (tier.initial >= 999999999) ? Infinity : tier.remaining;
+    var buyRow = el('div', 'tier-detail-buy');
+    var minus = el('button', 'shop-tier-stepbtn'); minus.textContent = '−';
+    var qtyEl = el('span', 'shop-tier-qty');
+    var plus = el('button', 'shop-tier-stepbtn'); plus.textContent = '+';
+    buyRow.appendChild(minus); buyRow.appendChild(qtyEl); buyRow.appendChild(plus);
+    if (soldOut) { var soBadge = el('span', 'tier-detail-soldout'); soBadge.textContent = 'sold out'; buyRow.appendChild(soBadge); }
+    content.appendChild(buyRow);
+    var refreshBuy = function () { var q = cart.get(tier.id); qtyEl.textContent = String(q); minus.disabled = q <= 0; plus.disabled = soldOut || q >= cap; };
+    minus.addEventListener('click', function () { cart.set(tier.id, Math.max(0, cart.get(tier.id) - 1)); });
+    plus.addEventListener('click', function () { if (!soldOut) cart.set(tier.id, Math.min(cap, cart.get(tier.id) + 1)); });
+    cart.subscribe(function (id) { if (id === tier.id && qtyEl.isConnected) refreshBuy(); });
+    refreshBuy();
+  }
 
   var sup = el('div', 'tier-detail-supply'); sup.textContent = 'Loading supply across chains…'; content.appendChild(sup);
   readTierSupplyAcrossChains(project, tier.id).then(function (rows) {
@@ -1418,14 +1439,29 @@ function openTierDetail(project, shop, tier, refreshers) {
   if (tier.reserveFrequency > 0) fact('Reserve mint', '1 per ' + tier.reserveFrequency + ' sold');
   if (tier.votingUnits && BigInt(tier.votingUnits) > 0n) fact('Voting units', String(tier.votingUnits));
   if (tier.splitPercent > 0) fact('Split', (tier.splitPercent / 1e7) + '% of sales');
-  var fl = tier.flags || {}, flagBits = [];
-  if (fl.allowOwnerMint) flagBits.push('owner can mint');
-  if (fl.transfersPausable) flagBits.push('transfers pausable');
-  if (fl.cantBeRemoved) flagBits.push('cannot be removed');
-  if (fl.cantBuyWithCredits) flagBits.push('no credit buys');
-  if (fl.cantIncreaseDiscountPercent) flagBits.push('discount capped');
-  if (flagBits.length) fact('Flags', flagBits.join(', '));
   content.appendChild(cfg);
+
+  // Each set flag on its own row with a plain-English explanation.
+  var fl = tier.flags || {};
+  var FLAG_DESCS = [
+    ['allowOwnerMint', 'Owner can mint', 'The project owner can mint this item for free, without a payment.'],
+    ['transfersPausable', 'Transfers pausable', 'The owner can pause transfers of this item.'],
+    ['cantBeRemoved', 'Cannot be removed', 'This item can never be removed from the shop.'],
+    ['cantBuyWithCredits', 'No credit buys', 'Buyers can’t use project credits to mint this item — only a fresh payment.'],
+    ['cantIncreaseDiscountPercent', 'Discount capped', 'This item’s discount can only be lowered, never increased.'],
+  ];
+  var setFlags = FLAG_DESCS.filter(function (f) { return fl[f[0]]; });
+  if (setFlags.length) {
+    var flagsBox = el('div', 'tier-detail-cfg');
+    var flagsH = el('div', 'tier-detail-section-h'); flagsH.textContent = 'Flags'; flagsBox.appendChild(flagsH);
+    setFlags.forEach(function (f) {
+      var r = el('div', 'tier-detail-flag');
+      var n = el('div', 'tier-detail-flag-name'); n.textContent = f[1]; r.appendChild(n);
+      var s = el('div', 'tier-detail-flag-sub'); s.textContent = f[2]; r.appendChild(s);
+      flagsBox.appendChild(r);
+    });
+    content.appendChild(flagsBox);
+  }
 
   // Operator controls — the project owner/operator can edit the discount or remove the tier. Per the contract
   // these are the ONLY mutable bits (price/supply/category/flags are immutable; any other change is remove +
