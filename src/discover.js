@@ -3685,8 +3685,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     tabs = ['Overview', 'Rulesets', 'Funds', 'Tokens', 'Owner'];
   }
   // Shop tab: shown optimistically (assume the project can sell items) so a #shop route resolves and the
-  // tab doesn't pop in late. Once the 721-hook read resolves it's either filled with real content or
-  // removed (project has no hook and can't get one).
+  // tab doesn't pop in late. Once the 721-hook read resolves it's either filled with real content or removed
+  // (no hook yet — a custom project can add one via Rulesets → Queue → "Sell NFT items").
   var shopState = { shop: null, loaded: false };
   builders.Shop = function () {
     if (shopState.loaded && shopState.shop) return renderShopSection(project, shopState.shop, nftCart);
@@ -10504,40 +10504,50 @@ function openQueueRulesetModal(project) {
   // choice to "continue" so queueing re-passes the hook — the encoder's default would silently DETACH the shop.
   read(project.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (r) {
     var m = r ? (r[1] || r.metadata) : null;
+    state.shopChecked = true; // the shop control renders once we know whether a shop exists
     if (m && m.dataHook && !/^0x0+$/.test(m.dataHook)) {
       state.currentDataHook = m.dataHook;
       state.currentUseDataHookForCashOut = !!m.useDataHookForCashOut;
       state.shopChoice = 'continue';
-      renderEditor();
     }
-  }).catch(function () {});
+    renderEditor();
+  }).catch(function () { state.shopChecked = true; renderEditor(); });
 
   function renderEditor() {
     body.innerHTML = '';
     body.appendChild(renderStages(state, renderEditor, { noHead: true }));
 
-    // 721 shop choice — only when the project has a live shop. Single-chain: keep (re-pass the hook so it
-    // isn't dropped) vs remove (detach). Omnichain: the shop is carried forward automatically; remove + new
-    // aren't expressible through the convenience overload yet, so they're gated.
-    if (state.currentDataHook) {
+    // 721 shop choice. Shows once the current-hook read resolves. With a live shop: keep (single-chain
+    // re-passes the hook so it isn't dropped) / remove (single-chain only — no omnichain detach path) / new.
+    // With NO shop: a checkbox to add one. "new"/add deploys a fresh collection via the one-call deployer.
+    if (state.shopChecked) {
       var shopH = el('div', 'operator-edit-label'); shopH.style.marginTop = '18px'; shopH.textContent = 'Shop (NFT items)'; body.appendChild(shopH);
-      var shopBox = el('div', 'queue-shop-choice');
-      // 'remove' is single-chain only — JBOmnichainDeployer has no detach path (it always re-stamps a live 721
-      // hook), so on omnichain the option isn't offered at all. 'new' deploys a fresh collection.
-      var shopOpts = [['continue', 'Keep the current shop', 'Same items for purchase remain during the new rulesets.']];
-      if (!state.isOmnichain) shopOpts.push(['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.']);
-      shopOpts.push(['new', 'Start a new shop', 'Make a new shop with the new rulesets, replacing the current one entirely.']);
-      shopOpts.forEach(function (o) {
-        var row = el('label', 'queue-shop-opt');
-        var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0];
-        rb.addEventListener('change', function () { if (rb.checked) { state.shopChoice = o[0]; if (o[0] === 'new') ensureNewShopState(state, allChains); renderEditor(); } });
-        var txt = el('div', 'queue-shop-opt-txt');
-        var nm = el('div', 'queue-shop-opt-name'); nm.textContent = o[1]; txt.appendChild(nm);
-        var sub = el('div', 'queue-shop-opt-sub'); sub.textContent = o[2]; txt.appendChild(sub);
-        row.appendChild(rb); row.appendChild(txt); shopBox.appendChild(row);
-      });
-      body.appendChild(shopBox);
-      // Starting a new shop → the full collection + items form (reused verbatim from the create flow).
+      if (state.currentDataHook) {
+        var shopBox = el('div', 'queue-shop-choice');
+        var shopOpts = [['continue', 'Keep the current shop', 'Same items for purchase remain during the new rulesets.']];
+        if (!state.isOmnichain) shopOpts.push(['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.']);
+        shopOpts.push(['new', 'Start a new shop', 'Make a new shop with the new rulesets, replacing the current one entirely.']);
+        shopOpts.forEach(function (o) {
+          var row = el('label', 'queue-shop-opt');
+          var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0];
+          rb.addEventListener('change', function () { if (rb.checked) { state.shopChoice = o[0]; if (o[0] === 'new') ensureNewShopState(state, allChains); renderEditor(); } });
+          var txt = el('div', 'queue-shop-opt-txt');
+          var nm = el('div', 'queue-shop-opt-name'); nm.textContent = o[1]; txt.appendChild(nm);
+          var sub = el('div', 'queue-shop-opt-sub'); sub.textContent = o[2]; txt.appendChild(sub);
+          row.appendChild(rb); row.appendChild(txt); shopBox.appendChild(row);
+        });
+        body.appendChild(shopBox);
+      } else {
+        // No current shop — let the operator add one with this ruleset (deploys a fresh 721 collection).
+        var addRow = el('label', 'queue-shop-opt');
+        var addCb = document.createElement('input'); addCb.type = 'checkbox'; addCb.checked = state.shopChoice === 'new';
+        addCb.addEventListener('change', function () { state.shopChoice = addCb.checked ? 'new' : null; if (addCb.checked) ensureNewShopState(state, allChains); renderEditor(); });
+        var addTxt = el('div', 'queue-shop-opt-txt');
+        var addNm = el('div', 'queue-shop-opt-name'); addNm.textContent = 'Sell NFT items'; addTxt.appendChild(addNm);
+        var addSub = el('div', 'queue-shop-opt-sub'); addSub.textContent = 'This project has no shop yet — add one and start selling NFT items with this ruleset.'; addTxt.appendChild(addSub);
+        addRow.appendChild(addCb); addRow.appendChild(addTxt); body.appendChild(addRow);
+      }
+      // Starting/adding a shop → the full collection + items form (reused verbatim from the create flow).
       if (state.shopChoice === 'new') {
         ensureNewShopState(state, allChains);
         var nftWrap = el('div', 'queue-new-shop-form'); nftWrap.style.marginTop = '12px';
