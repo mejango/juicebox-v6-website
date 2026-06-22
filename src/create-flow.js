@@ -764,9 +764,15 @@ function accountingBlock(state, render) {
     if (isCustom) { w.appendChild(customTokenBlock(state, render)); return w; }
     var note = el('div', 'create-hint');
     note.textContent = isRev
-      ? ('The reserve asset(s) that back the value of $' + tickerLabel(state) + ' — hold ETH, USDC, or both.')
-      : 'The token(s) that make up your project’s balance — hold ETH, USDC, or both.';
+      ? ('The reserve asset(s) that back the value of $' + tickerLabel(state) + '.')
+      : 'The token(s) that make up your project’s balance.';
     w.appendChild(note);
+    // Multi-asset revnet: the backing is fixed by the proportion of payments received and can't be rebalanced.
+    if (isRev && state.accepts.length > 1) {
+      var revWarn = pinkNote('Your revnet’s token will be backed by both ETH and USDC paid in by users. Holders can cash out for either, and the backing mix is set entirely by the proportion of payments received in each — you can’t rebalance between them later.');
+      revWarn.style.marginTop = '10px'; // gap between the accounting note and the warning box
+      w.appendChild(revWarn);
+    }
     // Router-terminal (any-token auto-swap) note stays grouped right under the main note (custom only).
     if (!isRev) {
       var line2 = el('div', 'create-hint');

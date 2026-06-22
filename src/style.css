@@ -610,8 +610,8 @@ a:hover { color: var(--c-teal); }
 }
 
 .pill.selected {
-  background: var(--c-pink-light);
-  border-color: var(--c-orange-light);
+  background: var(--c-teal-light);
+  border-color: var(--c-teal);
   color: var(--c-black);
 }
 
@@ -4621,7 +4621,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   color: var(--muted-2); background: var(--pill-bg);
   border: 1px solid var(--pill-border, rgba(44,32,24,0.15)); border-radius: 2px;
 }
-.issuance-range-btn.active { color: var(--c-orange); border-color: var(--c-orange); }
+.issuance-range-btn.active { color: var(--c-teal); border-color: var(--c-teal); }
 .issuance-chart { width: 100%; }
 .issuance-svg { display: block; }
 
@@ -5216,10 +5216,10 @@ select.create-input-auto { width: auto; max-width: 100%; }
   background: var(--card-bg); border: 1px solid var(--c-orange-light); border-radius: 0;
   padding: 4px 9px; cursor: pointer;
 }
-.create-chip.active { background: var(--card-bg); border-color: var(--c-orange); color: var(--c-orange); }
+.create-chip.active { background: var(--card-bg); border-color: var(--c-teal); color: var(--c-teal); }
 .create-chip-stack { display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1.2; min-width: 56px; }
 .create-chip-sub { font-size: 10px; color: var(--muted-2); }
-.create-chip.active .create-chip-sub { color: var(--c-orange); }
+.create-chip.active .create-chip-sub { color: var(--c-teal); }
 .cashout-curve-wrap { margin-top: 10px; max-width: 360px; position: relative; }
 .cashout-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--c-orange); transform: translate(-50%, -50%); pointer-events: none; }
 .cashout-tip {
