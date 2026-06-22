@@ -3422,8 +3422,7 @@ function renderGrid() {
 
   var grid = el('div', 'discover-grid');
   _gridWrapper.appendChild(grid);
-  var gridFoot = discoverPromptFoot('Discover explorer (project grid)'); // [copy build prompt] for the grid
-  gridFoot.classList.add('comp-prompt-foot--left');
+  var gridFoot = discoverPromptFoot('Discover explorer (project grid)'); // [copy build prompt] — bottom-right (default)
   _gridWrapper.appendChild(gridFoot);
   _container.appendChild(_gridWrapper);
 
