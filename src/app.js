@@ -157,12 +157,15 @@ function initTabs() {
 // Parse the hash and apply it: pick the nav tab, and (for discover) open the project route.
 function applyHash() {
   var raw = (location.hash || '').replace(/^#\/?/, '');
-  var nav, projectRoute = null;
+  var nav, projectRoute = null, sectionId = null;
   if (raw === '' || raw === 'discover') { nav = 'discover'; }
   else if (raw.indexOf(':') !== -1) { nav = 'discover'; projectRoute = raw; } // <slug>:<id>[/tab]
+  else if (/^(learn|build|why)-/.test(raw)) { nav = raw.split('-')[0]; sectionId = raw; } // guide section deep link
   else { nav = raw.split('/')[0]; }
   activateNavTab(NAV_TO_TAB[nav] || 'discover');
   if ((NAV_TO_TAB[nav] || 'discover') === 'discover') applyDiscoverRoute(projectRoute);
+  // Scroll to a deep-linked guide section once the tab's content has rendered (copy-link buttons emit these).
+  else if (sectionId) setTimeout(function () { var t = document.getElementById(sectionId); if (t) t.scrollIntoView({ block: 'start' }); }, 60);
 }
 
 function onHashChange() {

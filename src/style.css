@@ -2007,7 +2007,19 @@ input[type="checkbox"].field {
   color: var(--c-pink);
   letter-spacing: 0.5px;
   margin-bottom: 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
+/* Per-section "copy link" — small + muted so it doesn't compete with the header. */
+.guide-copy-link {
+  font-family: inherit; font-size: 11px; font-weight: normal; letter-spacing: 0;
+  color: var(--muted-2); background: none; border: none; cursor: pointer;
+  padding: 2px 4px; white-space: nowrap; opacity: 0.55; flex: 0 0 auto;
+}
+.guide-copy-link:hover { opacity: 1; color: var(--c-teal); }
+.guide-info a { color: var(--c-teal); text-decoration: none; border-bottom: 1px solid currentColor; }
 
 .guide-text {
   color: var(--text);

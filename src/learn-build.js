@@ -483,7 +483,9 @@ export function renderBuildTab() {
     '<a class="guide-toc-link" href="#build-handles">16. Project Handles</a>' +
     '<a class="guide-toc-link" href="#build-payer">17. Project Payer</a>' +
     '<a class="guide-toc-link" href="#build-swap-terminal">18. Router Terminal</a>' +
-    '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>';
+    '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>' +
+    '<div class="guide-toc-group-label" style="margin-top:8px">Build Your Own</div>' +
+    '<a class="guide-toc-link" href="#build-clients">20. Web Clients</a>';
   wrap.appendChild(toc);
 
   // --- Life of a Project ---
@@ -924,6 +926,34 @@ export function renderBuildTab() {
     infoBox('The hook also handles cash outs: if the pool offers more than the bonding curve reclaim (after fees), it routes the sell through the pool instead. Payers can bypass the TWAP by providing their own quote in payment metadata.')
   ]));
 
+  // --- Build Your Own ---
+  var ownHeader = document.createElement('div');
+  ownHeader.className = 'guide-part-header';
+  ownHeader.textContent = 'BUILD YOUR OWN';
+  wrap.appendChild(ownHeader);
+
+  wrap.appendChild(guideSection('build-clients', '20. WEB CLIENTS', [
+    'This explorer is a complete, client-only reference implementation — there is no backend. It is a static bundle (loaded from IPFS) that reads the chain over public RPCs and builds every Juicebox transaction in the browser. The code ships unminified on purpose, so everything you see here is code you can read.',
+    'That makes it a working spec you can hand to an LLM. Every section in Build and Learn has a "copy link" button next to its header — copy it, paste the URL to your LLM, and ask it to recreate that feature against the V6 contracts. Point the model at this site\'s repo (the README maps every transaction to the contract function it calls) and the contract source, and it has everything it needs to rebuild it.'
+  ], [
+    stepList([
+      'Find the feature here — this section, or Pay, Cash Out, Launch, a Hook — and click "copy link" by its header.',
+      'Paste the link to your LLM: "Recreate this against the Juicebox V6 contracts."',
+      'Give it the two repos below. The README\'s transaction→contract map shows exactly which function each action calls.',
+      'Mirror the pattern: every transaction is a pure buildXArgs() that round-trips through the contract ABI — copy the builder and keep its round-trip test.'
+    ]),
+    (function () {
+      var box = document.createElement('div'); box.className = 'guide-info';
+      box.appendChild(document.createTextNode('Reference: '));
+      var lk = function (href, text) { var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
+      box.appendChild(lk('https://github.com/mejango/juicebox-v6-website', 'this site’s repo (README + tests)'));
+      box.appendChild(document.createTextNode('  ·  '));
+      box.appendChild(lk('https://github.com/Bananapus/nana-core-v6', 'V6 contracts (nana-core-v6)'));
+      return box;
+    })(),
+    infoBox('The whole app is the source you are looking at — fetch the IPFS bundle and read app.js, or clone the repo. Nothing is hidden server-side: the transaction your wallet signs is built entirely in this code.')
+  ]));
+
   container.appendChild(wrap);
   initSmoothScroll(container);
 }
@@ -991,7 +1021,24 @@ function guideSection(id, title, paragraphs, extras) {
 
   var h = document.createElement('div');
   h.className = 'guide-section-title';
-  h.textContent = title;
+  var titleSpan = document.createElement('span');
+  titleSpan.textContent = title;
+  h.appendChild(titleSpan);
+  // Copy a deep link to this section — paste it to an LLM ("recreate this feature against the V6 contracts")
+  // or share it. The link routes back to this tab + scrolls here (see applyHash in app.js).
+  var copyBtn = document.createElement('button');
+  copyBtn.className = 'guide-copy-link';
+  copyBtn.type = 'button';
+  copyBtn.textContent = 'copy link';
+  copyBtn.title = 'Copy a link to this section';
+  copyBtn.addEventListener('click', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var url = location.origin + location.pathname + location.search + '#' + id;
+    var done = function () { copyBtn.textContent = 'copied'; setTimeout(function () { copyBtn.textContent = 'copy link'; }, 1400); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, done);
+    else { try { var ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} done(); }
+  });
+  h.appendChild(copyBtn);
   section.appendChild(h);
 
   for (var i = 0; i < paragraphs.length; i++) {
