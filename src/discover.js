@@ -71,6 +71,9 @@ var ACTIVITY_PAGE_SIZE = 10;
 // totalCount), so this only costs extra requests on projects that actually have more than 10 events — it stops
 // the oldest events (project-create, earlier pay-ins) from being cut off at 10.
 var ACTIVITY_MAX_ITEMS = 100;
+// Default .activity-feed scroll height (mirrors style.css). sizeActivity() grows the feed to 2x this (or the body
+// height) so loaded activity isn't hidden behind a short scrollbox.
+var ACTIVITY_FEED_BASE_PX = 390;
 var BENDYSTRAW_PARENT_CHAIN_ID = {
   11155111: 1,
   11155420: 10,
@@ -3698,9 +3701,24 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // On phones, Activity becomes the first detail subtab (added below, and default) instead of a tall
   // always-on card wedged between Pay and the tabs; on wider screens it stays in the left column.
   var activityAsTab = !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
-  activityCardEl = renderActivityCard(project, { asTab: activityAsTab });
+  // Activity panel height: at least as tall as the body (right column), and twice its own content when populated
+  // — so the feed isn't clipped to a short body and stays a substantial panel.
+  function sizeActivity() {
+    if (activityAsTab || !activityCardEl || !activityCardEl.isConnected) return;
+    var feed = activityCardEl.querySelector('.activity-feed');
+    if (!feed) return;
+    if (!feed.querySelector('.activity-row')) { feed.style.minHeight = ''; feed.style.maxHeight = ''; return; }
+    // A tall panel: twice the default 390px feed, and at least most of the viewport (a proxy for the body
+    // content height — measuring the body column directly feeds back through the equal-height column stretch).
+    // Content shorter than this shows in full; longer histories scroll within the panel.
+    var target = Math.max(2 * ACTIVITY_FEED_BASE_PX, Math.round(0.82 * (window.innerHeight || 900)));
+    feed.style.minHeight = target + 'px';
+    feed.style.maxHeight = target + 'px';
+  }
+  activityCardEl = renderActivityCard(project, { asTab: activityAsTab, onContent: function () { requestAnimationFrame(sizeActivity); } });
   if (!activityAsTab) leftCol.appendChild(activityCardEl);
   columns.appendChild(leftCol);
+  window.addEventListener('resize', function () { requestAnimationFrame(sizeActivity); });
 
   var rightCol = el('div', 'project-detail-right');
   // Sections build lazily on first view so the cross-chain "Ops" fan-out only fires when opened.
@@ -5859,6 +5877,7 @@ function renderActivityCard(project, opts) {
     }
     body.className = 'activity-feed';
     rows.forEach(function (row) { body.appendChild(renderActivityRow(row, project)); });
+    if (opts && opts.onContent) opts.onContent();
   }
 
   // Load the sucker map first so the feed can relabel under-the-hood sucker cash-outs as bridges.
