@@ -33,4 +33,16 @@ describe('matchAccountsByAddress', () => {
     expect(matchAccountsByAddress([], '0x1', [], 8)).toEqual([]);
     expect(matchAccountsByAddress(items, null, [], 8)).toEqual([]);
   });
+
+  it('matches a partial ENS name via nameOf (the "art" → artizenendowment.eth case)', () => {
+    const named = [
+      { address: '0xAAA0000000000000000000000000000000000001' },
+      { address: '0xBBB0000000000000000000000000000000000002' },
+    ];
+    const nameOf = (a) => (a.toLowerCase().indexOf('0xaaa') === 0 ? 'artizenendowment.eth' : null);
+    expect(addrs(matchAccountsByAddress(named, 'art', [], 8, nameOf))).toEqual([named[0].address]);
+    expect(addrs(matchAccountsByAddress(named, 'ARTIZEN', [], 8, nameOf))).toEqual([named[0].address]); // case-insensitive
+    expect(matchAccountsByAddress(named, '0xbbb', [], 8, nameOf).length).toBe(1); // address path still works
+    expect(matchAccountsByAddress(named, 'nope', [], 8, nameOf)).toEqual([]);
+  });
 });

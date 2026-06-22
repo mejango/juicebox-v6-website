@@ -2928,13 +2928,16 @@ function formatDuration(secs) {
 // -- ENS reverse resolution (mainnet only; primary names live on mainnet even for
 // testnet projects). Cached per address; resolves "where possible", silent otherwise. --
 var _ensCache = {};
+var _ensResolved = {}; // lowercased addr -> resolved primary name (sync read; lets the table search match names)
 function ensNameOf(address) {
   if (!address || address === ZERO_ADDRESS) return Promise.resolve(null);
   var key = address.toLowerCase();
   if (_ensCache[key]) return _ensCache[key];
   var p = (async function () {
     try {
-      return await clientFor(1).getEnsName({ address: address });
+      var n = await clientFor(1).getEnsName({ address: address });
+      if (n) _ensResolved[key] = n;
+      return n;
     } catch (e) {
       return null;
     }
@@ -2942,6 +2945,8 @@ function ensNameOf(address) {
   _ensCache[key] = p;
   return p;
 }
+// Sync read of an already-resolved ENS name (or null) — lets the account search substring-match names without awaiting.
+export function ensNameCached(address) { return _ensResolved[(address || '').toLowerCase()] || null; }
 
 // Forward ENS resolution (name → address), mainnet, cached. Returns null for non-names / no record.
 var _ensAddrCache = {};
@@ -10264,17 +10269,21 @@ export function attachPagination(rowsContainer, items, pageSize, buildRow) {
   return nav;
 }
 
-// Pure: substring-match accounts by address (case-insensitive), excluding already-selected, capped at `limit`.
-// ENS name matching is layered on asynchronously by buildAccountSearch (forward-resolve a name → address).
-export function matchAccountsByAddress(items, query, selectedLower, limit) {
+// Pure: substring-match accounts by address OR resolved ENS name (case-insensitive), excluding already-selected,
+// capped at `limit`. nameOf(address) -> the account's known ENS name (or null) so e.g. "art" matches
+// "artizenendowment.eth". Full-ENS forward resolution is layered on async by buildAccountSearch.
+export function matchAccountsByAddress(items, query, selectedLower, limit, nameOf) {
   var q = String(query || '').trim().toLowerCase();
   if (!q) return [];
   selectedLower = selectedLower || [];
   limit = limit || 8;
+  nameOf = nameOf || function () { return null; };
   var out = [];
   for (var i = 0; i < items.length && out.length < limit; i++) {
     var a = (items[i].address || '').toLowerCase();
-    if (a.indexOf(q) !== -1 && selectedLower.indexOf(a) === -1) out.push(items[i]);
+    if (selectedLower.indexOf(a) !== -1) continue;
+    var name = (nameOf(items[i].address) || '').toLowerCase();
+    if (a.indexOf(q) !== -1 || (name && name.indexOf(q) !== -1)) out.push(items[i]);
   }
   return out;
 }
@@ -10335,7 +10344,7 @@ function buildAccountSearch(items, onChange, opts) {
     var q = input.value.trim();
     if (!q) { menu.style.display = 'none'; topAddr = null; return; }
     var selLower = selected.slice();
-    var matches = matchAccountsByAddress(items, q, selLower, 8);
+    var matches = matchAccountsByAddress(items, q, selLower, 8, ensNameCached);
     renderMenu(matches);
     // ENS forward-resolve when the query looks like a name (has a dot, or has letters and isn't a hex prefix).
     var looksEns = /\./.test(q) || (/[a-z]/i.test(q) && !/^0x/i.test(q));
@@ -10349,8 +10358,26 @@ function buildAccountSearch(items, onChange, opts) {
       }).catch(function () {});
     }
   }
+  // Resolve ENS names for the accounts (top-balance first, capped + concurrency-limited) the first time the user
+  // engages the search, so partial-name queries like "art" → "artizenendowment.eth" match beyond the rows that
+  // happened to resolve on screen. Re-runs the live query as names arrive. ensNameOf caches, so this is one-shot.
+  var resolveStarted = false;
+  function resolveNamesInBackground() {
+    if (resolveStarted) return;
+    resolveStarted = true;
+    var idx = 0, cap = Math.min(items.length, 400);
+    function worker() {
+      if (idx >= cap) return;
+      var it = items[idx++];
+      ensNameOf(it.address)
+        .then(function () { if (document.activeElement === input && input.value.trim()) refresh(); })
+        .catch(function () {})
+        .then(worker);
+    }
+    for (var w = 0; w < 6; w++) worker();
+  }
   input.addEventListener('input', refresh);
-  input.addEventListener('focus', refresh);
+  input.addEventListener('focus', function () { resolveNamesInBackground(); refresh(); });
   input.addEventListener('blur', function () { setTimeout(function () { menu.style.display = 'none'; }, 120); });
   input.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter') return;
