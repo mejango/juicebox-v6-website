@@ -3136,7 +3136,12 @@ function openSafeModal(address, chainId, info) {
   policy.innerHTML = 'Requires <strong>' + info.threshold + ' of ' + info.owners.length + '</strong> signatures';
   content.appendChild(policy);
 
-  var addrRow = el('div', 'safe-addr'); addrRow.appendChild(fullAddressNode(address, true)); content.appendChild(addrRow);
+  var addrRow = el('div', 'safe-addr'); addrRow.appendChild(fullAddressNode(address, true));
+  // fullAddressNode swaps the text to the ENS name when it resolves — show the raw 0x address alongside it too.
+  ensNameOf(address).then(function (n) {
+    if (n && addrRow.isConnected) { var raw = el('span', 'safe-addr-raw'); raw.textContent = truncAddr(address); addrRow.appendChild(raw); }
+  }).catch(function () {});
+  content.appendChild(addrRow);
 
   var lbl = el('div', 'safe-signers-label'); lbl.textContent = 'Signers'; content.appendChild(lbl);
   var list = el('div', 'safe-signers');

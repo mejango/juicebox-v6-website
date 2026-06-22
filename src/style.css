@@ -2638,6 +2638,7 @@ input[type="checkbox"].field {
 .safe-modal .safe-policy { font-size: 13px; color: var(--text); margin-bottom: 10px; }
 .safe-modal .safe-policy strong { color: var(--c-teal); }
 .safe-modal .safe-addr { margin-bottom: 14px; }
+.safe-addr-raw { color: var(--muted-2); font-size: 12px; margin-left: 8px; }
 .safe-signers-label { font-size: 11px; color: var(--muted-2); margin-bottom: 6px; }
 .safe-signers { display: flex; flex-direction: column; gap: 6px; }
 .safe-signer { font-size: 12px; }
