@@ -10454,12 +10454,51 @@ function openQueueRulesetModal(project) {
     details: { name: project.name || '', ticker: project.tokenSymbol || '' },
     stages: [],
     afterMode: 'cycle',
+    shopChoice: null,                    // queue-time 721-shop choice: 'continue' | 'remove' (set once a shop is found)
+    currentDataHook: '',                 // the project's current 721 hook (= single-chain metadata.dataHook)
+    currentUseDataHookForCashOut: false, // preserve item-redemption on "continue"
+    isOmnichain: omnichain,              // omnichain queues carry the shop forward automatically (no metadata.dataHook)
   };
   var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = true; });
+
+  // Read the current ruleset's data hook (the 721 shop; on single-chain it IS metadata.dataHook). Default the
+  // choice to "continue" so queueing re-passes the hook — the encoder's default would silently DETACH the shop.
+  read(project.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (r) {
+    var m = r ? (r[1] || r.metadata) : null;
+    if (m && m.dataHook && !/^0x0+$/.test(m.dataHook)) {
+      state.currentDataHook = m.dataHook;
+      state.currentUseDataHookForCashOut = !!m.useDataHookForCashOut;
+      state.shopChoice = 'continue';
+      renderEditor();
+    }
+  }).catch(function () {});
 
   function renderEditor() {
     body.innerHTML = '';
     body.appendChild(renderStages(state, renderEditor, { noHead: true }));
+
+    // 721 shop choice — only when the project has a live shop. Single-chain: keep (re-pass the hook so it
+    // isn't dropped) vs remove (detach). Omnichain: the shop is carried forward automatically; remove + new
+    // aren't expressible through the convenience overload yet, so they're gated.
+    if (state.currentDataHook) {
+      var shopH = el('div', 'operator-edit-label'); shopH.style.marginTop = '18px'; shopH.textContent = 'Shop (NFT items)'; body.appendChild(shopH);
+      var shopBox = el('div', 'queue-shop-choice');
+      [['continue', 'Keep the current shop', 'Buyers keep minting the existing NFT items.', false],
+       ['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.', state.isOmnichain],
+       ['new', 'Start a new shop', 'Deploy a fresh NFT collection — coming soon.', true]
+      ].forEach(function (o) {
+        var dis = !!o[3];
+        var row = el('label', 'queue-shop-opt' + (dis ? ' disabled' : ''));
+        var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0]; rb.disabled = dis;
+        rb.addEventListener('change', function () { if (rb.checked) { state.shopChoice = o[0]; renderEditor(); } });
+        var txt = el('div', 'queue-shop-opt-txt');
+        var nm = el('div', 'queue-shop-opt-name'); nm.textContent = o[1] + (dis && o[0] === 'remove' ? ' (omnichain: not supported yet)' : ''); txt.appendChild(nm);
+        var sub = el('div', 'queue-shop-opt-sub'); sub.textContent = o[2]; txt.appendChild(sub);
+        row.appendChild(rb); row.appendChild(txt); shopBox.appendChild(row);
+      });
+      body.appendChild(shopBox);
+      if (state.isOmnichain) { var sn = el('div', 'rf-funds-sub'); sn.style.marginTop = '6px'; sn.textContent = 'On omnichain projects the shop is carried forward automatically.'; body.appendChild(sn); }
+    }
     if (omnichain) {
       var ch = el('div', 'operator-edit-label'); ch.style.marginTop = '18px'; ch.textContent = 'Queue on'; body.appendChild(ch);
       var chainBox = el('div', 'splits-edit-chains');
@@ -10609,6 +10648,8 @@ function openQueueRulesetModal(project) {
     // After a successful Safe propose the button becomes "Go to Safe execution" → jump to the Back office tab.
     if (queuedToSafe) { modal.close(); location.hash = projectHash(project, project.isRevnet ? 'Operator' : 'Owner'); return; }
     if (busy) return;
+    // Removing a live shop is destructive — confirm explicitly (the silent-drop this whole feature prevents).
+    if (state.shopChoice === 'remove' && state.currentDataHook && !window.confirm('Remove the shop? From the next ruleset onward your project stops minting NFTs on payment — payments mint project tokens at the ruleset weight instead. Continue?')) return;
     busy = true;
     var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
     submitQueueRuleset(project, state, selected, operatorAddr, setStatus).then(function (res) {

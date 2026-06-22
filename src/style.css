@@ -4531,6 +4531,12 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .tier-detail-flag-sub { font-size: 12px; color: var(--muted-2); }
 /* "+ Add another item" — own line, divided from the current item's fields above. */
 .tier-add-another { display: block; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--c-pink-light); }
+/* Queue-ruleset 721-shop choice (keep / remove / new). */
+.queue-shop-choice { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.queue-shop-opt { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.queue-shop-opt.disabled { opacity: 0.5; cursor: default; }
+.queue-shop-opt-name { font-size: 13px; font-weight: bold; }
+.queue-shop-opt-sub { font-size: 12px; color: var(--muted-2); }
 /* Shop header: title left, "+ Add items" operator CTA top-right. */
 .shop-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .shop-head-add { font-size: 13px; white-space: nowrap; }

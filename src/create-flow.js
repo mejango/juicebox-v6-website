@@ -3606,6 +3606,23 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   rs.pauseCreditTransfers = !!stage.pauseTransfers;
   rs.useDataHookForCashOut = storeRedeem;
 
+  // Queue-only 721-shop choice. The discover Rulesets tab sets state.shopChoice; the LAUNCH path leaves it
+  // undefined so this whole block no-ops (launch stays exactly as-is). On the SINGLE-CHAIN queue path the 721
+  // hook IS metadata.dataHook, and the default encodes dataHook=0 — which silently DETACHES a live shop. So
+  // "continue" must re-pass the current hook to keep it. On the OMNICHAIN path the shop rides the deploy721
+  // empty-tiers carry-forward (metadata.dataHook is the extra/buyback slot), so we leave the metadata alone.
+  if (state.shopChoice && !state.isOmnichain) {
+    if (state.shopChoice === 'continue') {
+      rs.dataHook = state.currentDataHook || '';
+      rs.useDataHookForPay = true;
+      rs.useDataHookForCashOut = !!state.currentUseDataHookForCashOut;
+    } else if (state.shopChoice === 'remove') {
+      rs.dataHook = '';
+      rs.useDataHookForPay = false;
+      rs.useDataHookForCashOut = false;
+    }
+  }
+
   if (deadlineOn === false) {
     rs.approvalHook = ZERO;
   } else if (stage.deadline === 'custom') {
