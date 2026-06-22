@@ -10524,9 +10524,9 @@ function openQueueRulesetModal(project) {
       var shopBox = el('div', 'queue-shop-choice');
       // 'remove' is single-chain only — JBOmnichainDeployer has no detach path (it always re-stamps a live 721
       // hook), so on omnichain the option isn't offered at all. 'new' deploys a fresh collection.
-      var shopOpts = [['continue', 'Keep the current shop', 'Buyers keep minting the existing NFT items.']];
+      var shopOpts = [['continue', 'Keep the current shop', 'Same items for purchase remain during the new rulesets.']];
       if (!state.isOmnichain) shopOpts.push(['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.']);
-      shopOpts.push(['new', 'Start a new shop', 'Deploy a fresh NFT collection — it replaces the current shop.']);
+      shopOpts.push(['new', 'Start a new shop', 'Make a new shop with the new rulesets, replacing the current one entirely.']);
       shopOpts.forEach(function (o) {
         var row = el('label', 'queue-shop-opt');
         var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0];
@@ -10542,8 +10542,6 @@ function openQueueRulesetModal(project) {
         ensureNewShopState(state, allChains);
         var nftWrap = el('div', 'queue-new-shop-form'); nftWrap.style.marginTop = '12px';
         nftWrap.appendChild(renderNfts(state, renderEditor)); body.appendChild(nftWrap);
-      } else if (state.isOmnichain) {
-        var sn = el('div', 'rf-funds-sub'); sn.style.marginTop = '6px'; sn.textContent = 'On omnichain projects the shop is carried forward automatically.'; body.appendChild(sn);
       }
     }
     if (omnichain) {
