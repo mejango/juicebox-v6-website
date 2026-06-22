@@ -8427,7 +8427,7 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     if (t1 <= t0) t1 = t0 + YEAR;
   }
 
-  var W = 600, H = 200, padL = 8, padR = 8, padT = 10, padB = 22, N = 240;
+  var W = 600, H = 200, padL = 8, padR = 8, padT = 24, padB = 22, N = 240; // padT headroom so "Today" clears the line/now-line peak
   var pts = [];
   var maxV = 0;
   for (var i = 0; i <= N; i++) {
