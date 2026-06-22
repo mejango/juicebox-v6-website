@@ -1330,7 +1330,87 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
     if (m.image || m.animationUrl) renderTierMediaInto(imgWrap, m, nm, 'full');
     if (m.category && onCat) onCat(tier.category, m.category);
   });
+
+  // Click the art or name to open the full item detail (per-chain supply, config, operator edit/remove).
+  function openDetail() { openTierDetail(project, shop, tier, refreshers); }
+  imgWrap.style.cursor = 'pointer'; imgWrap.addEventListener('click', openDetail);
+  nameEl.style.cursor = 'pointer'; nameEl.addEventListener('click', openDetail);
   return c;
+}
+
+// Read a tier's supply on EVERY chain the project is deployed on — supply is strictly per-chain, and
+// fetchProjectTiers only reads one chain, so resolve the 721 hook + store per chain and pull tiersOf.
+function readTierSupplyAcrossChains(project, tierId) {
+  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
+  return Promise.all(chains.map(function (ch) {
+    var cid = ch.id, revo = getAddress('REVOwner', cid);
+    if (!revo) return Promise.resolve({ chainId: cid, name: ch.name, err: true });
+    var client = clientFor(cid);
+    return client.readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id)] })
+      .then(function (hook) {
+        if (!hook || /^0x0+$/.test(hook)) return { chainId: cid, name: ch.name, none: true };
+        return client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }).then(function (store) {
+          return client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] }).then(function (raw) {
+            var t = (raw || []).filter(function (x) { return Number(x.id) === tierId; })[0];
+            if (!t) return { chainId: cid, name: ch.name, none: true };
+            return { chainId: cid, name: ch.name, remaining: Number(t.remainingSupply), initial: Number(t.initialSupply) };
+          });
+        });
+      }).catch(function () { return { chainId: cid, name: ch.name, err: true }; });
+  }));
+}
+
+// Item-detail popup: large art, name, price (+ discount), per-chain supply, and the full tier config.
+function openTierDetail(project, shop, tier, refreshers) {
+  var content = el('div', 'tier-detail');
+  var art = el('div', 'tier-detail-art'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tier.id; art.appendChild(ph); content.appendChild(art);
+  var nameEl = el('div', 'tier-detail-name'); nameEl.textContent = 'Tier ' + tier.id; content.appendChild(nameEl);
+  resolveTierMedia(shop, tier, project.chainId).then(function (m) {
+    if (m.name) nameEl.textContent = m.name;
+    if (m.image || m.animationUrl) renderTierMediaInto(art, m, m.name || ('Tier ' + tier.id), 'full');
+  }).catch(function () {});
+
+  var priceRow = el('div', 'tier-detail-price');
+  var disc = tierDiscountLabel(tier);
+  var effEl = el('span', 'tier-detail-price-eff'); effEl.textContent = formatEth(tierEffectivePrice(tier.price, tier.discountPercent)); priceRow.appendChild(effEl);
+  if (disc) {
+    var origEl = el('span', 'tier-detail-price-orig'); origEl.textContent = formatEth(tier.price); priceRow.appendChild(origEl);
+    var badge = el('span', 'tier-detail-discount'); badge.textContent = disc; priceRow.appendChild(badge);
+  }
+  content.appendChild(priceRow);
+
+  var sup = el('div', 'tier-detail-supply'); sup.textContent = 'Loading supply across chains…'; content.appendChild(sup);
+  readTierSupplyAcrossChains(project, tier.id).then(function (rows) {
+    if (!sup.isConnected) return;
+    sup.innerHTML = '';
+    var head = el('div', 'tier-detail-section-h'); head.textContent = 'Supply by chain'; sup.appendChild(head);
+    rows.forEach(function (r) {
+      var row = el('div', 'tier-detail-supply-row');
+      var nm = el('span', 'tier-detail-supply-chain'); nm.appendChild(chainLogo(r.chainId, r.name)); var tn = el('span'); tn.textContent = ' ' + r.name; nm.appendChild(tn); row.appendChild(nm);
+      var v = el('span', 'tier-detail-supply-val');
+      v.textContent = r.none ? 'not on this chain' : r.err ? '—' : (r.initial >= 999999999 ? 'unlimited' : (r.remaining + ' / ' + r.initial + ' left'));
+      row.appendChild(v); sup.appendChild(row);
+    });
+  }).catch(function () { if (sup.isConnected) sup.textContent = 'Could not read supply.'; });
+
+  var cfg = el('div', 'tier-detail-cfg');
+  var cfgH = el('div', 'tier-detail-section-h'); cfgH.textContent = 'Details'; cfg.appendChild(cfgH);
+  function fact(label, val) { var r = el('div', 'tier-detail-fact'); var l = el('span', 'tier-detail-fact-l'); l.textContent = label; var v = el('span'); v.textContent = val; r.appendChild(l); r.appendChild(v); cfg.appendChild(r); }
+  fact('Tier id', '#' + tier.id);
+  fact('Category', String(tier.category));
+  if (tier.reserveFrequency > 0) fact('Reserve mint', '1 per ' + tier.reserveFrequency + ' sold');
+  if (tier.votingUnits && BigInt(tier.votingUnits) > 0n) fact('Voting units', String(tier.votingUnits));
+  if (tier.splitPercent > 0) fact('Split', (tier.splitPercent / 1e7) + '% of sales');
+  var fl = tier.flags || {}, flagBits = [];
+  if (fl.allowOwnerMint) flagBits.push('owner can mint');
+  if (fl.transfersPausable) flagBits.push('transfers pausable');
+  if (fl.cantBeRemoved) flagBits.push('cannot be removed');
+  if (fl.cantBuyWithCredits) flagBits.push('no credit buys');
+  if (fl.cantIncreaseDiscountPercent) flagBits.push('discount capped');
+  if (flagBits.length) fact('Flags', flagBits.join(', '));
+  content.appendChild(cfg);
+
+  openModal('Shop item #' + tier.id, content);
 }
 
 // Compact mini-shop folded into the top of the Pay card: a horizontal strip of tier thumbnails backed by
