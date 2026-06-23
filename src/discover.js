@@ -13223,13 +13223,22 @@ function snapshotAge(ts) {
 // view (`peerChainAccountsOf`) — NOT individual suckers — because a transitively-gossiped record can live on
 // a different sucker than the direct A↔B one (e.g. Ethereum gossiped to Arbitrum lands on Arbitrum's Base
 // sucker). The registry folds every sucker's direct + virtually-known records, so it sees the full picture.
+var ACCOUNTING_SYNC_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
+  + ' accountingSyncEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 100, orderBy: "timestamp", orderDirection: "desc") {'
+  + ' items { chainId peerChainId sourceTimestampSeconds } } }';
 function fetchCrossChainKnowledge(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
   if (chains.length < 2) return Promise.resolve([]);
   function unpackTs(raw) { var v = toBigInt(raw || 0); return Number(v >> 128n); } // packed (ts<<128|seq) → seconds
-  return Promise.all(chains.map(function (C) {
+  // In-flight sync pushes from the index (bendystraw PR #11): destChain|srcChain → latest SENT unix seconds. Lets
+  // a row show "Syncing…" for a push ANY user triggered (the localStorage marker only covers this user's own).
+  var sentByKeyP = bendystrawQuery(ACCOUNTING_SYNC_QUERY, { projectId: Number(project.id), chainIds: chains, version: BENDYSTRAW_VERSION })
+    .then(function (d) { var m = {}; ((d && d.accountingSyncEvents && d.accountingSyncEvents.items) || []).forEach(function (e) { var k = e.peerChainId + '|' + e.chainId, ts = Number(e.sourceTimestampSeconds); if (!(m[k] >= ts)) m[k] = ts; }); return m; })
+    .catch(function () { return {}; });
+  return Promise.all([sentByKeyP, Promise.all(chains.map(function (C) {
     return readSuckerPairsOf(project.id, C).then(function (p) { return { chain: C, pairs: p || [] }; }).catch(function () { return { chain: C, pairs: [] }; });
-  })).then(function (lists) {
+  }))]).then(function (res2) {
+    var sentByKey = res2[0]; var lists = res2[1];
     var pairsByChain = {};
     lists.forEach(function (x) { pairsByChain[x.chain] = x.pairs; });
     return Promise.all(lists.map(function (x) {
@@ -13254,7 +13263,7 @@ function fetchCrossChainKnowledge(project) {
           var rec = byChain[B] || { supply: 0n, balances: [], snapshot: 0 };
           var bPairs = pairsByChain[B] || [];
           var syncSucker = (bPairs.filter(function (q) { return q.remoteChainId === A; })[0] || {}).local || null;
-          return { peerChainId: B, peerName: moveChainName(B), supply: rec.supply, balances: rec.balances, snapshot: rec.snapshot, syncSucker: syncSucker };
+          return { peerChainId: B, peerName: moveChainName(B), supply: rec.supply, balances: rec.balances, snapshot: rec.snapshot, syncSucker: syncSucker, sentSyncAt: sentByKey[A + '|' + B] || 0 };
         });
         return { chainId: A, name: moveChainName(A), peers: peers };
       });
@@ -13412,6 +13421,8 @@ function renderGossipSection(project) {
           var key = project.id + ':' + d.chainId + ':' + p.peerChainId;
           var syncedAt = _gossipSyncAt[key];
           if (syncedAt && p.snapshot && p.snapshot >= syncedAt) { delete _gossipSyncAt[key]; saveGossipSyncAt(_gossipSyncAt); syncedAt = null; }
+          // Universal in-flight from the index (any user/device): a push SENT after the accepted snapshot landed.
+          if (!syncedAt && p.sentSyncAt && (!p.snapshot || p.sentSyncAt > p.snapshot)) syncedAt = p.sentSyncAt;
           var nowS = Math.floor(Date.now() / 1000);
           var localPending = !!(syncedAt && (nowS - syncedAt) < 1800);
 
