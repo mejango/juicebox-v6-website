@@ -9677,60 +9677,36 @@ async function fetchProjectActivity(project) {
   return bendyRows.concat(rsRows);
 }
 
-var RULESET_QUEUED_EVENT = { type: 'event', name: 'RulesetQueued', inputs: [
-  { name: 'rulesetId', type: 'uint256', indexed: true },
-  { name: 'projectId', type: 'uint256', indexed: true },
-  { name: 'duration', type: 'uint256', indexed: false },
-  { name: 'weight', type: 'uint256', indexed: false },
-  { name: 'weightCutPercent', type: 'uint256', indexed: false },
-  { name: 'approvalHook', type: 'address', indexed: false },
-  { name: 'metadata', type: 'uint256', indexed: false },
-  { name: 'mustStartAtOrAfter', type: 'uint256', indexed: false },
-  { name: 'caller', type: 'address', indexed: false },
-] };
 
 // Synthesize "queued Ruleset with ID N" activity rows from chain state (bendystraw doesn't index ruleset
 // queueing — there is no RulesetQueued ActivityEvent type). JBRulesets.allOf(pid, 0, 8) gives the configured
 // rulesets, whose `id` == the queue timestamp. The genesis ruleset (`basedOnId == 0`) is queued in the same tx
 // as the project's creation, so it's dropped here — it already shows as "created the project". For each
-// remaining ruleset we recover the queuer (`caller`) and tx from the RulesetQueued event: RPCs cap eth_getLogs
-// at 50k blocks, so we estimate the ruleset's block from its timestamp (rulesetId == queue timestamp) using the
-// chain's recent block rate, then scan a ±25k window filtered by the indexed rulesetId. Found → attributed row
-// (actor + tx link); not found (very old, outside the window) → a `system` fallback row (no actor/tx).
+// remaining ruleset we recover the queuer (`caller`) and tx from the index's `rulesetQueuedEvent` (PR #14) —
+// this replaced a per-ruleset block-estimate + ±25k eth_getLogs scan per chain (RPC-capped, slow). Found →
+// attributed row (actor + tx link); not indexed → a `system` fallback row (no actor/tx), same as before.
+var RULESET_QUEUED_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
+  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 200) {'
+  + ' items { chainId rulesetId from txHash } } }';
 async function fetchRulesetQueueRows(project) {
   var pid = BigInt(project.id);
   var chainIds = projectBendystrawChainIds(project);
   if (!chainIds.length) return [];
+  // Caller + tx from the index, keyed by chainId|rulesetId. The cheap JBRulesets.allOf read stays: bendystraw
+  // indexes no ruleset STATE, so basedOnId (deploy-detection) and cycleNumber (label) are still read on-chain.
+  var callerByKey = {};
+  try {
+    var qd = await bendystrawQuery(RULESET_QUEUED_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
+    ((qd && qd.rulesetQueuedEvents && qd.rulesetQueuedEvents.items) || []).forEach(function (e) {
+      if (e.from) callerByKey[e.chainId + '|' + String(e.rulesetId)] = { caller: e.from, txHash: e.txHash };
+    });
+  } catch (_) {}
   var rows = [];
   await Promise.all(chainIds.map(async function (cid) {
     var rs = await read(cid, 'JBRulesets', allOfAbi, 'allOf', [pid, 0n, 8n]).catch(function () { return null; });
     if (!rs || !rs.length) return;
     var queued = rs.filter(function (r) { return Number(r.basedOnId) !== 0 && Number(r.id) > 0; });
     if (!queued.length) return;
-
-    var callerById = {};
-    try {
-      var lc = lpLogsClient(cid) || clientFor(cid);
-      var rsAddr = getAddress('JBRulesets', cid);
-      var latestNum = await lc.getBlockNumber();
-      var latestBlk = await lc.getBlock({ blockNumber: latestNum });
-      var refNum = latestNum > 20000n ? latestNum - 20000n : 0n;
-      var refBlk = await lc.getBlock({ blockNumber: refNum });
-      var spanBlocks = Number(latestNum - refNum) || 1;
-      var secPerBlock = (Number(latestBlk.timestamp) - Number(refBlk.timestamp)) / spanBlocks;
-      if (!(secPerBlock > 0)) secPerBlock = 12;
-      await Promise.all(queued.map(async function (r) {
-        var est = Number(latestNum) - Math.floor((Number(latestBlk.timestamp) - Number(r.id)) / secPerBlock);
-        var hi = Math.min(Number(latestNum), est + 25000);
-        var lo = Math.max(0, est - 25000);
-        if (hi < 0) return;
-        var logs = await lc.getLogs({
-          address: rsAddr, event: RULESET_QUEUED_EVENT, args: { rulesetId: BigInt(r.id) },
-          fromBlock: BigInt(lo), toBlock: BigInt(hi),
-        }).catch(function () { return []; });
-        if (logs && logs[0]) callerById[String(r.id)] = { caller: logs[0].args.caller, txHash: logs[0].transactionHash };
-      }));
-    } catch (_) {}
 
     queued.forEach(function (r) {
       // Hide rulesets queued as part of the deploy. The launch queues the genesis + all its stages TOGETHER in
@@ -9739,7 +9715,7 @@ async function fetchRulesetQueueRows(project) {
       // then-current ruleset but queued much later, so `id - basedOnId` is large. The genesis (basedOnId == 0)
       // is already excluded above; this drops the rest of the deploy cluster. (Verified on BAN: id-based == 1.)
       if (Number(r.id) - Number(r.basedOnId) <= 60) return;
-      var info = callerById[String(r.id)];
+      var info = callerByKey[cid + '|' + String(r.id)];
       // Label by cycle NUMBER (stable across chains) so the same ruleset queued on every chain groups into one
       // row — the rulesetId differs per chain (it's the local queue timestamp) and would split the rows apart.
       if (info && info.caller) {
