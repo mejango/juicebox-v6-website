@@ -67,6 +67,13 @@ var AUTO_ISSUE_MAX_EVENTS = 1000;
 var PRICE_HISTORY_PAGE_SIZE = 1000;
 var PRICE_HISTORY_MAX_POINTS = 3000;
 var ACTIVITY_PAGE_SIZE = 10;
+// Total events to load per query. The pager stops early once a project's full history is fetched (short page /
+// totalCount), so this only costs extra requests on projects that actually have more than 10 events — it stops
+// the oldest events (project-create, earlier pay-ins) from being cut off at 10.
+var ACTIVITY_MAX_ITEMS = 100;
+// Default .activity-feed scroll height (mirrors style.css). sizeActivity() grows the feed to 2x this (or the body
+// height) so loaded activity isn't hidden behind a short scrollbox.
+var ACTIVITY_FEED_BASE_PX = 390;
 var BENDYSTRAW_PARENT_CHAIN_ID = {
   11155111: 1,
   11155420: 10,
@@ -148,6 +155,18 @@ function routerSetHash(h) {
 // swap-pay to the project's resolved terminal). The old hardcoded 0x986cda… was stale (not in the manifest,
 // not even a JBRouterTerminal — no DIRECTORY()).
 function routerTerminalFor(chainId) { return getAddress('JBRouterTerminalRegistry', chainId); }
+
+// Pick the pay token after the on-chain accounting-context refine resolves the real token list. Preserve the
+// user's pick ONLY when they explicitly chose one (tokenTouched); otherwise default to the project's first
+// accounting token (list[0]). This is the fix for the fund-loss desync where a USDC-accounting project stayed
+// stuck on the native-ETH sync default (the dropdown showed USDC but the tx paid 1 ETH). Pure for testability.
+export function chooseRefinedPayToken(list, currentToken, tokenTouched) {
+  list = list || [];
+  var keep = tokenTouched && list.filter(function (t) {
+    return currentToken && t.address.toLowerCase() === currentToken.address.toLowerCase() && t.viaRouter === currentToken.viaRouter;
+  })[0];
+  return keep || list[0] || null;
+}
 
 // Canonical Circle testnet USDC (6 decimals), lowercased to avoid viem checksum validation. Offered as
 // a pay currency on revnets (which have the router); previewPayFor reads "unavailable" where no pool.
@@ -2909,13 +2928,16 @@ function formatDuration(secs) {
 // -- ENS reverse resolution (mainnet only; primary names live on mainnet even for
 // testnet projects). Cached per address; resolves "where possible", silent otherwise. --
 var _ensCache = {};
+var _ensResolved = {}; // lowercased addr -> resolved primary name (sync read; lets the table search match names)
 function ensNameOf(address) {
   if (!address || address === ZERO_ADDRESS) return Promise.resolve(null);
   var key = address.toLowerCase();
   if (_ensCache[key]) return _ensCache[key];
   var p = (async function () {
     try {
-      return await clientFor(1).getEnsName({ address: address });
+      var n = await clientFor(1).getEnsName({ address: address });
+      if (n) _ensResolved[key] = n;
+      return n;
     } catch (e) {
       return null;
     }
@@ -2923,6 +2945,8 @@ function ensNameOf(address) {
   _ensCache[key] = p;
   return p;
 }
+// Sync read of an already-resolved ENS name (or null) — lets the account search substring-match names without awaiting.
+export function ensNameCached(address) { return _ensResolved[(address || '').toLowerCase()] || null; }
 
 // Forward ENS resolution (name → address), mainnet, cached. Returns null for non-names / no record.
 var _ensAddrCache = {};
@@ -3023,9 +3047,11 @@ function addressNode(address, chainId) {
   // Custom tooltip (shows the full address) so it reveals INSTANTLY on hover — native `title` has a delay.
   var tip = el('span', 'addr-tip'); tip.textContent = address; span.appendChild(tip);
   ensNameOf(address).then(function (name) { if (name) { label.textContent = name; tip.textContent = address; } });
-  // Click the truncated address (or ENS) to copy the full address.
+  // Click the truncated address (or ENS) to copy the full address. The native title carries the FULL address
+  // too — the instant .addr-tip is clipped inside ellipsis cells (e.g. the owners table), so this guarantees the
+  // address is visible on hover everywhere.
   label.style.cursor = 'pointer';
-  label.title = 'Click to copy';
+  label.title = address + ' · click to copy';
   label.addEventListener('click', function (e) {
     e.preventDefault(); e.stopPropagation();
     var prevTip = tip.textContent;
@@ -3692,9 +3718,24 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // On phones, Activity becomes the first detail subtab (added below, and default) instead of a tall
   // always-on card wedged between Pay and the tabs; on wider screens it stays in the left column.
   var activityAsTab = !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
-  activityCardEl = renderActivityCard(project, { asTab: activityAsTab });
+  // Activity panel height: at least as tall as the body (right column), and twice its own content when populated
+  // — so the feed isn't clipped to a short body and stays a substantial panel.
+  function sizeActivity() {
+    if (activityAsTab || !activityCardEl || !activityCardEl.isConnected) return;
+    var feed = activityCardEl.querySelector('.activity-feed');
+    if (!feed) return;
+    if (!feed.querySelector('.activity-row')) { feed.style.minHeight = ''; feed.style.maxHeight = ''; return; }
+    // A tall panel: twice the default 390px feed, and at least most of the viewport (a proxy for the body
+    // content height — measuring the body column directly feeds back through the equal-height column stretch).
+    // Content shorter than this shows in full; longer histories scroll within the panel.
+    var target = Math.max(2 * ACTIVITY_FEED_BASE_PX, Math.round(0.82 * (window.innerHeight || 900)));
+    feed.style.minHeight = target + 'px';
+    feed.style.maxHeight = target + 'px';
+  }
+  activityCardEl = renderActivityCard(project, { asTab: activityAsTab, onContent: function () { requestAnimationFrame(sizeActivity); } });
   if (!activityAsTab) leftCol.appendChild(activityCardEl);
   columns.appendChild(leftCol);
+  window.addEventListener('resize', function () { requestAnimationFrame(sizeActivity); });
 
   var rightCol = el('div', 'project-detail-right');
   // Sections build lazily on first view so the cross-chain "Ops" fan-out only fires when opened.
@@ -3903,10 +3944,8 @@ function renderPayCard(project, cart) {
         if (state.chainId !== chainId) return;
         state.tokens = list;
         // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
-        // would shadow the project's real accounting token. A project that accepts USDC directly must default
-        // to USDC, not silently stay on native ETH (which would pay 1 ETH instead of 1 USDC).
-        var keep = state.tokenTouched && list.filter(function (t) { return state.token && t.address.toLowerCase() === state.token.address.toLowerCase() && t.viaRouter === state.token.viaRouter; })[0];
-        state.token = keep || list[0] || null;
+        // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
+        state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
         rebuildCurrency();
         schedulePreview();
       }).catch(function () {});
@@ -5853,6 +5892,7 @@ function renderActivityCard(project, opts) {
     }
     body.className = 'activity-feed';
     rows.forEach(function (row) { body.appendChild(renderActivityRow(row, project)); });
+    if (opts && opts.onContent) opts.onContent();
   }
 
   // Load the sucker map first so the feed can relabel under-the-hood sucker cash-outs as bridges.
@@ -9610,11 +9650,11 @@ async function fetchProjectActivity(project) {
   if (groupId) {
     queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_QUERY, 'activityEvents', {
       suckerGroupId: groupId, version: BENDYSTRAW_VERSION, chainIds: chainIds,
-    }, ACTIVITY_PAGE_SIZE, ACTIVITY_PAGE_SIZE).catch(function () { return { items: [] }; }));
+    }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS).catch(function () { return { items: [] }; }));
   }
   queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
     projectId: Number(project.id), version: BENDYSTRAW_VERSION, chainIds: chainIds,
-  }, ACTIVITY_PAGE_SIZE, ACTIVITY_PAGE_SIZE).catch(function () { return { items: [] }; }));
+  }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS).catch(function () { return { items: [] }; }));
 
   var results = await Promise.all(queries);
   var seen = {}, merged = [];
@@ -10126,8 +10166,10 @@ function renderOwnersPieChart(participants, totalBalance, totalSupply, sym) {
   svg.setAttribute('aria-label', sym + ' owner distribution');
 
   var cx = 120, cy = 120, outer = 92, inner = 54;
-  var angle = -Math.PI / 2;
-  var drawable = participants.filter(function (row) { return row.balance > 0n; });
+  // Start at 3 o'clock + draw smallest-first, so the fan of tiny slices (the "scrunched" small holders) sits on
+  // the RIGHT side going clockwise, with the biggest slices across the top — not bunched at the top.
+  var angle = 0;
+  var drawable = participants.filter(function (row) { return row.balance > 0n; }).slice().reverse();
   // Pink-light fill, borders distinguish slices (see .owners-pie-slice).
   if (drawable.length === 1) {
     // One owner → a full annulus (near-360° so the band fills but the hole stays open).
@@ -10196,7 +10238,169 @@ function polar(cx, cy, r, a) {
   };
 }
 
+// Paginate a long list: fills `rowsContainer` with one page (pageSize) of rows built by buildRow(item, idx)
+// and returns a nav bar (First / Prev / "page / total" / Next / Last). The nav hides itself for a single page.
+var LIST_PAGE_SIZE = 30;
+export function attachPagination(rowsContainer, items, pageSize, buildRow) {
+  var page = 0;
+  var pages = Math.max(1, Math.ceil(items.length / pageSize));
+  var nav = el('div', 'list-pagination');
+  // Keep the nav (where the user just clicked) in view — don't jump the page into the middle of the table.
+  function go(to) { page = Math.max(0, Math.min(pages - 1, to)); render(); nav.scrollIntoView({ block: 'nearest' }); }
+  function render() {
+    rowsContainer.innerHTML = '';
+    var start = page * pageSize;
+    items.slice(start, start + pageSize).forEach(function (item, i) { rowsContainer.appendChild(buildRow(item, start + i)); });
+    nav.innerHTML = '';
+    if (pages <= 1) { nav.style.display = 'none'; return; }
+    nav.style.display = '';
+    var mk = function (label, to, disabled) {
+      var b = el('button', 'list-page-btn'); b.type = 'button'; b.textContent = label; b.disabled = disabled;
+      if (!disabled) b.addEventListener('click', function () { go(to); });
+      return b;
+    };
+    nav.appendChild(mk('« First', 0, page === 0));
+    nav.appendChild(mk('‹ Prev', page - 1, page === 0));
+    var ind = el('span', 'list-page-indicator'); ind.textContent = (page + 1) + ' / ' + pages; nav.appendChild(ind);
+    nav.appendChild(mk('Next ›', page + 1, page >= pages - 1));
+    nav.appendChild(mk('Last »', pages - 1, page >= pages - 1));
+  }
+  render();
+  return nav;
+}
+
+// Pure: substring-match accounts by address OR resolved ENS name (case-insensitive), excluding already-selected,
+// capped at `limit`. nameOf(address) -> the account's known ENS name (or null) so e.g. "art" matches
+// "artizenendowment.eth". Full-ENS forward resolution is layered on async by buildAccountSearch.
+export function matchAccountsByAddress(items, query, selectedLower, limit, nameOf) {
+  var q = String(query || '').trim().toLowerCase();
+  if (!q) return [];
+  selectedLower = selectedLower || [];
+  limit = limit || 8;
+  nameOf = nameOf || function () { return null; };
+  var out = [];
+  for (var i = 0; i < items.length && out.length < limit; i++) {
+    var a = (items[i].address || '').toLowerCase();
+    if (selectedLower.indexOf(a) !== -1) continue;
+    var name = (nameOf(items[i].address) || '').toLowerCase();
+    if (a.indexOf(q) !== -1 || (name && name.indexOf(q) !== -1)) out.push(items[i]);
+  }
+  return out;
+}
+
+// Account search-with-chips. Type a partial/full address or an ENS name; pick a match to add it as a filter
+// chip (multiple allowed). onChange(selectedLowerAddresses[]) fires whenever the chip set changes.
+// opts.subLabel(item) -> a secondary string per suggestion (e.g. the account's share). opts.placeholder.
+function buildAccountSearch(items, onChange, opts) {
+  opts = opts || {};
+  var wrap = el('div', 'acct-search');
+  var box = el('div', 'acct-search-box');
+  var input = el('input', 'acct-search-input'); input.type = 'text';
+  input.placeholder = opts.placeholder || 'Search account by address or ENS…';
+  box.appendChild(input);
+  var menu = el('div', 'acct-search-menu'); menu.style.display = 'none'; box.appendChild(menu);
+  wrap.appendChild(box);
+  // Chips sit UNDER the search bar.
+  var chipRow = el('div', 'acct-search-chips'); chipRow.style.display = 'none'; wrap.appendChild(chipRow);
+  var selected = [];
+  var byAddr = {}; items.forEach(function (it) { byAddr[(it.address || '').toLowerCase()] = it; });
+  var topAddr = null;
+
+  function renderChips() {
+    chipRow.innerHTML = '';
+    selected.forEach(function (addr) {
+      var chip = el('span', 'acct-chip');
+      var lbl = el('span', 'acct-chip-label'); lbl.textContent = truncAddr(addr); chip.appendChild(lbl);
+      ensNameOf(addr).then(function (n) { if (n) lbl.textContent = n; }).catch(function () {});
+      var x = el('button', 'acct-chip-x'); x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', 'Remove account filter');
+      x.addEventListener('click', function () { selected = selected.filter(function (a) { return a !== addr; }); renderChips(); onChange(selected.slice()); });
+      chip.appendChild(x);
+      chipRow.appendChild(chip);
+    });
+    chipRow.style.display = selected.length ? '' : 'none';
+  }
+  function add(addr) {
+    addr = (addr || '').toLowerCase();
+    if (!addr || selected.indexOf(addr) !== -1) return;
+    selected.push(addr); input.value = ''; menu.style.display = 'none';
+    renderChips(); onChange(selected.slice());
+  }
+  function renderMenu(matches) {
+    menu.innerHTML = '';
+    topAddr = matches.length ? matches[0].address : null;
+    if (!matches.length) { var e = el('div', 'acct-search-empty'); e.textContent = 'No matching account'; menu.appendChild(e); menu.style.display = ''; return; }
+    matches.forEach(function (it) {
+      var item = el('div', 'acct-search-item');
+      var a = el('span', 'acct-search-item-addr'); a.textContent = truncAddr(it.address); item.appendChild(a);
+      ensNameOf(it.address).then(function (n) { if (n) a.textContent = n; }).catch(function () {});
+      if (opts.subLabel) { var s = el('span', 'acct-search-item-sub'); s.textContent = opts.subLabel(it); item.appendChild(s); }
+      // mousedown (not click) so it fires before the input's blur hides the menu.
+      item.addEventListener('mousedown', function (ev) { ev.preventDefault(); add(it.address); });
+      menu.appendChild(item);
+    });
+    menu.style.display = '';
+  }
+  var ensSeq = 0;
+  function refresh() {
+    var q = input.value.trim();
+    if (!q) { menu.style.display = 'none'; topAddr = null; return; }
+    var selLower = selected.slice();
+    var matches = matchAccountsByAddress(items, q, selLower, 8, ensNameCached);
+    renderMenu(matches);
+    // ENS forward-resolve when the query looks like a name (has a dot, or has letters and isn't a hex prefix).
+    var looksEns = /\./.test(q) || (/[a-z]/i.test(q) && !/^0x/i.test(q));
+    if (looksEns) {
+      var seq = ++ensSeq;
+      ensAddressOf(/\./.test(q) ? q : (q + '.eth')).then(function (addr) {
+        if (seq !== ensSeq || !addr) return;
+        var lower = addr.toLowerCase();
+        var hit = byAddr[lower];
+        if (hit && selLower.indexOf(lower) === -1 && matches.indexOf(hit) === -1) renderMenu([hit].concat(matches).slice(0, 8));
+      }).catch(function () {});
+    }
+  }
+  // Resolve ENS names for the accounts (top-balance first, capped + concurrency-limited) the first time the user
+  // engages the search, so partial-name queries like "art" → "artizenendowment.eth" match beyond the rows that
+  // happened to resolve on screen. Re-runs the live query as names arrive. ensNameOf caches, so this is one-shot.
+  var resolveStarted = false;
+  function resolveNamesInBackground() {
+    if (resolveStarted) return;
+    resolveStarted = true;
+    var idx = 0, cap = Math.min(items.length, 400);
+    function worker() {
+      if (idx >= cap) return;
+      var it = items[idx++];
+      ensNameOf(it.address)
+        .then(function () { if (document.activeElement === input && input.value.trim()) refresh(); })
+        .catch(function () {})
+        .then(worker);
+    }
+    for (var w = 0; w < 6; w++) worker();
+  }
+  input.addEventListener('input', refresh);
+  input.addEventListener('focus', function () { resolveNamesInBackground(); refresh(); });
+  input.addEventListener('blur', function () { setTimeout(function () { menu.style.display = 'none'; }, 120); });
+  input.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    var q = input.value.trim();
+    if (/^0x[0-9a-fA-F]{40}$/.test(q) && byAddr[q.toLowerCase()]) { add(q); return; }
+    if (topAddr) add(topAddr);
+  });
+  return { el: wrap };
+}
+
 function renderOwnersTable(participants, totalSupply, sym, project, paidByToken) {
+  var outer = el('div', 'owners-table-outer');
+  // Account search (chips filter the table) — only worth showing once the list is long enough to scan. The
+  // AMM/Market row isn't a searchable account.
+  var searchable = participants.filter(function (p) { return !isAmmAddress(p.address); });
+  if (searchable.length > 8) {
+    var search = buildAccountSearch(searchable, function (sel) { applyFilter(sel); }, {
+      subLabel: function (it) { return formatOwnerPortion(it.balance, totalSupply); },
+    });
+    outer.appendChild(search.el);
+  }
   var wrap = el('div', 'owners-table-wrap');
   var table = el('div', 'owners-table');
   var head = el('div', 'owners-row owners-head');
@@ -10206,8 +10410,10 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
     head.appendChild(cell);
   });
   table.appendChild(head);
+  var body = el('div', 'owners-tbody');
+  table.appendChild(body);
 
-  participants.forEach(function (row, idx) {
+  function buildOwnerRow(row) {
     var tr = el('div', 'owners-row');
     var acct = el('span', 'owners-account');
     if (isAmmAddress(row.address)) {
@@ -10227,12 +10433,12 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
     }
     tr.appendChild(acct);
 
-    // Share: just the %, with the token balance on hover.
-    var bal = el('span', 'owners-balance');
-    bal.title = formatCompactTokenAmount(row.balance) + ' ' + sym;
+    // Share: just the %, with the token balance on an INSTANT hover tooltip (no native-title delay).
+    var bal = el('span', 'owners-balance has-instant-tip');
     var pct = el('strong');
     pct.textContent = formatOwnerPortion(row.balance, totalSupply);
     bal.appendChild(pct);
+    var btip = el('span', 'instant-tip'); btip.textContent = formatCompactTokenAmount(row.balance) + ' ' + sym; bal.appendChild(btip);
     tr.appendChild(bal);
 
     var chains = el('span', 'owners-chains');
@@ -10249,13 +10455,23 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
     var paidUsd = Number(usdFromScaled(row.volumeUsd));
     if (lit) paid.textContent = lit;
     else if (paidUsd > 0) paid.textContent = formatUsd(paidUsd);
-    else { var acct = project.acctToken || { decimals: 18, symbol: 'ETH' }; paid.textContent = formatBalance(row.volume, acct.decimals, acct.symbol); }
+    else { var accTok = project.acctToken || { decimals: 18, symbol: 'ETH' }; paid.textContent = formatBalance(row.volume, accTok.decimals, accTok.symbol); }
     tr.appendChild(paid);
-    table.appendChild(tr);
-  });
+    return tr;
+  }
 
   wrap.appendChild(table);
-  return wrap;
+  outer.appendChild(wrap);
+  var navHolder = el('div', 'owners-nav-holder');
+  outer.appendChild(navHolder);
+  // Re-build the page (and its nav) for the current chip filter — no chips = the full list.
+  function applyFilter(sel) {
+    var list = (sel && sel.length) ? participants.filter(function (p) { return sel.indexOf((p.address || '').toLowerCase()) !== -1; }) : participants;
+    navHolder.innerHTML = '';
+    navHolder.appendChild(attachPagination(body, list, LIST_PAGE_SIZE, buildOwnerRow));
+  }
+  applyFilter([]);
+  return outer;
 }
 
 // Loans table (Owners-style). Columns: Address, Collateral, Borrowed, Opened, Prepaid, Prepaid until,
@@ -11928,7 +12144,7 @@ function opsChainSelect(project, onChange, opts) {
   // Compact dropdown styling (matches the cash-out selectors), not the heavy full-width bordered control.
   var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
   var sym = project.tokenSymbol || 'tokens';
-  (project.chains || []).forEach(function (c) {
+  (opts.chains || project.chains || []).forEach(function (c) {
     var o = document.createElement('option'); o.value = String(c.id); o.textContent = c.name; sel.appendChild(o);
     // Show the connected wallet's balance on each chain right in the option, so the user can pick the
     // chain with funds without switching first.
@@ -11973,7 +12189,8 @@ function readUserBalance(project, chainId) {
 
 // Renders, into `balTable`, two per-chain sections: the connected wallet's project-token balance, and the
 // project's (accounting-token) balances. Shared by the Cash out + Move modals.
-function renderBalanceTables(balTable, project, sym) {
+function renderBalanceTables(balTable, project, sym, opts) {
+  opts = opts || {};
   balTable.innerHTML = '';
   var chs = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   function chainCell(cid, name) { var c = el('span', 'cashout-tbl-chain'); c.appendChild(chainLogo(cid, name)); var t = el('span'); t.textContent = ' ' + (name || ('Chain ' + cid)); c.appendChild(t); return c; }
@@ -11994,7 +12211,8 @@ function renderBalanceTables(balTable, project, sym) {
     balTable.appendChild(yt);
   }
 
-  // PROJECT BALANCES — Chain | <one column per accounting token (USDC, ETH, …)>.
+  // PROJECT BALANCES — Chain | <one column per accounting token (USDC, ETH, …)>. Skippable (add-liquidity only wants "Your balance").
+  if (opts.skipProjectBalances) return;
   var ph = title('Project balances'); ph.style.marginTop = '14px'; balTable.appendChild(ph);
   var tt = makeTable('1.4fr auto'); balTable.appendChild(tt);
   acctKindsForFunds(project).then(function (kinds) {
@@ -12462,13 +12680,16 @@ function buildLoanModal(project, requestClose) {
   var baseCur = BigInt((project.metadata && project.metadata.baseCurrency) || 1);
   function fmtBorrow(v) { return formatBalance(v, 18, baseLbl); }
 
+  // Your balance + project balances per chain, boxed at the top (like the cash-out modal).
+  var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
+  renderBalanceTables(balTable, project, sym);
+
   var clbl = el('div', 'modal-label'); clbl.textContent = 'Collateral'; wrap.appendChild(clbl);
   var lbl = el('div', 'modal-balance'); lbl.textContent = 'How much ' + sym + ' do you want to collateralize?'; wrap.appendChild(lbl);
-  var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
 
-  // Chain selector on its own row above the amount (with per-chain balances).
+  // Chain selector on its own row above the amount.
   var chainRow = el('div', 'ops-chainrow');
-  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshBalance(); }, { withBalance: true });
+  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshBalance(); });
   chainRow.appendChild(chainSel);
   wrap.appendChild(chainRow);
 
@@ -12645,11 +12866,7 @@ function buildLoanModal(project, requestClose) {
 
   var pid = BigInt(project.id);
   function refreshBalance() {
-    bal.textContent = 'Your balance: …';
-    readUserBalance(project, state.chainId).then(function (b) {
-      state.balance = b;
-      bal.textContent = b == null ? 'Connect a wallet to see your balance.' : ('Your balance: ' + formatTokens(b) + ' ' + sym);
-    });
+    readUserBalance(project, state.chainId).then(function (b) { state.balance = b; });
   }
   var previewSeq = 0;
   function updatePreview() {
@@ -13704,9 +13921,9 @@ function lpTrimNum(n) {
 // and issuance ceiling. All values are ETH per token.
 function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   var pts = [floor, ceiling, poolP, pa, pb].filter(function (v) { return v > 0; });
-  if (!pts.length) return '<div class="modal-balance">Range preview unavailable.</div>';
+  if (!pts.length) return { html: '<div class="modal-balance">Range preview unavailable.</div>', maxV: 0, W: 320, padL: 6, padR: 6 };
   var maxV = Math.max.apply(null, pts) * 1.12;
-  var W = 320, H = 60, padL = 6, padR = 6, baseY = 38;
+  var W = 320, H = 74, padL = 6, padR = 6, baseY = 42;
   function X(v) { return padL + (W - padL - padR) * (v / maxV); }
   // Uniform scaling (no preserveAspectRatio="none") so the text labels don't render horizontally stretched.
   var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" class="lp-graph-svg">';
@@ -13717,21 +13934,24 @@ function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   function marker(v, color, label, up) {
     if (!(v > 0)) return '';
     var xv = X(v);
+    var valStr = formatPrice(v);
     // Keep the whole label inside the chart: anchor by where its half-width would overflow an edge.
-    // (~0.3 ≈ half the ~0.6em monospace glyph advance at font-size 8.)
-    var half = label.length * 8 * 0.3;
+    // (~0.3 ≈ half the ~0.6em monospace glyph advance at font-size 8.) Use the wider of label/value.
+    var half = Math.max(label.length, valStr.length) * 8 * 0.3;
     var anchor = 'middle', tx = xv;
     if (xv - half < padL) { anchor = 'start'; tx = padL; }
     else if (xv + half > W - padR) { anchor = 'end'; tx = W - padR; }
     var x = xv.toFixed(1);
+    var labelY = up ? 10 : H - 13, valY = up ? 20 : H - 3;
     return '<line x1="' + x + '" y1="' + (baseY - 13) + '" x2="' + x + '" y2="' + (baseY + 13) + '" stroke="' + color + '" stroke-width="1.5"/>'
-      + '<text x="' + tx.toFixed(1) + '" y="' + (up ? 11 : H - 3) + '" font-size="8" fill="' + color + '" text-anchor="' + anchor + '">' + label + '</text>';
+      + '<text x="' + tx.toFixed(1) + '" y="' + labelY + '" font-size="8" fill="' + color + '" text-anchor="' + anchor + '">' + label + '</text>'
+      + '<text x="' + tx.toFixed(1) + '" y="' + valY + '" font-size="8" font-weight="bold" fill="' + color + '" text-anchor="' + anchor + '">' + valStr + '</text>';
   }
   svg += marker(floor, '#2c2018', 'Cash out floor', true);
   svg += marker(poolP, '#b8602e', 'Current pool price', false);
   svg += marker(ceiling, '#1a8a8a', 'Issuance ceiling', true);
   svg += '</svg>';
-  return svg;
+  return { html: svg, maxV: maxV, W: W, padL: padL, padR: padR };
 }
 
 // --- Uniswap V4 mint (Add liquidity) — exact encoding per v4-periphery PositionManager ---
@@ -14049,7 +14269,7 @@ function renderLpOwnersPie(lp) {
   var svgNS = 'http://www.w3.org/2000/svg';
   var svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('viewBox', '0 0 240 240'); svg.setAttribute('class', 'owners-pie-svg'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'LP owner distribution');
-  var cx = 120, cy = 120, outer = 92, inner = 54, angle = -Math.PI / 2;
+  var cx = 120, cy = 120, outer = 92, inner = 54, angle = 0; // 3 o'clock start → tiny LP slices fan on the right
   // Pink-light fill, borders distinguish slices (matches the owners donut).
   if (owners.length === 1) {
     var ring = document.createElementNS(svgNS, 'path');
@@ -14058,7 +14278,8 @@ function renderLpOwnersPie(lp) {
     tagPieSlice(ring, owners[0].address, isAmmAddress(owners[0].address), ' (100%)');
     svg.appendChild(ring);
   } else {
-    owners.forEach(function (o) {
+    // smallest-first so the tiny LP slices fan out on the RIGHT side (matches the owners donut)
+    owners.slice().sort(function (a, b) { return a.valueEth - b.valueEth; }).forEach(function (o) {
       var frac = o.valueEth / total; if (!(frac > 0)) return;
       var next = angle + frac * Math.PI * 2;
       var path = document.createElementNS(svgNS, 'path');
@@ -14124,6 +14345,13 @@ function renderLpTable(lp, sym, chainId) {
   var owners = lp.owners.filter(function (o) { return o.valueEth > 0; });
   if (!owners.length) return null;
   var total = owners.reduce(function (s, o) { return s + o.valueEth; }, 0);
+  var outer = el('div', 'owners-table-outer lp-pos-table-outer');
+  if (owners.length > 8) {
+    var search = buildAccountSearch(owners, function (sel) { applyFilter(sel); }, {
+      subLabel: function (o) { return (o.valueEth / total * 100).toFixed(1) + '%'; },
+    });
+    outer.appendChild(search.el);
+  }
   var wrap = el('div', 'owners-table-wrap lp-pos-table-wrap');
   var table = el('div', 'owners-table lp-pos-table');
   var pairSym = (lp.pair && lp.pair.symbol) || 'ETH';
@@ -14131,7 +14359,9 @@ function renderLpTable(lp, sym, chainId) {
   var head = el('div', 'owners-row owners-head');
   ['Account', pairSym, sym, 'Share'].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
   table.appendChild(head);
-  owners.forEach(function (o) {
+  var body = el('div', 'owners-tbody');
+  table.appendChild(body);
+  function buildLpRow(o) {
     var tr = el('div', 'owners-row');
     var acct = el('span', 'owners-account');
     acct.appendChild(addressNode(o.address));
@@ -14140,10 +14370,19 @@ function renderLpTable(lp, sym, chainId) {
     var ethC = el('span', 'owners-balance'); ethC.textContent = lpTrimNum(Number(o.eth) / pairScale) + ' ' + pairSym; tr.appendChild(ethC);
     var revC = el('span', 'owners-balance'); revC.textContent = formatCompactTokenAmount(o.rev) + ' ' + sym; tr.appendChild(revC);
     var shareC = el('span'); var st = el('strong'); st.textContent = (o.valueEth / total * 100).toFixed(1) + '%'; shareC.appendChild(st); tr.appendChild(shareC);
-    table.appendChild(tr);
-  });
+    return tr;
+  }
   wrap.appendChild(table);
-  return wrap;
+  outer.appendChild(wrap);
+  var navHolder = el('div', 'owners-nav-holder');
+  outer.appendChild(navHolder);
+  function applyFilter(sel) {
+    var list = (sel && sel.length) ? owners.filter(function (o) { return sel.indexOf((o.address || '').toLowerCase()) !== -1; }) : owners;
+    navHolder.innerHTML = '';
+    navHolder.appendChild(attachPagination(body, list, LIST_PAGE_SIZE, buildLpRow));
+  }
+  applyFilter([]);
+  return outer;
 }
 
 // Horizontal bar of the pool's pair (ETH/USDC) vs token split (by pair-value). Null if nothing to show.
@@ -14355,18 +14594,38 @@ function buildAddLiquidityModal(project) {
   intro.textContent = 'Seed the buyback pool so payers can route through the AMM. Liquidity is added at the current pool price.';
   wrap.appendChild(intro);
 
-  var lbl0 = el('div', 'modal-label'); lbl0.textContent = 'Chain'; wrap.appendChild(lbl0);
-  var chainSel = el('select', 'ops-select');
-  chainSel.style.maxWidth = '100%'; chainSel.style.borderRight = '2px solid var(--write)';
-  lpChains.forEach(function (c) { var o = document.createElement('option'); o.value = String(c.id); o.textContent = c.name; chainSel.appendChild(o); });
-  chainSel.addEventListener('change', function () { state.chainId = Number(chainSel.value); refreshPair(); });
-  wrap.appendChild(chainSel);
+  // Your balance per chain, boxed at the top (like the cash-out modal). Add-liquidity skips project balances.
+  var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
+  renderBalanceTables(balTable, project, sym, { skipProjectBalances: true });
 
+  var chainRow = el('div', 'ops-chainrow');
+  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshPair(); }, { chains: lpChains });
+  chainRow.appendChild(chainSel);
+  wrap.appendChild(chainRow);
+
+  // Slim line for the pair token (ETH/USDC) balance — the table above covers the project token.
   var balLine = el('div', 'modal-balance'); balLine.style.marginTop = '8px'; wrap.appendChild(balLine);
   var priceLine = el('div', 'modal-balance'); wrap.appendChild(priceLine);
 
   // Number-line of where the selected range sits relative to floor / pool price / issuance ceiling.
   var graphWrap = el('div', 'lp-graph'); wrap.appendChild(graphWrap);
+  var graphHolder = el('div', 'lp-graph-holder'); graphWrap.appendChild(graphHolder);
+  var graphTip = el('div', 'lp-graph-tip'); graphTip.style.display = 'none'; graphWrap.appendChild(graphTip);
+  var graphScale = null;
+  // Hover anywhere on the range bar to read the price at that point (mapping cursor x → ETH/token value).
+  graphWrap.addEventListener('mousemove', function (e) {
+    if (!graphScale || !graphScale.maxV) { graphTip.style.display = 'none'; return; }
+    var rect = graphHolder.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    var svgX = (e.clientX - rect.left) / rect.width * graphScale.W;
+    var span = graphScale.W - graphScale.padL - graphScale.padR;
+    var value = span > 0 ? (svgX - graphScale.padL) / span * graphScale.maxV : 0;
+    if (!(value > 0)) { graphTip.style.display = 'none'; return; }
+    graphTip.textContent = '≈ ' + formatPrice(value) + ' ' + pairSym() + ' / ' + sym;
+    graphTip.style.display = '';
+    graphTip.style.left = Math.max(2, Math.min(rect.width - 110, e.clientX - rect.left + 8)) + 'px';
+  });
+  graphWrap.addEventListener('mouseleave', function () { graphTip.style.display = 'none'; });
 
   var lblR = el('div', 'modal-label'); lblR.textContent = 'Price range (ETH per ' + sym + ')'; wrap.appendChild(lblR);
   var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash-out floor to the issuance ceiling.'; wrap.appendChild(rnote);
@@ -14441,7 +14700,9 @@ function buildAddLiquidityModal(project) {
   }
   function drawGraph() {
     var r = currentRange();
-    graphWrap.innerHTML = renderLpRangeSvg(state.floor, state.ceiling, state.poolP, r.pa, r.pb);
+    var g = renderLpRangeSvg(state.floor, state.ceiling, state.poolP, r.pa, r.pb);
+    graphHolder.innerHTML = g.html;
+    graphScale = g.maxV ? g : null;
   }
   function autofill() {
     var r = currentRange();
@@ -14469,13 +14730,12 @@ function buildAddLiquidityModal(project) {
 
   function refreshBalances() {
     var acct = getAccount && getAccount();
-    if (!acct) { balLine.textContent = 'Connect a wallet to see your balance.'; state.revBal = null; state.ethBal = null; return; }
-    balLine.textContent = 'Your balance: …';
+    if (!acct) { balLine.textContent = ''; state.revBal = null; state.ethBal = null; return; }
+    balLine.textContent = 'Your ' + pairSym() + ': …';
     var pairTokenAddr = state.pair.isNative ? NATIVE_TOKEN : state.pair.addr;
     Promise.all([readUserBalance(project, state.chainId), readWalletTokenBalance(state.chainId, pairTokenAddr, acct)]).then(function (r) {
       state.revBal = r[0]; state.ethBal = r[1];
-      balLine.textContent = 'Your balance: ' + (r[0] != null ? formatTokens(r[0]) : '—') + ' ' + sym
-        + ' | ' + (r[1] != null ? formatBalance(r[1], pairDec(), pairSym()) : '—');
+      balLine.textContent = 'Your ' + pairSym() + ': ' + (r[1] != null ? formatBalance(r[1], pairDec(), pairSym()) : '—');
     });
   }
 
@@ -14496,7 +14756,7 @@ function buildAddLiquidityModal(project) {
       if (ceiling > 0) maxInput.value = formatPrice(ceiling);
       rnote.textContent = hasFloor
         ? 'Defaults span the current cash-out floor to the issuance ceiling.'
-        : 'No cash-out value yet — Min mirrors the gap up to the issuance ceiling on the downside; Max is the ceiling.';
+        : 'No cash-out floor yet, so the range centers on the current pool price: Max is the issuance ceiling, and Min is set the same distance below the price.';
       onRangeChange();
     });
   }

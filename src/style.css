@@ -2892,7 +2892,9 @@ input[type="checkbox"].field {
 .lp-graph-svg text { font-family: var(--app-font, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
 .ops-percent { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
 /* Add-liquidity range graph + inline Max buttons */
-.lp-graph { margin: 8px 0 4px; }
+.lp-graph { margin: 8px 0 4px; position: relative; }
+.lp-graph-holder { width: 100%; }
+.lp-graph-tip { position: absolute; top: 0; pointer-events: none; background: var(--c-black); color: var(--card-bg); font-size: 11px; padding: 4px 8px; border-radius: 3px; white-space: nowrap; z-index: 5; }
 .lp-graph-svg { display: block; width: 100%; height: auto; overflow: visible; }
 .lp-add-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .lp-max {
@@ -3130,7 +3132,7 @@ input[type="checkbox"].field {
 }
 /* Colorless donut: no fills, slices distinguished by their borders only.
    Scoped under .owners-pie-svg so it beats the `.owners-pie-svg path` (card-bg) divider rule. */
-.owners-pie-svg .owners-pie-slice { fill: var(--c-pink-light); stroke: var(--c-black-light); stroke-width: 1.5; }
+.owners-pie-svg .owners-pie-slice { fill: var(--c-pink-light); stroke: var(--card-bg); stroke-width: 0.75; }
 .owners-pie-center {
   text-anchor: middle;
   fill: var(--text);
@@ -3149,11 +3151,34 @@ input[type="checkbox"].field {
   font-size: 11px;
   margin-top: 4px;
 }
+.owners-table-outer { min-width: 0; }
+/* Account search-with-chips above a table. */
+.acct-search { margin: 0 0 10px; }
+.acct-search-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.acct-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--c-orange-light); border: 1px solid var(--c-orange); color: var(--text); font-size: 11px; padding: 1px 4px 1px 7px; }
+.acct-chip-label { white-space: nowrap; }
+.acct-chip-x { background: none; border: none; color: var(--text); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 1px; opacity: 0.6; }
+.acct-chip-x:hover { opacity: 1; }
+.acct-search-box { position: relative; max-width: 360px; }
+.acct-search-input { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px; padding: 7px 10px; background: var(--bg); border: 1px solid var(--muted-4); color: var(--text); }
+.acct-search-input:focus { outline: none; border-color: var(--c-teal); }
+.acct-search-menu { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 40; background: var(--card-bg); border: 1px solid var(--muted-4); max-height: 260px; overflow-y: auto; }
+.acct-search-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; cursor: pointer; font-size: 13px; }
+.acct-search-item:hover { background: var(--bg); }
+.acct-search-item-addr { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-search-item-sub { color: var(--muted-2); font-weight: bold; white-space: nowrap; }
+.acct-search-empty { padding: 8px 10px; color: var(--muted-2); font-size: 12px; }
 .owners-table-wrap {
   min-width: 0;
   overflow-x: auto;
   border: 1px solid var(--c-orange-light);
 }
+/* Paginated-list footer nav — centered text buttons (matches the subtab / text-button style). */
+.list-pagination { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.list-page-btn { background: none; border: none; font-family: inherit; font-size: 12px; color: var(--muted-2); padding: 4px 8px; cursor: pointer; }
+.list-page-btn:hover:not(:disabled) { color: var(--c-teal); }
+.list-page-btn:disabled { opacity: 0.35; cursor: default; }
+.list-page-indicator { font-size: 12px; color: var(--muted-2); padding: 0 4px; }
 .owners-table {
   min-width: 460px;
 }
@@ -3691,6 +3716,11 @@ input[type="checkbox"].field {
 /* display:none (not visibility:hidden) so the off-flow tip adds nothing to page width
    when idle; on touch screens there is no hover, so it stays out of the way entirely. */
 .detail-address:hover > .addr-tip { display: block; }
+/* Generic instant hover tooltip (no native-title delay) — same look as .addr-tip. */
+.has-instant-tip { position: relative; }
+.instant-tip { position: absolute; left: 0; top: 100%; margin-top: 4px; z-index: 60; white-space: nowrap;
+  background: var(--c-black); color: var(--bg); padding: 4px 8px; font-size: 12px; display: none; }
+.has-instant-tip:hover > .instant-tip { display: block; }
 .backoffice-batch-note { font-size: 13px; color: var(--muted-2); }
 .relayr-preview { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .relayr-preview-row { display: flex; align-items: center; font-size: 13px; color: var(--text); }
