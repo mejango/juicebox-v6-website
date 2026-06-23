@@ -5733,7 +5733,9 @@ var ACTIVITY_TYPE_LABELS = {
   reserved: 'Reserved distributions', auto_issue: 'Auto-issuance', borrow: 'Loans',
   repay: 'Loan repayments', liquidate: 'Liquidations', mint_nft: 'NFT mints',
   deploy_erc20: 'Token deploys', create: 'Project creation', add_to_balance: 'Add to balance',
-  queue_ruleset: 'Ruleset changes',
+  queue_ruleset: 'Ruleset changes', set_uri: 'Info updates', transfer: 'Ownership transfers',
+  operator_perms: 'Permission changes', add_tier: 'Shop items added', remove_tier: 'Shop items removed',
+  swap: 'Buyback swaps', buyback_pool: 'Buyback pools', bridge_claim: 'Bridge claims',
 };
 function activityTypeLabel(t) { return ACTIVITY_TYPE_LABELS[t] || String(t || 'activity').replace(/_/g, ' '); }
 
@@ -6241,6 +6243,53 @@ function activityRowFromEvent(event, project) {
       baseAmount: formatActivityAmount(atb.amount, acct.symbol, acct.decimals),
       tokenAmount: '', action: 'added to balance', memo: atb.memo || '',
     };
+  }
+  // --- New indexed project-config / shop / market / bridge events (bendystraw PR #14, #12). ---
+  if (event.setUriEvent) {
+    var su = event.setUriEvent;
+    return { type: 'set_uri', direction: '', chainId: chainId, txHash: su.txHash || event.txHash, timestamp: Number(su.timestamp || event.timestamp),
+      account: su.from || su.caller || event.from, from: su.from || event.from, baseAmount: '', tokenAmount: '', action: 'updated project info', memo: '' };
+  }
+  if (event.projectTransferEvent) {
+    var pt = event.projectTransferEvent;
+    return { type: 'transfer', direction: '', chainId: chainId, txHash: pt.txHash || event.txHash, timestamp: Number(pt.timestamp || event.timestamp),
+      account: pt.previousOwner || pt.from || event.from, from: pt.from || event.from, baseAmount: '', tokenAmount: '',
+      action: 'transferred ownership' + (pt.owner ? ' to ' + truncAddr(pt.owner) : ''), memo: '' };
+  }
+  if (event.operatorPermissionsSetEvent) {
+    var op = event.operatorPermissionsSetEvent;
+    return { type: 'operator_perms', direction: '', chainId: chainId, txHash: op.txHash || event.txHash, timestamp: Number(op.timestamp || event.timestamp),
+      account: op.from || op.caller || event.from, from: op.from || event.from, baseAmount: '', tokenAmount: '',
+      action: 'set ' + (op.isRevnetOperator ? 'revnet operator' : 'operator') + ' permissions' + (op.operator ? ' for ' + truncAddr(op.operator) : ''), memo: '' };
+  }
+  if (event.addNftTierEvent) {
+    var at = event.addNftTierEvent;
+    return { type: 'add_tier', direction: '', chainId: chainId, txHash: at.txHash || event.txHash, timestamp: Number(at.timestamp || event.timestamp),
+      account: at.from || at.caller || event.from, from: at.from || event.from, baseAmount: '', tokenAmount: '', action: 'added shop item #' + Number(at.tierId), memo: '' };
+  }
+  if (event.removeNftTierEvent) {
+    var rt = event.removeNftTierEvent;
+    return { type: 'remove_tier', direction: '', chainId: chainId, txHash: rt.txHash || event.txHash, timestamp: Number(rt.timestamp || event.timestamp),
+      account: rt.from || rt.caller || event.from, from: rt.from || event.from, baseAmount: '', tokenAmount: '', action: 'removed shop item #' + Number(rt.tierId), memo: '' };
+  }
+  if (event.swapEvent) {
+    var sw = event.swapEvent;
+    return { type: 'swap', direction: 'in', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
+      account: sw.from || sw.caller || event.from, from: sw.from || event.from,
+      baseAmount: '', tokenAmount: sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) : '',
+      action: 'bought ' + sym + ' via the buyback pool', memo: '' };
+  }
+  if (event.buybackPoolEvent) {
+    var bp = event.buybackPoolEvent;
+    return { type: 'buyback_pool', direction: '', chainId: chainId, txHash: bp.txHash || event.txHash, timestamp: Number(bp.timestamp || event.timestamp),
+      account: bp.from || bp.caller || event.from, from: bp.from || event.from, baseAmount: '', tokenAmount: '', action: 'set up a buyback pool', memo: '' };
+  }
+  if (event.bridgeClaimEvent) {
+    var bc = event.bridgeClaimEvent;
+    return { type: 'bridge_claim', direction: 'in', chainId: chainId, txHash: bc.txHash || event.txHash, timestamp: Number(bc.timestamp || event.timestamp),
+      account: bc.beneficiary || bc.from || event.from, from: bc.from || event.from,
+      baseAmount: '', tokenAmount: bc.projectTokenCount ? formatCompactTokenAmount(toBigInt(bc.projectTokenCount)) : '',
+      action: 'claimed ' + sym + ' from ' + moveChainName(Number(bc.peerChainId)), memo: '' };
   }
   var label = String(event.type || 'activity').replace(/_/g, ' ').toLowerCase();
   return {
@@ -9071,7 +9120,9 @@ var BENDYSTRAW_ACTIVITY_OR = 'OR: [{ payEvent_not: null }, { cashOutTokensEvent_
   + '{ autoIssueEvent_not: null }, { mintTokensEvent_not: null }, '
   + '{ borrowLoanEvent_not: null }, { repayLoanEvent_not: null }, { liquidateLoanEvent_not: null }, '
   + '{ mintNftEvent_not: null }, { deployErc20Event_not: null }, { projectCreateEvent_not: null }, '
-  + '{ addToBalanceEvent_not: null }]';
+  + '{ addToBalanceEvent_not: null }, { setUriEvent_not: null }, { projectTransferEvent_not: null }, '
+  + '{ operatorPermissionsSetEvent_not: null }, { addNftTierEvent_not: null }, { removeNftTierEvent_not: null }, '
+  + '{ swapEvent_not: null }, { buybackPoolEvent_not: null }, { bridgeClaimEvent_not: null }]';
 var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId timestamp txHash from type '
   + 'payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount from txHash timestamp } '
   + 'cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd holder beneficiary from txHash timestamp } '
@@ -9085,7 +9136,15 @@ var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId timestamp txHash from 
   + 'mintNftEvent { tierId tokenId beneficiary totalAmountPaid from txHash timestamp } '
   + 'deployErc20Event { symbol name token from txHash timestamp } '
   + 'projectCreateEvent { from txHash timestamp } '
-  + 'addToBalanceEvent { amount memo from txHash timestamp } } totalCount';
+  + 'addToBalanceEvent { amount memo from txHash timestamp } '
+  + 'setUriEvent { uri caller from txHash timestamp } '
+  + 'projectTransferEvent { previousOwner owner from txHash timestamp } '
+  + 'operatorPermissionsSetEvent { account operator isRevnetOperator caller from txHash timestamp } '
+  + 'addNftTierEvent { tierId price category caller from txHash timestamp } '
+  + 'removeNftTierEvent { tierId caller from txHash timestamp } '
+  + 'swapEvent { direction terminalTokenAmount projectTokenAmount caller from txHash timestamp } '
+  + 'buybackPoolEvent { terminalToken poolId caller from txHash timestamp } '
+  + 'bridgeClaimEvent { peerChainId token beneficiary projectTokenCount terminalTokenAmount caller from txHash timestamp } } totalCount';
 var BENDYSTRAW_ACTIVITY_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
   + 'activityEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds, ' + BENDYSTRAW_ACTIVITY_OR + ' }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
