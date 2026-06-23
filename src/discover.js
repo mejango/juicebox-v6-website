@@ -10294,13 +10294,14 @@ export function matchAccountsByAddress(items, query, selectedLower, limit, nameO
 function buildAccountSearch(items, onChange, opts) {
   opts = opts || {};
   var wrap = el('div', 'acct-search');
-  var chipRow = el('div', 'acct-search-chips'); chipRow.style.display = 'none'; wrap.appendChild(chipRow);
   var box = el('div', 'acct-search-box');
   var input = el('input', 'acct-search-input'); input.type = 'text';
   input.placeholder = opts.placeholder || 'Search account by address or ENS…';
   box.appendChild(input);
   var menu = el('div', 'acct-search-menu'); menu.style.display = 'none'; box.appendChild(menu);
   wrap.appendChild(box);
+  // Chips sit UNDER the search bar.
+  var chipRow = el('div', 'acct-search-chips'); chipRow.style.display = 'none'; wrap.appendChild(chipRow);
   var selected = [];
   var byAddr = {}; items.forEach(function (it) { byAddr[(it.address || '').toLowerCase()] = it; });
   var topAddr = null;

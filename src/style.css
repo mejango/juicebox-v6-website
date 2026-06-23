@@ -3154,10 +3154,10 @@ input[type="checkbox"].field {
 .owners-table-outer { min-width: 0; }
 /* Account search-with-chips above a table. */
 .acct-search { margin: 0 0 10px; }
-.acct-search-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.acct-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--selected-bg); border: 1px solid var(--c-teal); color: var(--text); font-size: 12px; padding: 3px 5px 3px 9px; border-radius: 12px; }
+.acct-search-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.acct-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--c-orange-light); border: 1px solid var(--c-orange); color: var(--text); font-size: 11px; padding: 1px 4px 1px 7px; }
 .acct-chip-label { white-space: nowrap; }
-.acct-chip-x { background: none; border: none; color: var(--text); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; opacity: 0.6; }
+.acct-chip-x { background: none; border: none; color: var(--text); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 1px; opacity: 0.6; }
 .acct-chip-x:hover { opacity: 1; }
 .acct-search-box { position: relative; max-width: 360px; }
 .acct-search-input { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px; padding: 7px 10px; background: var(--bg); border: 1px solid var(--muted-4); color: var(--text); }
