@@ -1734,5 +1734,6 @@
     }
   },
   "contractName": "JBTerminalStore",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBTerminalStore.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBTerminalStore.sol",
+  "contractNotice": "The accounting engine behind every terminal. Records project balances, enforces payout limits and surplus allowances, calculates how many tokens to mint per payment (based on the ruleset's weight and currency), and determines how much a token holder receives when cashing out (via the bonding curve in `JBCashOuts`)."
 }

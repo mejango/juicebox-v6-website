@@ -831,7 +831,7 @@
       }
     },
     "createFor(address)": {
-      "details": "Anyone can create a project on an owner's behalf.Requires exactly `creationFee` native tokens. The fee is forwarded after the project NFT is minted.",
+      "details": "Anyone can create a project on an owner's behalf. Requires exactly `creationFee` native tokens. The fee is forwarded after the project NFT is minted.",
       "params": {
         "owner": "The address that will be the owner of the project."
       },
@@ -948,5 +948,6 @@
     }
   },
   "contractName": "JBProjects",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBProjects.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBProjects.sol",
+  "contractNotice": "Each Juicebox project is an ERC-721 NFT. Whoever holds the NFT owns the project and can configure its rulesets, terminals, and permissions. Projects are created with `createFor` and the resulting token ID is used as the project's ID across the entire protocol."
 }

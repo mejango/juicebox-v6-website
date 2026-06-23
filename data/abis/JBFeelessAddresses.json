@@ -286,14 +286,14 @@
       "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
     },
     "setFeelessAddress(address,bool)": {
-      "details": "Equivalent to `setFeelessAddressFor(0, addr, flag)`.Can only be called by this contract's owner (typically the protocol multisig).",
+      "details": "Equivalent to `setFeelessAddressFor(0, addr, flag)`. Can only be called by this contract's owner (typically the protocol multisig).",
       "params": {
         "addr": "The address to set as feeless or not feeless.",
         "flag": "Whether the address should be feeless (`true`) or not feeless (`false`)."
       }
     },
     "setFeelessAddressFor(uint256,address,bool)": {
-      "details": "Can only be called by this contract's owner (typically the protocol multisig).Use `projectId = 0` to set the global (all-project) feeless status.",
+      "details": "Can only be called by this contract's owner (typically the protocol multisig). Use `projectId = 0` to set the global (all-project) feeless status.",
       "params": {
         "addr": "The address to set as feeless or not feeless for the project.",
         "flag": "Whether the address should be feeless for the project (`true`) or not (`false`).",
@@ -301,7 +301,7 @@
       }
     },
     "setFeelessHook(address)": {
-      "details": "Can only be called by this contract's owner (typically the protocol multisig).If `hook` is non-zero, it must report ERC-165 support for `IJBFeelessHook` or this call reverts.",
+      "details": "Can only be called by this contract's owner (typically the protocol multisig). If `hook` is non-zero, it must report ERC-165 support for `IJBFeelessHook` or this call reverts.",
       "params": {
         "hook": "The new hook. Pass `address(0)` to disable hook consultation."
       }
@@ -340,5 +340,6 @@
     }
   },
   "contractName": "JBFeelessAddresses",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBFeelessAddresses.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBFeelessAddresses.sol",
+  "contractNotice": "A registry of addresses exempt from the protocol's 2.5% fee. Feeless addresses don't incur fees on payouts they receive, surplus allowance they use, or cash outs where they are the beneficiary."
 }

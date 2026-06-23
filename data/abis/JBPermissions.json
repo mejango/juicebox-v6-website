@@ -374,5 +374,6 @@
     }
   },
   "contractName": "JBPermissions",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBPermissions.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBPermissions.sol",
+  "contractNotice": "The permission system for Juicebox. Any address can authorize another address (an \"operator\") to perform specific actions on its behalf — like queuing rulesets, distributing payouts, or managing terminals."
 }

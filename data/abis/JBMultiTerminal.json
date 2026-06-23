@@ -2406,11 +2406,11 @@
         "metadata": "Extra data to pass along to the emitted event.",
         "projectId": "The ID of the project to add funds to the balance of.",
         "shouldReturnHeldFees": "If true, return held fees proportional to the amount added.",
-        "token": "The terminal token being added (the ERC-20, or `JBConstants.NATIVE_TOKEN` for native)."
+        "token": "The terminal token being added (the ERC-20, or `JBConstants. NATIVE_TOKEN` for native)."
       }
     },
     "cashOutTokensOf(address,uint256,uint256,address,uint256,address,bytes)": {
-      "details": "Only the project token holder, or an operator with `CASH_OUT_TOKENS` permission from that holder, can call this.Two distinct tokens are involved: **project tokens** (`cashOutCount`) are burned from `holder`, and **terminal tokens** (`tokenToReclaim`) are sent to `beneficiary` in exchange.",
+      "details": "Only the project token holder, or an operator with `CASH_OUT_TOKENS` permission from that holder, can call this. Two distinct tokens are involved: **project tokens** (`cashOutCount`) are burned from `holder`, and **terminal tokens** (`tokenToReclaim`) are sent to `beneficiary` in exchange.",
       "params": {
         "beneficiary": "The address to send the reclaimed terminal tokens to, and to pass along to the ruleset's data hook and cash out hooks if applicable.",
         "cashOutCount": "The number of project tokens to burn, as a fixed point number with 18 decimals.",
@@ -2511,7 +2511,7 @@
         "metadata": "Bytes to pass along to the emitted event, as well as the data hook and pay hook if applicable.",
         "minReturnedTokens": "The minimum project tokens the beneficiary must receive for the payment to succeed, as a fixed point number with 18 decimals. If fewer project tokens would be minted, the payment is reverted.",
         "projectId": "The ID of the project to pay.",
-        "token": "The payment token to pay with (the ERC-20, or `JBConstants.NATIVE_TOKEN` for native)."
+        "token": "The payment token to pay with (the ERC-20, or `JBConstants. NATIVE_TOKEN` for native)."
       },
       "returns": {
         "beneficiaryTokenCount": "The number of **project tokens** minted to `beneficiary`, as a fixed point number with 18 decimals."
@@ -2549,7 +2549,7 @@
       }
     },
     "processHeldFeesOf(uint256,address,uint256)": {
-      "details": "Only processes fees whose `unlockTimestamp` has passed. Stops early if it encounters a still-locked fee.Reentrancy-safe: re-reads `_nextHeldFeeIndexOf` from storage each iteration and advances the index before the external `_processFee` call, preventing double-processing.If `_processFee` reverts (fee terminal rejects), the fee amount is returned to the project's balance (forgiven, not retried). A `FeeReverted` event is emitted for off-chain observability.",
+      "details": "Only processes fees whose `unlockTimestamp` has passed. Stops early if it encounters a still-locked fee. Reentrancy-safe: re-reads `_nextHeldFeeIndexOf` from storage each iteration and advances the index before the external `_processFee` call, preventing double-processing. If `_processFee` reverts (fee terminal rejects), the fee amount is returned to the project's balance (forgiven, not retried). A `FeeReverted` event is emitted for off-chain observability.",
       "params": {
         "count": "The number of fees to process.",
         "projectId": "The ID of the project to process held fees for.",
@@ -2557,7 +2557,7 @@
       }
     },
     "sendPayoutsOf(uint256,address,uint256,uint256,uint256)": {
-      "details": "If splits don't add up to 100%, the remainder goes to the project owner. A wildcard split (no hook, projectId, or beneficiary) sends its share to `msg.sender` — useful for incentivizing the call.Payouts to non-feeless addresses incur the 2.5% protocol fee; feeless project terminals are exempt.",
+      "details": "If splits don't add up to 100%, the remainder goes to the project owner. A wildcard split (no hook, projectId, or beneficiary) sends its share to `msg.sender` — useful for incentivizing the call. Payouts to non-feeless addresses incur the 2.5% protocol fee; feeless project terminals are exempt.",
       "params": {
         "amount": "The total number of terminal tokens to send, as a fixed point number with the same number of decimals as the token's accounting context.",
         "currency": "The expected currency of the payouts. Must match the currency of one of the project's current ruleset's payout limits.",
@@ -2582,7 +2582,7 @@
       "details": "Returns the address of the trusted forwarder."
     },
     "useAllowanceOf(uint256,address,uint256,uint256,uint256,address,address,string)": {
-      "details": "Only the project's owner or an operator with `USE_ALLOWANCE` permission can call this.Incurs the 2.5% protocol fee unless the caller is a feeless address. The fee is charged in the terminal token (`token`); the fee project mints **project tokens** in return and sends them to `feeBeneficiary`.",
+      "details": "Only the project's owner or an operator with `USE_ALLOWANCE` permission can call this. Incurs the 2.5% protocol fee unless the caller is a feeless address. The fee is charged in the terminal token (`token`); the fee project mints **project tokens** in return and sends them to `feeBeneficiary`.",
       "params": {
         "amount": "The amount of terminal `token` to use from the project's current surplus allowance, as a fixed point number with the same number of decimals as the token's accounting context.",
         "beneficiary": "The address to send the reclaimed terminal tokens to.",
@@ -2682,5 +2682,6 @@
     }
   },
   "contractName": "JBMultiTerminal",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBMultiTerminal.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBMultiTerminal.sol",
+  "contractNotice": "The main entry point for all money movement in Juicebox. Handles payments (ETH or ERC-20), cash outs (burning tokens to reclaim funds), payouts (distributing funds to splits), and surplus allowance withdrawals. Charges a 2.5% protocol fee on outflows (held for 28 days before processing). Supports Permit2 for gasless ERC-20 approvals."
 }

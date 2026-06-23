@@ -321,7 +321,7 @@
       }
     },
     "setSplitGroupsOf(uint256,uint256,(uint256,(uint32,uint64,address,bool,uint48,address)[])[])": {
-      "details": "Only the project's controller can set splits — unless the group ID encodes `msg.sender` in its lower 160 bits with non-zero upper 96 bits, which enables self-managed splits (e.g. hooks managing their own groups).Locked splits cannot be removed or reduced until their lock expires. The new groups must include all currently-locked splits.",
+      "details": "Only the project's controller can set splits — unless the group ID encodes `msg.sender` in its lower 160 bits with non-zero upper 96 bits, which enables self-managed splits (e.g. hooks managing their own groups). Locked splits cannot be removed or reduced until their lock expires. The new groups must include all currently-locked splits.",
       "params": {
         "projectId": "The ID of the project to set the split groups of.",
         "rulesetId": "The ID of the ruleset the split groups should be active in. Pass 0 to set the default splits (used when no ruleset-specific splits are configured). The default's default is the project's owner.",
@@ -354,5 +354,6 @@
     }
   },
   "contractName": "JBSplits",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBSplits.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBSplits.sol",
+  "contractNotice": "Manages how a project distributes its payouts and reserved tokens. Each \"split\" specifies a recipient and their share (as a fraction of 1,000,000,000). Splits can be locked until a timestamp — locked splits cannot be removed or reduced until the lock expires, providing recipients with guaranteed revenue streams."
 }

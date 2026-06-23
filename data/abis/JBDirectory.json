@@ -640,5 +640,6 @@
     }
   },
   "contractName": "JBDirectory",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBDirectory.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBDirectory.sol",
+  "contractNotice": "The routing table for the protocol. Every project registers which terminals accept its payments and which controller manages its rulesets and tokens. Frontends and other contracts use the directory to discover where to send funds for a given project and token."
 }

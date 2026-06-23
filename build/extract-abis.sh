@@ -30,7 +30,7 @@ mkdir -p "$ABI_DIR"
 # ── Contract manifest: repo → contract names ──────────────────────────────────
 # Each line is "repo:Contract1,Contract2,..."
 MANIFEST=(
-  "nana-core-v6:JBMultiTerminal,JBController,JBDirectory,JBTerminalStore,JBTokens,JBRulesets,JBSplits,JBPermissions,JBPrices,JBProjects,JBFundAccessLimits,JBERC20,JBFeelessAddresses"
+  "nana-core-v6:JBMultiTerminal,JBController,JBDirectory,JBTerminalStore,JBTokens,JBRulesets,JBSplits,JBPermissions,JBPrices,JBProjects,JBFundAccessLimits,JBERC20,JBFeelessAddresses,JBDeadline1Day,JBDeadline3Days,JBDeadline3Hours,JBDeadline7Days"
   "nana-721-hook-v6:JB721TiersHook,JB721TiersHookStore,JB721TiersHookDeployer,JB721TiersHookProjectDeployer"
   "nana-buyback-hook-v6:JBBuybackHookRegistry"
   "nana-suckers-v6:JBSuckerRegistry,JBOptimismSucker,JBArbitrumSucker,JBCCIPSucker,JBBaseSucker"
@@ -71,6 +71,17 @@ extract_abi() {
   # Extract .abi + NatSpec (devdoc/userdoc) from the forge artifact JSON
   python3 -c "
 import json, sys
+import re
+
+def normalize_doc(value):
+    if isinstance(value, str):
+        return re.sub(r'(?<=[.!?])(?=[A-Z])', ' ', value)
+    if isinstance(value, dict):
+        return {k: normalize_doc(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_doc(v) for v in value]
+    return value
+
 with open('$artifact') as f:
     data = json.load(f)
 abi = data.get('abi', [])
@@ -81,6 +92,7 @@ devdoc = {}
 userdoc = {}
 contract_notice = ''
 contract_title = ''
+source_name = ''
 rm = data.get('rawMetadata', '')
 if rm:
     try:
@@ -90,13 +102,25 @@ if rm:
         userdoc = output_meta.get('userdoc', {}).get('methods', {})
         contract_notice = output_meta.get('userdoc', {}).get('notice', '')
         contract_title = output_meta.get('devdoc', {}).get('title', '')
+        compilation_target = meta.get('settings', {}).get('compilationTarget', {})
+        if compilation_target:
+            source_path = next(iter(compilation_target.keys()))
+            try:
+                with open('$REPOS_DIR/$repo/package.json') as pkg_file:
+                    package_name = json.load(pkg_file).get('name', '$repo')
+            except Exception:
+                package_name = '$repo'
+            source_name = 'node_modules/' + package_name + '/' + source_path
     except (json.JSONDecodeError, TypeError):
         pass
-result = {'abi': abi, 'devdoc': devdoc, 'userdoc': userdoc}
+result = {'abi': abi, 'devdoc': normalize_doc(devdoc), 'userdoc': normalize_doc(userdoc)}
+result['contractName'] = '$contract'
+if source_name:
+    result['sourceName'] = source_name
 if contract_notice:
-    result['contractNotice'] = contract_notice
+    result['contractNotice'] = normalize_doc(contract_notice)
 if contract_title:
-    result['contractTitle'] = contract_title
+    result['contractTitle'] = normalize_doc(contract_title)
 json.dump(result, sys.stdout, separators=(',', ':'))
 " > "$ABI_DIR/${contract}.json"
 

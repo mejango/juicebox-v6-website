@@ -140,5 +140,6 @@
     }
   },
   "contractName": "JBDeadline7Days",
-  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline7Days.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline7Days.sol",
+  "contractNotice": "A reusable deadline implementation with a fixed seven-day duration."
 }

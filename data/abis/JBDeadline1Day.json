@@ -140,5 +140,6 @@
     }
   },
   "contractName": "JBDeadline1Day",
-  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline1Day.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline1Day.sol",
+  "contractNotice": "A reusable deadline implementation with a fixed one-day duration."
 }

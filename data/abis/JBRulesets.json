@@ -900,7 +900,7 @@
       }
     },
     "currentOf(uint256)": {
-      "details": "Returns an empty ruleset (all zeros) if the project has never had a ruleset queued.Payout limits reset each cycle (keyed by `cycleNumber`), but the `rulesetId` stays the same across auto-cycles of the same stored ruleset.",
+      "details": "Returns an empty ruleset (all zeros) if the project has never had a ruleset queued. Payout limits reset each cycle (keyed by `cycleNumber`), but the `rulesetId` stays the same across auto-cycles of the same stored ruleset.",
       "params": {
         "projectId": "The ID of the project to get the current ruleset of."
       },
@@ -936,7 +936,7 @@
         "baseRulesetDuration": "The duration of the base ruleset.",
         "baseRulesetStart": "The start time of the base ruleset.",
         "baseRulesetWeight": "The weight of the base ruleset.",
-        "baseRulesetWeightCutPercent": "The weight cut percent of the base ruleset, out of `JBConstants.MAX_WEIGHT_CUT_PERCENT`.",
+        "baseRulesetWeightCutPercent": "The weight cut percent of the base ruleset, out of `JBConstants. MAX_WEIGHT_CUT_PERCENT`.",
         "projectId": "The ID of the project to which the ruleset weights apply.",
         "start": "The start time of the ruleset to derive a weight for."
       },
@@ -964,7 +964,7 @@
       }
     },
     "queueFor(uint256,uint256,uint256,uint256,address,uint256,uint256)": {
-      "details": "Only the project's current controller can call this.",
+      "details": "Only the project's current controller can call this. A latest queued ruleset with `ApprovalExpected` can still be replaced within its scheduled cycle, but can be used as the base for a later cycle because it is expected to become `Approved` unless replaced. A latest queued ruleset with `Approved` is final for its scheduled cycle; later queued rulesets derive from it.",
       "params": {
         "approvalHook": "A contract that gates whether the *next* queued ruleset can take effect (e.g. `JBDeadline` for minimum notice periods). Set to address(0) for no approval gate.",
         "duration": "How long the ruleset lasts (seconds). 0 = no auto-cycling (stays active until explicitly replaced). When a duration ends without a queued replacement, the ruleset rolls over with decayed weight.",
@@ -972,7 +972,7 @@
         "mustStartAtOrAfter": "The earliest unix timestamp the ruleset can start.",
         "projectId": "The ID of the project to queue the ruleset for.",
         "weight": "Tokens minted per unit paid (18 decimals). Terminals divide payment amount by weight to determine issuance. A value of 1 means \"inherit decayed weight from previous ruleset\".",
-        "weightCutPercent": "How much to reduce weight each auto-cycle, out of `JBConstants.MAX_WEIGHT_CUT_PERCENT`. Only applies when no explicit replacement is queued. 0 = no decay. 100,000,000 = 10% cut per cycle."
+        "weightCutPercent": "How much to reduce weight each auto-cycle, out of `JBConstants. MAX_WEIGHT_CUT_PERCENT`. Only applies when no explicit replacement is queued. 0 = no decay. 100,000,000 = 10% cut per cycle."
       },
       "returns": {
         "_0": "The struct of the new ruleset."
@@ -1037,5 +1037,6 @@
     }
   },
   "contractName": "JBRulesets",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBRulesets.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBRulesets.sol",
+  "contractNotice": "Stores and manages the economic rules for every Juicebox project. A \"ruleset\" defines how a project behaves for a period of time: its token issuance weight, cash-out tax rate, payout limits, reserved rate, and more. Projects queue future rulesets to schedule changes; once a ruleset's duration expires, the next approved ruleset takes effect automatically."
 }

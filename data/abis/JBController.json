@@ -3370,7 +3370,7 @@
       }
     },
     "deployERC20For(uint256,string,string,bytes32)": {
-      "details": "Can only be called by the project's owner or an operator with `DEPLOY_ERC20` permission.Each project can only have one ERC-20 deployed — calling this again after deployment will revert.",
+      "details": "Can only be called by the project's owner or an operator with `DEPLOY_ERC20` permission. Each project can only have one ERC-20 deployed — calling this again after deployment will revert.",
       "params": {
         "name": "The ERC-20's name.",
         "projectId": "The ID of the project to deploy the ERC-20 for.",
@@ -3429,7 +3429,7 @@
       }
     },
     "launchRulesetsFor(uint256,string,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,address,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],(address,(address,uint8,uint32)[])[],string)": {
-      "details": "Can only be called by the project's owner or an operator with `LAUNCH_RULESETS` permission.Each sub-operation can also be done individually if needed.",
+      "details": "Can only be called by the project's owner or an operator with `LAUNCH_RULESETS` permission. Each sub-operation can also be done individually if needed.",
       "params": {
         "memo": "A memo to pass along to the emitted event.",
         "projectId": "The ID of the project to launch rulesets for.",
@@ -3532,7 +3532,7 @@
       }
     },
     "setUriOf(uint256,string)": {
-      "details": "This is typically an IPFS hash, optionally with an `ipfs://` prefix.Can only be called by the project's owner or an address with the owner's `SET_PROJECT_URI` permission.",
+      "details": "This is typically an IPFS hash, optionally with an `ipfs://` prefix. Can only be called by the project's owner or an address with the owner's `SET_PROJECT_URI` permission.",
       "params": {
         "projectId": "The ID of the project to set the metadata URI of.",
         "uri": "The metadata URI to set."
@@ -3701,5 +3701,6 @@
     }
   },
   "contractName": "JBController",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBController.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBController.sol",
+  "contractNotice": "The orchestrator for every Juicebox project's lifecycle. Use the controller to launch a project, queue new rulesets, mint or burn tokens, deploy an ERC-20, distribute reserved tokens, and manage permissions. The controller coordinates between the terminal (money), rulesets (rules), tokens (issuance), and splits (distribution)."
 }

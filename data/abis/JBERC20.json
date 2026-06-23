@@ -1299,5 +1299,6 @@
     }
   },
   "contractName": "JBERC20",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBERC20.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBERC20.sol",
+  "contractNotice": "The ERC-20 token implementation used by Juicebox projects. Includes ERC20Votes (governance delegation) and ERC20Permit (gasless approvals). Deployed as a minimal clone via `JBController.deployERC20For` — once deployed, holders can claim their internal credits into this transferable token."
 }

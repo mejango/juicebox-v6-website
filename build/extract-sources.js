@@ -43,6 +43,7 @@ const MANIFEST = {
     "JBMultiTerminal", "JBController", "JBDirectory", "JBTerminalStore",
     "JBTokens", "JBRulesets", "JBSplits", "JBPermissions", "JBPrices",
     "JBProjects", "JBFundAccessLimits", "JBERC20", "JBFeelessAddresses",
+    "JBDeadline1Day", "JBDeadline3Days", "JBDeadline3Hours", "JBDeadline7Days",
   ],
   "nana-721-hook-v6": [
     "JB721TiersHook", "JB721TiersHookStore", "JB721TiersHookDeployer",

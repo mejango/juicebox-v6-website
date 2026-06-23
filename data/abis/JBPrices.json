@@ -510,7 +510,7 @@
   ],
   "devdoc": {
     "addPriceFeedFor(uint256,uint256,uint256,address)": {
-      "details": "Project ID 0 stores protocol defaults and can only be configured by this contract's owner. Non-zero project IDs can only be configured by that project's controller. The feed is stored only for the exact `pricingCurrency`/`unitCurrency` direction; the opposite direction is derived by `pricePerUnitOf` when needed.Later feeds for the same exact pair are backups. The existing feeds remain preferred, and this function rejects duplicate feed addresses for the exact pair.",
+      "details": "Project ID 0 stores protocol defaults and can only be configured by this contract's owner. Non-zero project IDs can only be configured by that project's controller. The feed is stored only for the exact `pricingCurrency`/`unitCurrency` direction; the opposite direction is derived by `pricePerUnitOf` when needed. Later feeds for the same exact pair are backups. The existing feeds remain preferred, and this function rejects duplicate feed addresses for the exact pair.",
       "params": {
         "feed": "The price feed to add.",
         "pricingCurrency": "The currency that the feed's returned price is denominated in.",
@@ -622,5 +622,6 @@
     }
   },
   "contractName": "JBPrices",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBPrices.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBPrices.sol",
+  "contractNotice": "Resolves protocol currency conversions from append-only project and default price feeds."
 }

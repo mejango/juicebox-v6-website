@@ -825,7 +825,7 @@
       }
     },
     "setTokenFor(uint256,address)": {
-      "details": "Only a project's controller can set its token.WARNING: If the ERC-20 has supply minted outside this contract, that supply will be included in `totalSupplyOf` and dilute cash-out values for all holders. Ensure the token's supply is appropriate before calling.",
+      "details": "Only a project's controller can set its token. WARNING: If the ERC-20 has supply minted outside this contract, that supply will be included in `totalSupplyOf` and dilute cash-out values for all holders. Ensure the token's supply is appropriate before calling.",
       "params": {
         "projectId": "The ID of the project to set the token of.",
         "token": "The new token's address."
@@ -915,5 +915,6 @@
     }
   },
   "contractName": "JBTokens",
-  "sourceName": "node_modules/@bananapus/core-v6/src/JBTokens.sol"
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBTokens.sol",
+  "contractNotice": "Manages the dual-token system for every Juicebox project. When someone pays a project, the controller mints tokens here — initially as internal \"credits\" tracked by this contract. Once a project deploys or attaches an ERC-20, holders can claim their credits into transferable ERC-20 tokens. Burns always consume credits first."
 }
