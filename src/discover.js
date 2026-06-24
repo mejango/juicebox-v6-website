@@ -9867,7 +9867,11 @@ async function fetchRulesetQueueRows(project) {
   try {
     var fd = await bendystrawQuery(RULESET_QUEUED_FULL_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
     var fitems = (fd && fd.rulesetQueuedEvents && fd.rulesetQueuedEvents.items) || [];
-    if (fitems.length) {
+    // Trust the index ONLY when basedOnId + cycleNumber are actually populated — a migrated-but-not-yet-backfilled
+    // schema returns the fields as null, and skipping every null-basedOnId row would silently drop ruleset rows
+    // instead of falling back to allOf. Any null → fall through to the on-chain path.
+    var populated = fitems.length && fitems.every(function (e) { return e.basedOnId != null && e.cycleNumber != null; });
+    if (populated) {
       var frows = [];
       fitems.forEach(function (e) {
         if (!(Number(e.basedOnId) > 0)) return; // genesis (basedOnId 0) shows as "created the project"
