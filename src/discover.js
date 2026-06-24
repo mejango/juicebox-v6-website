@@ -156,6 +156,18 @@ function routerSetHash(h) {
 // not even a JBRouterTerminal — no DIRECTORY()).
 function routerTerminalFor(chainId) { return getAddress('JBRouterTerminalRegistry', chainId); }
 
+// Cash-out protocol fee (2.5%), mirroring JBMultiTerminal._cashOutTokensOf. NON-ZERO cash-out tax → fee on the
+// full reclaim; ZERO tax → fee only on min(reclaim, feeFreeSurplus) (round-trip prevention), 0 if no fee-free
+// surplus. Feeless casher → 0. All amounts are the reclaim token's own units (BigInt). Pure for testability.
+export function cashOutProtocolFee(reclaim, taxRate, feeless, feeFreeSurplus) {
+  reclaim = reclaim || 0n;
+  if (feeless || reclaim <= 0n) return 0n;
+  if (taxRate) return reclaim / 40n;
+  var ffs = feeFreeSurplus || 0n;
+  var feeable = reclaim < ffs ? reclaim : ffs;
+  return feeable / 40n;
+}
+
 // Pick the pay token after the on-chain accounting-context refine resolves the real token list. Preserve the
 // user's pick ONLY when they explicitly chose one (tokenTouched); otherwise default to the project's first
 // accounting token (list[0]). This is the fix for the fund-loss desync where a USDC-accounting project stayed
@@ -2594,6 +2606,9 @@ var totalSupplyWithReservedAbi = [{ type: 'function', name: 'totalTokenSupplyWit
 // currentSurplusOf with empty terminals/tokens = surplus across ALL of a chain's terminals and accounting
 // tokens, valued in `currency`/`decimals` (the cumulative surplus the cash-out curve prices against).
 var currentSurplusOfAbi = [{ type: 'function', name: 'currentSurplusOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminals', type: 'address[]' }, { name: 'tokens', type: 'address[]' }, { name: 'decimals', type: 'uint256' }, { name: 'currency', type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
+// Surplus paid in from another JB project (JBMultiTerminal public mapping). On a ZERO cash-out-tax project only,
+// the protocol fee applies to this portion of a cash-out reclaim (round-trip prevention) — see _cashOutTokensOf.
+var feeFreeSurplusOfAbi = [{ type: 'function', name: 'feeFreeSurplusOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 // JBMultiTerminal.previewCashOutFrom — runs the project's cash-out data hook (for revnets, REVOwner's
 // 2.5%-of-tokens fee + buyback routing), returning the bonding-curve reclaim NET of the hook but BEFORE
 // the terminal's 2.5% protocol fee. This is the only way to price a revnet cash-out correctly — the REV
@@ -12486,10 +12501,14 @@ function buildCashOutModal(project, requestClose) {
         terminal ? read(state.chainId, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), BigInt(Number(BigInt(acct.address) & 0xffffffffn))]).catch(function () { return null; }) : Promise.resolve(null),
         // The 2.5% protocol fee on cash-out only applies when the ruleset's cash-out tax rate is non-zero.
         read(state.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).catch(function () { return null; }),
+        // Fee-free surplus for this token: on a ZERO-tax project, the fee applies ONLY to this portion (the rest of
+        // the reclaim is fee-free). Zero on the common path (no inter-project payout received) → no fee, as before.
+        terminal ? read(state.chainId, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n),
       ]);
     }).then(function (r) {
       state.supply = r[0]; state.surplus = r[1];
       state.cashOutTaxRate = r[2] && r[2][1] ? Number(r[2][1].cashOutTaxRate || 0) : 0;
+      state.feeFreeSurplus = r[3] || 0n;
       updatePreview();
       loadCashAggregates(state.acct);
     });
@@ -12559,7 +12578,7 @@ function buildCashOutModal(project, requestClose) {
           if (fullGross == null) { preview.innerHTML = ''; state.net = null; return; }
           var approxAfterHook = project.isRevnet ? fullGross - fullGross / 40n : fullGross;
           var taxR = state.cashOutTaxRate || 0;
-          var pFee = (taxR && !state.feeless) ? approxAfterHook / 40n : 0n;
+          var pFee = cashOutProtocolFee(approxAfterHook, taxR, state.feeless, state.feeFreeSurplus);
           state.exact = false; state.reclaim = approxAfterHook; state.net = approxAfterHook - pFee;
           renderCashPreview(seq, { net: state.net, revFee: project.isRevnet ? fullGross - approxAfterHook : 0n, protocolFee: pFee, approx: true });
         });
@@ -12579,7 +12598,7 @@ function buildCashOutModal(project, requestClose) {
       if (revFee === 0n && fullGross != null && fullGross > afterHook) revFee = fullGross - afterHook; // fallback
       // The terminal then takes the 2.5% protocol fee (`amount / 40`) on the post-hook reclaim, and checks
       // minTokensReclaimed against THIS net. Mirror it exactly so the floor isn't set above the payout.
-      var protocolFee = (taxRate && !state.feeless) ? afterHook / 40n : 0n;
+      var protocolFee = cashOutProtocolFee(afterHook, taxRate, state.feeless, state.feeFreeSurplus);
       var net = afterHook - protocolFee;
       state.reclaim = afterHook;
       state.net = net;
