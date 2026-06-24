@@ -4477,6 +4477,15 @@ function renderPayCard(project, cart) {
     }
     if (amt === 0n) { status.textContent = 'Enter an amount'; return; }
 
+    // Floor-safety (DSS-R02-C032): a token-minting pay must have a READY, non-null preview so minReturnedTokens is
+    // the quoted floor — never a 0 fallback (the preview's catch sets phase='ready' with preview=null, which would
+    // mint ~nothing under a sandwich). Genuine 0-issuance still shows "You get 0" and is allowed; add-to-balance
+    // mints no tokens, so it has no floor to enforce.
+    if (!addBalance) {
+      if (state.phase !== 'ready') { status.textContent = 'Hold on — still calculating what you’ll get.'; return; }
+      if (state.preview == null) { status.textContent = 'Couldn’t calculate what you’ll get — try again.'; return; }
+    }
+
     var beneficiary = getAccount();
     if (!beneficiary) { connect().then(function () { doPay(); }).catch(function () {}); return; }
 
@@ -4541,9 +4550,9 @@ function renderPayCard(project, cart) {
       return;
     }
 
-    // Require back what the user was quoted (issuance exact; AMM minus chosen slippage). Only when the
-    // preview matches the current amount; otherwise leave unprotected rather than risk a stale floor.
-    var minTokens = (!addBalance && state.phase === 'ready') ? payMinTokens(state.preview, state.slippageBps) : 0n;
+    // Require back what the user was quoted (issuance exact; AMM minus chosen slippage). The preview is verified
+    // ready + non-null for token pays above, so this is the displayed floor — never a 0 (floorless) fallback.
+    var minTokens = addBalance ? 0n : payMinTokens(state.preview, state.slippageBps);
 
     // pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) — metadata at index 6.
     // addToBalanceOf(projectId, token, amount, shouldReturnHeldFees, memo, metadata) — metadata at index 5.
@@ -4688,7 +4697,7 @@ function renderPayCard(project, cart) {
 // (the quote is deterministic); the AMM route discounts the quote by the chosen slippage. The terminal
 // enforces this against the beneficiary's realized balance delta (mint OR swap output), so it's a valid
 // floor for both routes.
-function payMinTokens(p, slippageBps) {
+export function payMinTokens(p, slippageBps) {
   if (!p || p.received == null) return 0n;
   if (p.routing === 'amm') return p.received * BigInt(10000 - (slippageBps || 0)) / 10000n;
   return p.received;
@@ -12615,8 +12624,15 @@ function buildCashOutModal(project, requestClose) {
     // Snapshot the outcome for the success panel (fee-token amounts fill in as their previews resolve).
     state.outcome = { net: f.net, sym: a.symbol, decimals: a.decimals, revToken: null, protoToken: null };
     preview.innerHTML = '';
+    // The tx floor (minTokensReclaimed) we send IS this number — show the GUARANTEED minimum, not a bare estimate,
+    // so "you'll receive at least X" is literally what the terminal enforces. 1% buffer when exact, 5% on a
+    // fallback estimate (matches the bps in the submit). state.minReclaimed is the single source for display + tx.
+    var floor = (f.net != null && f.net > 0n) ? f.net * (f.approx ? 9500n : 9900n) / 10000n : null;
+    state.minReclaimed = floor;
     var recv = el('div', 'ops-preview-line ops-preview-recv');
-    recv.textContent = 'You’ll receive ~ ' + formatBalance(f.net, a.decimals, a.symbol);
+    recv.textContent = floor != null
+      ? 'You’ll receive at least ' + formatBalance(floor, a.decimals, a.symbol)
+      : 'You’ll receive ~ ' + formatBalance(f.net, a.decimals, a.symbol);
     preview.appendChild(recv);
     if (f.approx) {
       var note = el('div', 'ops-preview-line ops-preview-feetok');
@@ -12717,12 +12733,11 @@ function buildCashOutModal(project, requestClose) {
     if (state.locked) { status.textContent = 'Cash outs are not unlocked yet'; return; }
     var terminal = getAddress('JBMultiTerminal', state.chainId);
     if (!terminal) { status.textContent = 'No terminal on this chain'; return; }
-    // Slippage floor under the previewed NET payout. The terminal checks `minTokensReclaimed` against the
-    // post-everything amount: bonding curve → REVOwner's 2.5% revnet fee (via the data hook) → the 2.5%
-    // protocol fee. `state.net` mirrors all of that (from previewCashOutFrom). Using the raw curve reclaim
-    // here was the bug that reverted cash-outs. 1% buffer when exact; 5% on a fallback estimate.
-    var bps = state.exact === false ? 9500n : 9900n;
-    var minReclaimed = state.net != null ? state.net * bps / 10000n : 0n;
+    // Send EXACTLY the floor the preview showed (state.minReclaimed = "you'll receive at least X"). Never a 0
+    // fallback — a floorless burn lets a sandwich drain the reclaim to nothing. No valid floor (preview pending
+    // or no surplus) → block rather than burn unprotected.
+    var minReclaimed = state.minReclaimed;
+    if (minReclaimed == null || minReclaimed <= 0n) { status.textContent = 'No guaranteed amount to reclaim yet — refresh the preview.'; return; }
     var reclaimToken = (state.acct && state.acct.address) || NATIVE_TOKEN; // cash out in the accounting token
     btn.disabled = true; status.textContent = '';
     // Snapshot what the user is cashing out + the previewed outcome, for the success panel.
