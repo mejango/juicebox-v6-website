@@ -80,6 +80,18 @@ var BENDYSTRAW_PARENT_CHAIN_ID = {
   84532: 8453,
   421614: 42161,
 };
+var PROJECT_1_TWAP_BUYBACK_HOOK_BY_TESTNET_CHAIN = {
+  11155111: '0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948',
+  84532: '0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948',
+  421614: '0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948',
+};
+
+function buybackHookFor(project, chainId) {
+  if (project && Number(project.id) === 1 && PROJECT_1_TWAP_BUYBACK_HOOK_BY_TESTNET_CHAIN[chainId]) {
+    return PROJECT_1_TWAP_BUYBACK_HOOK_BY_TESTNET_CHAIN[chainId];
+  }
+  return getAddress('JBBuybackHook', chainId);
+}
 
 // Inline chain logos (brand marks), keyed by chain family. Testnets reuse their parent chain's mark.
 var CHAIN_LOGO_SVG = {
@@ -2176,7 +2188,7 @@ function lpPairFor(project, chainId) {
 
 // Current AMM price as PAIR-token per project token (ETH/token for ETH pools, USDC/token for USDC pools).
 async function readAmmPrice(project, chainId) {
-  var hook = getAddress('JBBuybackHook', chainId);
+  var hook = buybackHookFor(project, chainId);
   var pm = POOL_MANAGER_BY_CHAIN[chainId];
   if (!hook || !pm) return null;
   try {
@@ -2214,7 +2226,7 @@ async function readAmmPrice(project, chainId) {
 
 // Resolve the buyback pool + swap direction for buying the project token with its pair token.
 function directSwapPoolFor(project, chainId) {
-  var hook = getAddress('JBBuybackHook', chainId);
+  var hook = buybackHookFor(project, chainId);
   if (!hook || !UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
   return lpPairFor(project, chainId).then(function (pair) {
     return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] })
@@ -14225,7 +14237,7 @@ function lpAlignDown(tick, s) { var r = tick % s; if (r !== 0 && tick < 0) r += 
 function lpAlignUp(tick, s) { return lpAlignDown(tick + s - 1, s); }
 // Read the buyback pool key + current sqrtPriceX96. Null if no pool.
 async function readPoolState(project, chainId) {
-  var hook = getAddress('JBBuybackHook', chainId);
+  var hook = buybackHookFor(project, chainId);
   var pm = POOL_MANAGER_BY_CHAIN[chainId];
   if (!hook || !pm) return null;
   try {
@@ -15083,4 +15095,3 @@ function splitConfigRow(recipientNode, pct) {
   var v = el('span', 'detail-ruleset-val'); v.textContent = (Math.round(pct * 100) / 100) + '%'; row.appendChild(v);
   return row;
 }
-
