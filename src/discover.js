@@ -3920,15 +3920,10 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     }
   }).catch(function () {});
 
-  // Drop the Owner/Operator tab unless the project's controlling account is actually a Safe.
-  fetchSafeInfo(projectAuthorityAddress(project), project.chainId).then(function (info) {
-    if (info || !tabRow.isConnected) return; // it IS a Safe → keep the tab
-    tabs = tabs.filter(function (t) { return t !== ownerTabName; });
-    delete builders[ownerTabName]; delete built[ownerTabName];
-    var bb = tabRow.querySelectorAll('.detail-tab-btn');
-    for (var b = 0; b < bb.length; b++) if (bb[b].textContent === ownerTabName) { bb[b].remove(); break; }
-    if (_activeDetail && _activeDetail.current === ownerTabName) showTab(tabs[0]);
-  }).catch(function () {});
+  // The Owner/Operator tab ALWAYS shows — it holds the owner/operator transactions, which an EOA controller can
+  // execute directly via relayr (not just Safe signers). The Safe-only queue/sign views inside are hidden for
+  // non-Safe controllers (see renderBackOfficeSection). This also keeps the tab reachable when the indexer is
+  // down and the operator can't be resolved — the actions self-gate on connect.
 
   rightCol.appendChild(tabRow);
   _activeDetail = { key: detailKey, showTab: showTab, current: startTab, project: project, isMobile: activityAsTab };
@@ -6878,7 +6873,14 @@ function renderBackOfficeSection(project) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   // Account card: who owns the project on each chain + what kind of account it is.
   section.appendChild(renderAccountCard(project));
-  section.appendChild(renderPendingSafeTxsCard(safe, chains, project.chainId, project.isRevnet ? 'Operator' : 'Owner'));
+  // The Safe queue/sign card is only meaningful when the controlling account is a Safe — an EOA controller
+  // executes directly via relayr (no queue to sign). Render it optimistically, then drop it if the authority
+  // isn't a Safe. Skipped entirely when the operator can't be resolved (indexer down → `safe` is null).
+  if (safe) {
+    var safeCard = renderPendingSafeTxsCard(safe, chains, project.chainId, project.isRevnet ? 'Operator' : 'Owner');
+    section.appendChild(safeCard);
+    fetchSafeInfo(safe, project.chainId).then(function (info) { if (!info && safeCard.parentNode) safeCard.parentNode.removeChild(safeCard); }).catch(function () {});
+  }
 
   // Powers / Permissions. Revnet: the controlling account is an OPERATOR with a fixed granted permission set
   // (not the ruleset-flag owner powers, which it doesn't hold) — show those actual powers, read-only. Custom:
