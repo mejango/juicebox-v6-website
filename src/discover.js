@@ -5655,13 +5655,13 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
       btn.disabled = true; cancel.disabled = true;
       (async function () {
-        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0;
+        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, notOwner = 0;
         try {
           for (var i = 0; i < live.length; i++) {
             var r = live[i];
             if (r.done) continue; // already queued/executed in a prior run (re-click after a wallet switch)
             var isOwner = (r.owners || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
-            if (!isOwner) { r.st.textContent = 'Connected wallet isn’t a signer of this Safe — skipped.'; continue; }
+            if (!isOwner) { r.st.textContent = 'Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe — skipped.'; notOwner++; continue; }
             if (!r.onChain) {
               var nonce = r.nInput ? Number(r.nInput.value) : 0;
               if (!(nonce >= 0)) throw new Error('Enter a valid nonce for ' + r.chain);
@@ -5694,7 +5694,10 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           if (approvedThisRun) summary.push('approved on ' + approvedThisRun);
           var didSomething = (queued + executed + approvedThisRun) > 0;
           var base = (summary.join(' · ') || 'No new actions') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.';
-          if (!pending) {
+          if (!didSomething && !pending && notOwner) {
+            // Nothing happened because the connected wallet signs for none of these Safes — say so loudly.
+            setStatus('Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe on ' + notOwner + ' selected chain' + (notOwner > 1 ? 's' : '') + '. Switch to an owner’s wallet and try again.', 'error');
+          } else if (!pending) {
             setStatus(base, 'success');
             setTimeout(function () { finish({ queued: queued, executed: executed, skipped: skipped, cancelled: false }); }, 2200);
           } else {
@@ -5705,6 +5708,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             btn.textContent = 'Approve as another signer';
           }
         } catch (e) {
+          if (typeof console !== 'undefined') console.error('[safe-apply]', e);
           btn.disabled = false; cancel.disabled = false;
           setStatus((e && (e.shortMessage || e.message)) || String(e), 'error');
         }
@@ -7660,6 +7664,7 @@ export var POWER_SET_ROUTER_TERMINAL = {
 };
 export var POWER_INIT_BUYBACK_POOL = {
   title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHook', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
+  chainAvailable: function (cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; }, unavailableNote: '(no Uniswap AMM here)',
   note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
   danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
   fields: [
@@ -7739,9 +7744,14 @@ function openPowerModal(project, action) {
   var chainSelected = {}; allChains.forEach(function (c, i) { chainSelected[c.id] = action.chainsDefault === 'all' ? true : (c.id === project.chainId); });
   var chainBox = el('div', 'splits-edit-chains');
   allChains.forEach(function (c) {
-    var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = chainSelected[c.id] !== false;
+    // Some actions can't run on every chain (e.g. initialize buyback pool needs a Uniswap v4 AMM — OP Sepolia
+    // has none). Gate the checkbox so the user can't select a chain where the tx would revert at execute time.
+    var avail = !action.chainAvailable || action.chainAvailable(c.id);
+    if (!avail) chainSelected[c.id] = false;
+    var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = avail && chainSelected[c.id] !== false; cb.disabled = !avail;
     cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; });
     r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
+    if (!avail) { var un = el('span', 'operator-edit-cur'); un.style.marginLeft = '6px'; un.textContent = action.unavailableNote || '(unavailable here)'; r2.appendChild(un); r2.style.opacity = '0.55'; }
     chainBox.appendChild(r2);
   });
   content.appendChild(chainBox);
