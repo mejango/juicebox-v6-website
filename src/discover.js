@@ -5613,7 +5613,17 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         }
         rec.deployed = true; rec.threshold = info.threshold; rec.owners = info.owners;
         if (hasSafeService(c.id)) {
-          return getSafeNextNonce(c.id, safe).then(function (n) { rec.nonce = (n != null ? n : 0); st.textContent = 'Safe service · queues at nonce ' + rec.nonce + ' for the ' + info.threshold + '-of-' + info.owners.length + ' multisig.'; });
+          st.textContent = 'Safe service · ' + info.threshold + '-of-' + info.owners.length + ' multisig.';
+          return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function () { return []; })]).then(function (rr) {
+            var next = rr[0] != null ? rr[0] : 0;
+            var queuedNonces = (rr[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
+            var def = queuedNonces.length ? Math.max(next, queuedNonces[queuedNonces.length - 1] + 1) : next;
+            var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
+            var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
+            var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.value = String(def); nrow.appendChild(nInput);
+            var nhint = el('span', 'safe-propose-hint'); nhint.textContent = queuedNonces.length ? (' next ' + def + ' · queued #' + queuedNonces.join(', #') + ' — reuse one to replace it') : ' next nonce'; nrow.appendChild(nhint);
+            rec.block.appendChild(nrow); rec.nInput = nInput;
+          });
         }
         rec.onChain = true;
         return refreshOnChainStatus(rec);
@@ -5645,7 +5655,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
       btn.disabled = true; cancel.disabled = true;
       (async function () {
-        var queued = 0, executed = 0, pending = 0;
+        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0;
         try {
           for (var i = 0; i < live.length; i++) {
             var r = live[i];
@@ -5653,8 +5663,10 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             var isOwner = (r.owners || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
             if (!isOwner) { r.st.textContent = 'Connected wallet isn’t a signer of this Safe — skipped.'; continue; }
             if (!r.onChain) {
+              var nonce = r.nInput ? Number(r.nInput.value) : 0;
+              if (!(nonce >= 0)) throw new Error('Enter a valid nonce for ' + r.chain);
               setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
-              await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: r.nonce });
+              await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce });
               r.done = true; r.st.textContent = 'Queued ✓ — co-sign + execute it in the Operator tab’s “Pending Multisig Transactions”.'; queued++;
             } else {
               await refreshOnChainStatus(r); // re-read so a co-signer's earlier approval counts
@@ -5662,7 +5674,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
               if (!iApproved) {
                 setStatus('Approving on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
                 await approveSafeHashOnChain(r.cid, safe, r.hash);
-                r.approved = (r.approved || []).concat([acct]);
+                r.approved = (r.approved || []).concat([acct]); approvedThisRun++;
               }
               if ((r.approved || []).length >= r.ctx.threshold) {
                 setStatus('Executing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
@@ -5675,14 +5687,23 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           }
           document.dispatchEvent(new CustomEvent('jb:safe-queued'));
           document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
-          var parts = [];
-          if (executed) parts.push('executed on ' + executed);
-          if (queued) parts.push('queued on ' + queued);
-          if (pending) parts.push(pending + ' awaiting more signers');
-          setStatus((parts.join(' · ') || 'Nothing to do') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.', 'success');
           btn.disabled = false; cancel.disabled = false;
-          if (!pending) setTimeout(function () { finish({ queued: queued, executed: executed, skipped: skipped, cancelled: false }); }, 2200);
-          else btn.textContent = 'Approve / execute remaining';
+          var summary = [];
+          if (executed) summary.push('executed on ' + executed);
+          if (queued) summary.push('queued on ' + queued);
+          if (approvedThisRun) summary.push('approved on ' + approvedThisRun);
+          var didSomething = (queued + executed + approvedThisRun) > 0;
+          var base = (summary.join(' · ') || 'No new actions') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.';
+          if (!pending) {
+            setStatus(base, 'success');
+            setTimeout(function () { finish({ queued: queued, executed: executed, skipped: skipped, cancelled: false }); }, 2200);
+          } else {
+            // Chains still short of threshold need a DIFFERENT signer — make clear the connected wallet is done.
+            setStatus(base + (didSomething
+              ? ' Your part is done — ' + pending + ' chain' + (pending > 1 ? 's' : '') + ' still need another signer. Switch to a different owner’s wallet, then click below; they execute automatically at the threshold.'
+              : ' You’ve already approved every chain you can with this wallet. Switch to a different owner’s wallet to add their approval — ' + pending + ' remaining.'), didSomething ? 'success' : '');
+            btn.textContent = 'Approve as another signer';
+          }
         } catch (e) {
           btn.disabled = false; cancel.disabled = false;
           setStatus((e && (e.shortMessage || e.message)) || String(e), 'error');
@@ -6953,7 +6974,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       // Operator/owner txs there are coordinated on-chain (approve + execute via the action panels), not here.
       if (!hasSafeService(c.id)) {
         list.innerHTML = '';
-        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — txs are coordinated on-chain (use the action’s “Operate on-chain” panel).';
+        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — no off-chain queue here. A second signer completes a pending tx by re-running the same operator action (e.g. Buyback & swap router → Set buyback hook): it reads the on-chain approvals and lets them approve + execute.';
         list.appendChild(nos); return Promise.resolve();
       }
       return listPendingSafeTxs(c.id, safe).then(function (txs) {
