@@ -5578,13 +5578,11 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
     var wrap = el('div', 'modal-body');
     var intro = el('div', 'modal-balance');
-    intro.textContent = 'Review and queue this on each chain’s Safe. Pick the nonce per chain — reusing a nonce already in the queue replaces that pending transaction.';
+    intro.textContent = 'Apply this change on each chain’s Safe. Chains with a hosted Safe service are queued for the multisig (sign once; co-sign + execute from the Operator tab). Chains without one are approved + executed on-chain right here. One “Sign & queue” does your part on every chain.';
     wrap.appendChild(intro);
-    if (chains.length > 1) {
-      var sigBanner = el('div', 'create-banner');
-      sigBanner.textContent = 'Your wallet will prompt once per chain — ' + chains.length + ' signatures, one for each chain’s Safe.';
-      wrap.appendChild(sigBanner);
-    }
+    var sigBanner = el('div', 'create-banner');
+    sigBanner.textContent = 'It’s a multisig — you sign/approve once per chain. If a chain needs more signers, switch wallets and click again; on-chain chains execute automatically once the threshold is met.';
+    wrap.appendChild(sigBanner);
     var listEl = el('div', 'safe-propose-list'); wrap.appendChild(listEl);
     var status = el('div', 'modal-status'); wrap.appendChild(status);
     var foot = el('div', 'modal-foot');
@@ -5601,154 +5599,97 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       var block = el('div', 'safe-propose-chain');
       var head = el('div', 'safe-propose-head'); head.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = ' ' + c.name; head.appendChild(nm); block.appendChild(head);
       block.appendChild(renderTxReview({ chain: c.name, contract: resolveContractName(call.to, c.id) || call.to, address: call.to, calldata: call.data, value: '0' }));
-      var nrow = el('div', 'safe-propose-nonce');
-      var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
-      var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.disabled = true; nInput.placeholder = '…'; nrow.appendChild(nInput);
-      var hint = el('span', 'safe-propose-hint'); hint.textContent = ' checking Safe…'; nrow.appendChild(hint);
-      block.appendChild(nrow);
+      var st = el('div', 'safe-propose-hint'); st.style.marginTop = '6px'; st.textContent = 'checking Safe…'; block.appendChild(st);
       listEl.appendChild(block);
-      var rec = { cid: c.id, chain: c.name, to: call.to, data: call.data, deployed: false, nInput: nInput };
+      var rec = { cid: c.id, chain: c.name, to: call.to, data: call.data, deployed: false, onChain: false, st: st, block: block };
       rows.push(rec);
 
       fetchSafeInfo(safe, c.id).then(function (info) {
-        var isSigner = info && info.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); });
         if (!info) {
-          block.classList.add('safe-propose-skip');
-          hint.innerHTML = '';
-          var w = el('span'); w.textContent = ' Safe not deployed on ' + c.name + ' — '; hint.appendChild(w);
-          var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'add it (same address) in the Safe app ↗'; hint.appendChild(a);
-          var w2 = el('span'); w2.textContent = ', then reopen. Skipped for now.'; hint.appendChild(w2);
-          return;
+          block.classList.add('safe-propose-skip'); st.innerHTML = '';
+          st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — '));
+          var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'add it (same address) in the Safe app ↗'; st.appendChild(a);
+          st.appendChild(document.createTextNode('. Skipped.')); return;
         }
-        if (!isSigner) { block.classList.add('safe-propose-skip'); hint.textContent = ' You’re not a signer of this Safe — skipped.'; return; }
-        // No hosted Safe service on this chain (e.g. Arbitrum/OP Sepolia) → can't queue off-chain. Offer the
-        // on-chain approve + execute panel instead; exclude it from the service "Sign & queue" loop below.
-        if (!hasSafeService(c.id)) {
-          rec.deployed = true; rec.onChain = true; nrow.style.display = 'none';
-          var ocWrap = el('div', 'safe-propose-onchain'); ocWrap.style.marginTop = '6px';
-          var ocNote = el('div', 'safe-propose-hint'); ocNote.textContent = 'No Safe service on ' + c.name + ' — approve + execute on-chain:'; ocWrap.appendChild(ocNote);
-          var ocBtn = el('a', 'operator-cta'); ocBtn.href = '#'; ocBtn.textContent = 'Operate on-chain';
-          ocBtn.addEventListener('click', function (e) { e.preventDefault(); openOnChainSafeModal(c.id, safe, { to: call.to, data: call.data, value: 0 }, { signer: signer, title: opts.title, chainName: c.name }); });
-          ocWrap.appendChild(ocBtn); block.appendChild(ocWrap);
-          return;
+        rec.deployed = true; rec.threshold = info.threshold; rec.owners = info.owners;
+        if (hasSafeService(c.id)) {
+          return getSafeNextNonce(c.id, safe).then(function (n) { rec.nonce = (n != null ? n : 0); st.textContent = 'Safe service · queues at nonce ' + rec.nonce + ' for the ' + info.threshold + '-of-' + info.owners.length + ' multisig.'; });
         }
-        rec.deployed = true; nInput.disabled = false;
-        return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function () { return []; })]).then(function (r) {
-          var next = r[0] || 0;
-          var queued = (r[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
-          var def = queued.length ? Math.max(next, queued[queued.length - 1] + 1) : next;
-          nInput.value = String(def);
-          hint.textContent = queued.length ? (' next: ' + def + ' | queued: #' + queued.join(', #') + ' (reuse one to replace it)') : (' next nonce: ' + def);
-        });
-      }).catch(function () { block.classList.add('safe-propose-skip'); hint.textContent = ' Could not read the Safe here — skipped.'; });
+        rec.onChain = true;
+        return refreshOnChainStatus(rec);
+      }).catch(function () { block.classList.add('safe-propose-skip'); rec.deployed = false; st.textContent = 'Could not read the Safe here — skipped.'; });
     });
 
+    // (Re-)read an on-chain chain's nonce/threshold/owners + current approvals and paint its status line.
+    function refreshOnChainStatus(rec) {
+      return safeOnChainContext(rec.cid, safe).then(function (ctx) {
+        rec.ctx = ctx;
+        rec.hash = safeTxHashForCall(rec.cid, safe, { to: rec.to, data: rec.data, value: 0, nonce: ctx.nonce });
+        return safeApprovalsOf(rec.cid, safe, rec.hash, ctx.owners).then(function (ap) {
+          rec.approved = ap;
+          rec.st.textContent = 'No Safe service · on-chain ' + ap.length + ' / ' + ctx.threshold + ' approvals' + (ap.length >= ctx.threshold ? ' — ready to execute.' : '.');
+        });
+      });
+    }
+
+    function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
     cancel.addEventListener('click', function () { finish({ queued: 0, skipped: [], cancelled: true }); });
+    // One CTA does the connected signer's part on EVERY chain: service chains get sign+queue; on-chain chains get
+    // approveHash, then execTransaction automatically once the threshold is met. Chains that still need more
+    // signers stay pending — switch wallets and click again (already-done chains are skipped). All in one flow.
     btn.addEventListener('click', function () {
-      var live = rows.filter(function (r) { return r.deployed && !r.onChain; }); // service chains queued here
-      var skipped = rows.filter(function (r) { return !r.deployed && !r.onChain; }).map(function (r) { return r.chain; });
-      if (!live.length) {
-        var anyOnChain = rows.some(function (r) { return r.onChain; });
-        status.textContent = anyOnChain
-          ? 'These chains have no hosted Safe service — use “Operate on-chain” on each above to approve + execute.'
-          : 'The owner Safe isn’t deployed on any selected chain yet (or you’re not a signer). Add it on those chains in the Safe app first.';
-        return;
-      }
+      var acct = (getAccount && getAccount()) || null;
+      var live = rows.filter(function (r) { return r.deployed; });
+      var skipped = rows.filter(function (r) { return !r.deployed; }).map(function (r) { return r.chain; });
+      if (!live.length) { setStatus('The Safe isn’t deployed (or readable) on any selected chain. Add it on those chains in the Safe app first.', 'error'); return; }
+      if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
       btn.disabled = true; cancel.disabled = true;
       (async function () {
-        var queued = 0;
+        var queued = 0, executed = 0, pending = 0;
         try {
           for (var i = 0; i < live.length; i++) {
             var r = live[i];
-            status.className = 'modal-status pending';
-            status.textContent = 'Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…';
-            var nonce = Number(r.nInput.value);
-            if (!(nonce >= 0)) throw new Error('Enter a valid nonce for ' + r.chain);
-            await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: signer, nonce: nonce });
-            queued++;
+            if (r.done) continue; // already queued/executed in a prior run (re-click after a wallet switch)
+            var isOwner = (r.owners || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
+            if (!isOwner) { r.st.textContent = 'Connected wallet isn’t a signer of this Safe — skipped.'; continue; }
+            if (!r.onChain) {
+              setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
+              await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: r.nonce });
+              r.done = true; r.st.textContent = 'Queued ✓ — co-sign + execute it in the Operator tab’s “Pending Multisig Transactions”.'; queued++;
+            } else {
+              await refreshOnChainStatus(r); // re-read so a co-signer's earlier approval counts
+              var iApproved = (r.approved || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
+              if (!iApproved) {
+                setStatus('Approving on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
+                await approveSafeHashOnChain(r.cid, safe, r.hash);
+                r.approved = (r.approved || []).concat([acct]);
+              }
+              if ((r.approved || []).length >= r.ctx.threshold) {
+                setStatus('Executing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
+                await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o }; }) });
+                r.done = true; r.st.textContent = 'Executed ✓'; executed++;
+              } else {
+                r.st.textContent = 'Approved ' + r.approved.length + ' / ' + r.ctx.threshold + ' — needs ' + (r.ctx.threshold - r.approved.length) + ' more signer(s). Switch wallets and click again; it executes automatically at the threshold.'; pending++;
+              }
+            }
           }
           document.dispatchEvent(new CustomEvent('jb:safe-queued'));
-          status.className = 'modal-status success';
-          status.textContent = 'Queued on ' + queued + ' chain' + (queued > 1 ? 's' : '') + (skipped.length ? ' | skipped ' + skipped.join(', ') : '') + '.';
-          setTimeout(function () { finish({ queued: queued, skipped: skipped, cancelled: false }); }, 1600);
+          document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+          var parts = [];
+          if (executed) parts.push('executed on ' + executed);
+          if (queued) parts.push('queued on ' + queued);
+          if (pending) parts.push(pending + ' awaiting more signers');
+          setStatus((parts.join(' · ') || 'Nothing to do') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.', 'success');
+          btn.disabled = false; cancel.disabled = false;
+          if (!pending) setTimeout(function () { finish({ queued: queued, executed: executed, skipped: skipped, cancelled: false }); }, 2200);
+          else btn.textContent = 'Approve / execute remaining';
         } catch (e) {
-          btn.disabled = false; cancel.disabled = false; status.className = 'modal-status';
-          status.textContent = (e && (e.shortMessage || e.message)) || String(e);
+          btn.disabled = false; cancel.disabled = false;
+          setStatus((e && (e.shortMessage || e.message)) || String(e), 'error');
         }
       })();
     });
   });
-}
-
-// On-chain Safe coordination for a single chain with NO Safe Transaction Service (e.g. Arbitrum/OP Sepolia).
-// There's no off-chain queue, so each signer approves the SafeTx hash on-chain (approveHash) and anyone executes
-// once the threshold is met (execTransaction with pre-validated approved-hash signatures). Switch wallets to
-// approve from each signer; the panel re-reads on every wallet change. `call` = { to, data, value }.
-function openOnChainSafeModal(chainId, safe, call, opts) {
-  opts = opts || {};
-  var chainName = opts.chainName || chainNameOf(chainId);
-  var content = el('div', 'modal-body');
-  var intro = el('div', 'modal-balance');
-  intro.textContent = 'No Safe transaction service on ' + chainName + ' — coordinate on-chain: each signer approves the transaction hash, then anyone executes once the Safe’s threshold is met.';
-  content.appendChild(intro);
-  var bodyEl = el('div'); bodyEl.appendChild(skel('100%', '70px')); content.appendChild(bodyEl);
-  var status = el('div', 'modal-status'); content.appendChild(status);
-  var modal = openModal(opts.title ? (opts.title + ' — on-chain') : 'Operate on-chain', content);
-  function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
-
-  var state = { ctx: null, hash: null, approved: [], busy: false };
-  function refresh() {
-    return safeOnChainContext(chainId, safe).then(function (ctx) {
-      state.ctx = ctx;
-      state.hash = safeTxHashForCall(chainId, safe, { to: call.to, data: call.data, value: call.value || 0, nonce: ctx.nonce });
-      return safeApprovalsOf(chainId, safe, state.hash, ctx.owners).then(function (ap) { state.approved = ap; render(); });
-    }).catch(function (e) { setStatus(errMessage(e, 'Could not read the Safe on ' + chainName), 'error'); });
-  }
-  function render() {
-    var ctx = state.ctx; if (!ctx) return;
-    bodyEl.innerHTML = '';
-    bodyEl.appendChild(renderTxReview({ chain: chainName, contract: resolveContractName(call.to, chainId) || call.to, address: call.to, calldata: call.data, value: '0' }));
-    var meta = el('div', 'operator-edit-cur'); meta.style.marginTop = '8px';
-    meta.textContent = 'Safe nonce ' + ctx.nonce + ' · ' + state.approved.length + ' / ' + ctx.threshold + ' approvals';
-    bodyEl.appendChild(meta);
-    var list = el('div', 'perm-list'); list.style.marginTop = '8px';
-    ctx.owners.forEach(function (o) {
-      var ok = state.approved.some(function (a) { return a.toLowerCase() === o.toLowerCase(); });
-      var row = el('div', 'powers-head');
-      row.appendChild(addressNode(o, chainId));
-      var st = el('span', 'powers-state ' + (ok ? 'on' : 'off')); st.textContent = ok ? 'approved' : 'pending'; row.appendChild(st);
-      list.appendChild(row);
-    });
-    bodyEl.appendChild(list);
-    var acct = (getAccount && getAccount()) || null;
-    var isOwner = !!(acct && ctx.owners.some(function (o) { return o.toLowerCase() === acct.toLowerCase(); }));
-    var mine = !!(acct && state.approved.some(function (a) { return a.toLowerCase() === acct.toLowerCase(); }));
-    var ready = state.approved.length >= ctx.threshold;
-    var actions = el('div', 'operator-edit-actions'); actions.style.marginTop = '12px';
-    var approveBtn = el('a', 'operator-cta'); approveBtn.href = '#';
-    approveBtn.textContent = !acct ? 'Connect a signer' : (!isOwner ? 'Connected wallet isn’t a signer' : (mine ? 'You approved ✓' : 'Approve on-chain'));
-    if (acct && (!isOwner || mine)) approveBtn.classList.add('cta-disabled');
-    approveBtn.addEventListener('click', function (e) {
-      e.preventDefault(); if (state.busy) return;
-      if (!acct) { connect().then(refresh).catch(function () {}); return; }
-      if (!isOwner || mine) return;
-      state.busy = true; setStatus('Approving on ' + chainName + ' — sign in your wallet…', 'pending');
-      approveSafeHashOnChain(chainId, safe, state.hash).then(function () { state.busy = false; setStatus('Approved. Switch wallets to approve from another signer, or execute once the threshold is met.', 'success'); return refresh(); }).catch(function (er) { state.busy = false; setStatus(errMessage(er, 'Approve failed'), 'error'); });
-    });
-    actions.appendChild(approveBtn);
-    var execBtn = el('a', 'operator-cta'); execBtn.href = '#'; execBtn.textContent = ready ? 'Execute' : ('Execute (' + state.approved.length + '/' + ctx.threshold + ')');
-    if (!ready) execBtn.classList.add('cta-disabled');
-    execBtn.addEventListener('click', function (e) {
-      e.preventDefault(); if (state.busy || !ready) return;
-      state.busy = true; setStatus('Executing on ' + chainName + ' — sign in your wallet…', 'pending');
-      var tx = { to: call.to, value: 0, data: call.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: state.approved.map(function (o) { return { owner: o }; }) };
-      executeSafeTx(chainId, safe, tx).then(function () { state.busy = false; setStatus('Executed on ' + chainName + ' ✓', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1800); }).catch(function (er) { state.busy = false; setStatus(errMessage(er, 'Execute failed'), 'error'); });
-    });
-    actions.appendChild(execBtn);
-    bodyEl.appendChild(actions);
-  }
-  refresh();
-  if (onWalletChange) onWalletChange(function () { if (state.ctx) render(); });
 }
 
 // A label-over-value cell for the onchain info grid.
