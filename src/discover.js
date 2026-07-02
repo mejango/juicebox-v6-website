@@ -5573,11 +5573,12 @@ function runRelayrBundle(entries, opts) {
   });
 }
 
-// Suggested next on-chain nonce per (safe, chain), bumped each time this signer approves an on-chain tx so a run of
-// separate operator actions defaults to sequential nonces (N, N+1, N+2…) instead of all colliding at the current
-// nonce. Module-level so it survives across the separate action modals. Cleared on reload (falls back to current
-// nonce, which is safe).
-var _onchainNonceHint = {};
+// Suggested next on-chain nonce per (safe, chain, signer), bumped each time this signer approves an on-chain tx so a
+// run of separate operator actions defaults to sequential nonces (N, N+1, N+2…) instead of all colliding at the
+// current nonce. Persisted to localStorage so it survives a page reload mid-queue (the default is still
+// max(currentNonce, hint), so a stale-low hint is harmless).
+var _onchainNonceHint = (function () { try { return JSON.parse(localStorage.getItem('jb-onchain-nonce-hint') || '{}'); } catch (_) { return {}; } })();
+function _saveOnchainNonceHint() { try { localStorage.setItem('jb-onchain-nonce-hint', JSON.stringify(_onchainNonceHint)); } catch (_) {} }
 
 // Open a Safe-proposal modal: per chain, show the decoded call + a nonce picker, queue on each chain the
 // Safe is actually deployed on (same address), and clearly flag chains where it isn't yet. Resolves with
@@ -5671,7 +5672,9 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         var chosen = Number(rec.nInput.value); rec.chosenNonce = chosen;
         var ahead = chosen - Number(ctx.nonce);
         rec.nHint.textContent = ahead < 0 ? ' below current nonce ' + ctx.nonce + ' — already used; pick ≥ ' + ctx.nonce
-          : ahead === 0 ? ' current — this one executes next' : ' +' + ahead + ' — queued behind nonce ' + ctx.nonce + '…' + (chosen - 1);
+          : ahead === 0 ? ' current — this one executes next'
+          : ahead === 1 ? ' +1 — queued behind nonce ' + ctx.nonce
+          : ' +' + ahead + ' — queued behind nonces ' + ctx.nonce + '…' + (chosen - 1);
         rec.hash = safeTxHashForCall(rec.cid, safe, { to: rec.to, data: rec.data, value: 0, nonce: chosen });
         return safeApprovalsOf(rec.cid, safe, rec.hash, ctx.owners).then(function (ap) {
           rec.approved = ap;
@@ -5722,7 +5725,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                 setStatus('Approving on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
                 await approveSafeHashOnChain(r.cid, safe, r.hash);
                 r.approved = (r.approved || []).concat([acct]); approvedThisRun++;
-                _onchainNonceHint[safe.toLowerCase() + ':' + r.cid + ':' + acct.toLowerCase()] = chosen + 1; // this signer's next on-chain tx here defaults to the next nonce
+                _onchainNonceHint[safe.toLowerCase() + ':' + r.cid + ':' + acct.toLowerCase()] = chosen + 1; _saveOnchainNonceHint(); // this signer's next on-chain tx here defaults to the next nonce
               }
               if ((r.approved || []).length >= r.ctx.threshold) {
                 if (chosen === current) {
@@ -7863,7 +7866,7 @@ function openPowerModal(project, action) {
         var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
         var setCount = rows.filter(function (r) { return r.value; }).length;
         if (distinct.length <= 1) {
-          cc.textContent = setCount ? ('✓ same on all ' + setCount + ' chain' + (setCount > 1 ? 's' : '') + ' — ' + shortAddr6(distinct[0])) : 'not set on any chain yet';
+          cc.textContent = setCount ? ('currently same on all ' + setCount + ' chain' + (setCount > 1 ? 's' : '') + ' — ' + shortAddr6(distinct[0])) : 'not set on any chain yet';
         } else {
           cc.innerHTML = '⚠ <strong>differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' · ') + '. The value you set applies only to the chains you check below.';
           cc.style.color = '#b23550';
