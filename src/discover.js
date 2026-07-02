@@ -7465,6 +7465,17 @@ function renderPowersCard(project) {
 // Operator/owner buyback + swap-router setup. Three per-project registry writes — set the buyback hook, set the
 // router terminal, initialize the Uniswap buyback pool — each queued on the chains you pick and bundled into one
 // relayr payment (or proposed to the Safe) via openPowerModal, exactly like the other operator actions.
+// Read a hook/terminal-style scalar on every AMM-available chain the project spans → [{name, value|null}].
+// Shared by the operator form (✓/⚠ consistency note) and the summary card (combined "Current:" line).
+function crossChainValues(project, field, chainAvailable) {
+  if (!field || !field.crossChainRead) return Promise.resolve([]);
+  var chains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !chainAvailable || chainAvailable(c.id); });
+  return Promise.all(chains.map(function (c) {
+    return field.crossChainRead(project, c.id).then(function (v) { return { name: c.name || chainNameOf(c.id), value: (v && v !== ZERO_ADDRESS) ? v : null }; }).catch(function () { return { name: c.name || chainNameOf(c.id), value: null }; });
+  }));
+}
+function shortAddr6(a) { return a.slice(0, 6) + '…' + a.slice(-4); }
+
 export function renderBuybackRouterCard(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Buyback & swap router'; card.appendChild(title);
@@ -7477,6 +7488,18 @@ export function renderBuybackRouterCard(project) {
     var lab = el('span', 'powers-label'); lab.textContent = action.title; head.appendChild(lab);
     row.appendChild(head);
     var desc = el('div', 'powers-desc'); desc.textContent = action.note; row.appendChild(desc);
+    // Current value across chains — combined when uniform, per-chain when it differs (like the ruleset display).
+    var f = (action.fields && action.fields[0]) || {};
+    if (f.crossChainRead) {
+      var cur = el('div', 'powers-desc'); cur.style.opacity = '0.8'; cur.style.marginTop = '2px'; cur.textContent = 'Current: reading across chains…'; row.appendChild(cur);
+      crossChainValues(project, f, action.chainAvailable).then(function (rows) {
+        var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
+        var setCount = rows.filter(function (r) { return r.value; }).length;
+        if (distinct.length === 0) cur.textContent = 'Current: not set on any chain';
+        else if (distinct.length === 1) cur.textContent = 'Current: ' + shortAddr6(distinct[0]) + (setCount === rows.length ? ' (all chains)' : ' (' + setCount + '/' + rows.length + ' chains — rest unset)');
+        else cur.textContent = 'Current: ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' · ');
+      });
+    }
     var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = action.title;
     act.addEventListener('click', function (e) { e.preventDefault(); openPowerModal(project, action); });
     row.appendChild(act);
@@ -7803,17 +7826,13 @@ function openPowerModal(project, action) {
     // flag if it isn't uniform, so the operator knows the starting state differs before overwriting it.
     if (f.crossChainRead) {
       var cc = el('div', 'operator-edit-cur'); cc.style.marginTop = '4px'; cc.textContent = 'checking current value across chains…'; content.appendChild(cc);
-      var ccChains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !action.chainAvailable || action.chainAvailable(c.id); });
-      Promise.all(ccChains.map(function (c) {
-        return f.crossChainRead(project, c.id).then(function (v) { return { name: c.name || chainNameOf(c.id), value: (v && v !== ZERO_ADDRESS) ? v : null }; }).catch(function () { return { name: c.name || chainNameOf(c.id), value: null }; });
-      })).then(function (rows) {
+      crossChainValues(project, f, action.chainAvailable).then(function (rows) {
         var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
         var setCount = rows.filter(function (r) { return r.value; }).length;
-        function shortA(a) { return a.slice(0, 6) + '…' + a.slice(-4); }
         if (distinct.length <= 1) {
-          cc.textContent = setCount ? ('✓ same on all ' + setCount + ' chain' + (setCount > 1 ? 's' : '') + ' — ' + shortA(distinct[0])) : 'not set on any chain yet';
+          cc.textContent = setCount ? ('✓ same on all ' + setCount + ' chain' + (setCount > 1 ? 's' : '') + ' — ' + shortAddr6(distinct[0])) : 'not set on any chain yet';
         } else {
-          cc.innerHTML = '⚠ <strong>differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortA(r.value) : 'unset'); }).join(' · ') + '. The value you set applies only to the chains you check below.';
+          cc.innerHTML = '⚠ <strong>differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' · ') + '. The value you set applies only to the chains you check below.';
           cc.style.color = '#b23550';
         }
       });
