@@ -263,6 +263,10 @@ var initializePoolForAbi = [{ type: 'function', name: 'initializePoolFor', state
 // Registry getters — the project's CURRENT resolved hook / terminal, used to pre-fill the setter fields.
 var hookOfAbi = [{ type: 'function', name: 'hookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 var terminalOfAbi = [{ type: 'function', name: 'terminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+// The buyback hook's per-(project,terminalToken) TWAP window — public, non-zero iff a pool is initialized for that
+// pair (MIN_TWAP_WINDOW is 5 min, so 0 = unset). The PoolKey (fee/tickSpacing) is stored in an internal mapping and
+// is NOT readable on-chain, so this tells us "initialized + TWAP", not the exact fee/tick.
+var twapWindowOfAbi = [{ type: 'function', name: 'twapWindowOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 
 // ---- 721 NFT tiers (Shop). Verified against nana-721-hook-v6 + REVOwner.tiered721HookOf. ----
 var REVO_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
@@ -7499,6 +7503,19 @@ export function renderBuybackRouterCard(project) {
         else if (distinct.length === 1) cur.textContent = 'Current: ' + shortAddr6(distinct[0]) + (setCount === rows.length ? ' (all chains)' : ' (' + setCount + '/' + rows.length + ' chains — rest unset)');
         else cur.textContent = 'Current: ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' · ');
       });
+    } else if (action.poolStateRead) {
+      // Pool has no scalar getter; poolStateRead returns a per-chain summary string (initialized pairs + TWAP).
+      var pcur = el('div', 'powers-desc'); pcur.style.opacity = '0.8'; pcur.style.marginTop = '2px'; pcur.textContent = 'Current pool: reading across chains…'; row.appendChild(pcur);
+      var pchains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !action.chainAvailable || action.chainAvailable(c.id); });
+      Promise.all(pchains.map(function (c) {
+        return action.poolStateRead(project, c.id).then(function (s) { return { name: c.name || chainNameOf(c.id), value: s }; }).catch(function () { return { name: c.name || chainNameOf(c.id), value: null }; });
+      })).then(function (rows) {
+        var distinctP = []; rows.forEach(function (r) { if (r.value && distinctP.indexOf(r.value) < 0) distinctP.push(r.value); });
+        var known = rows.filter(function (r) { return r.value; }).length;
+        if (!known) pcur.textContent = 'Current pool: unknown';
+        else if (distinctP.length === 1 && known === rows.length) pcur.textContent = 'Current pool: ' + distinctP[0] + ' (all chains)';
+        else pcur.textContent = 'Current pool: ' + rows.map(function (r) { return r.name + ' — ' + (r.value || 'unknown'); }).join(' · ');
+      });
     }
     var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = action.title;
     act.addEventListener('click', function (e) { e.preventDefault(); openPowerModal(project, action); });
@@ -7759,6 +7776,22 @@ export var POWER_SET_ROUTER_TERMINAL = {
 export var POWER_INIT_BUYBACK_POOL = {
   title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
+  // Per-chain current-pool summary for the card. No scalar getter for the PoolKey (internal), so we resolve the
+  // project's hook and read twapWindowOf for the native + USDC pairs — non-zero = a pool is initialized there.
+  poolStateRead: function (project, chainId) {
+    return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (hook) {
+      if (!hook || hook === ZERO_ADDRESS) return 'no hook set';
+      var probes = [{ label: 'native', token: ZERO_ADDRESS }];
+      var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ label: 'USDC', token: usdc });
+      return Promise.all(probes.map(function (p) {
+        return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [BigInt(project.id), p.token] })
+          .then(function (w) { return { label: p.label, twap: Number(w) }; }).catch(function () { return { label: p.label, twap: 0 }; });
+      })).then(function (rows) {
+        var init = rows.filter(function (r) { return r.twap > 0; });
+        return init.length ? init.map(function (r) { return r.label + ' pool (TWAP ' + r.twap + 's)'; }).join(', ') : 'not initialized';
+      });
+    }).catch(function () { return null; });
+  },
   note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Routed through the buyback hook registry, which forwards to the project’s configured hook (your new hook once Set buyback hook executes — set the hook first). Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
   danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
   fields: [
