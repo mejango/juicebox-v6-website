@@ -259,6 +259,36 @@ function sigBytesFor(c) {
   return owner + '0'.repeat(64) + '01';
 }
 
+// A base-fee-buffered EIP-1559 fee cap. Some wallets under-estimate maxFeePerGas on L2s (e.g. set 0.02 gwei when
+// the base fee just ticked to 0.0200056 gwei) and the RPC then rejects with "max fee per gas less than block base
+// fee". Cap at 2× base + a small tip so a tick-up between estimate and submit can't reject the tx. Returns {} for
+// non-EIP-1559 chains (let the wallet decide) or if the read fails.
+async function feeOverrides(chainId) {
+  try {
+    var pub = createPublicClientForChain(chainId);
+    var block = await pub.getBlock();
+    if (block.baseFeePerGas == null) return {};
+    var tip = 1000000n; // 0.001 gwei priority — ample on testnets/L2s
+    return { maxFeePerGas: BigInt(block.baseFeePerGas) * 2n + tip, maxPriorityFeePerGas: tip };
+  } catch (_) { return {}; }
+}
+
+// Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an on-chain revert surfaces as
+// an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
+async function sendAndConfirm(wallet, chainId, params, label) {
+  var fees = await feeOverrides(chainId);
+  var hash = await wallet.writeContract(Object.assign({ account: getAccount(), chain: CHAINS[chainId] }, params, fees));
+  try {
+    var pub = createPublicClientForChain(chainId);
+    var rcpt = await pub.waitForTransactionReceipt({ hash: hash });
+    if (rcpt && rcpt.status && rcpt.status !== 'success') throw new Error((label || 'Transaction') + ' reverted on-chain (tx ' + hash + ').');
+  } catch (e) {
+    if (e && /reverted on-chain/.test(e.message || '')) throw e; // genuine revert → propagate
+    // receipt read failed (RPC hiccup) — return the hash anyway; the caller re-reads state to confirm.
+  }
+  return hash;
+}
+
 export async function executeSafeTx(chainId, safe, tx) {
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
@@ -270,10 +300,7 @@ export async function executeSafeTx(chainId, safe, tx) {
   var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
   if (!confs.length) throw new Error('No confirmations to execute with.');
   var signatures = '0x' + confs.map(sigBytesFor).join('');
-  return wallet.writeContract({
-    account: getAccount(), chain: CHAINS[chainId], address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-    args: safeExecArgs(tx, signatures),
-  });
+  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction', args: safeExecArgs(tx, signatures) }, 'execTransaction');
 }
 
 // The signatures bytes for a ready tx (owner sigs concatenated, ASC by owner address).
@@ -346,7 +373,7 @@ export async function approveSafeHashOnChain(chainId, safe, hash) {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to approve.'); }
-  return wallet.writeContract({ account: getAccount(), chain: CHAINS[chainId], address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] });
+  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash');
 }
 
 export { SAFE_PREFIX };

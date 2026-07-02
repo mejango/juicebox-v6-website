@@ -263,6 +263,10 @@ var initializePoolForAbi = [{ type: 'function', name: 'initializePoolFor', state
 // Registry getters — the project's CURRENT resolved hook / terminal, used to pre-fill the setter fields.
 var hookOfAbi = [{ type: 'function', name: 'hookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 var terminalOfAbi = [{ type: 'function', name: 'terminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+// The buyback hook's per-(project,terminalToken) TWAP window — public, non-zero iff a pool is initialized for that
+// pair (MIN_TWAP_WINDOW is 5 min, so 0 = unset). The PoolKey (fee/tickSpacing) is stored in an internal mapping and
+// is NOT readable on-chain, so this tells us "initialized + TWAP", not the exact fee/tick.
+var twapWindowOfAbi = [{ type: 'function', name: 'twapWindowOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 
 // ---- 721 NFT tiers (Shop). Verified against nana-721-hook-v6 + REVOwner.tiered721HookOf. ----
 var REVO_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
@@ -5060,7 +5064,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
       setStatus('Connected wallet isn’t a signer of the Safe (' + truncAddr(authorityAddr) + ').', 'error'); return null;
     }
-    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title });
+    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces });
   }
   var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
   if (!account) return null;
@@ -5569,6 +5573,13 @@ function runRelayrBundle(entries, opts) {
   });
 }
 
+// Suggested next on-chain nonce per (safe, chain, signer), bumped each time this signer approves an on-chain tx so a
+// run of separate operator actions defaults to sequential nonces (N, N+1, N+2…) instead of all colliding at the
+// current nonce. Persisted to localStorage so it survives a page reload mid-queue (the default is still
+// max(currentNonce, hint), so a stale-low hint is harmless).
+var _onchainNonceHint = (function () { try { return JSON.parse(localStorage.getItem('jb-onchain-nonce-hint') || '{}'); } catch (_) { return {}; } })();
+function _saveOnchainNonceHint() { try { localStorage.setItem('jb-onchain-nonce-hint', JSON.stringify(_onchainNonceHint)); } catch (_) {} }
+
 // Open a Safe-proposal modal: per chain, show the decoded call + a nonce picker, queue on each chain the
 // Safe is actually deployed on (same address), and clearly flag chains where it isn't yet. Resolves with
 // { queued, skipped:[names], cancelled }.
@@ -5578,13 +5589,17 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
     var wrap = el('div', 'modal-body');
     var intro = el('div', 'modal-balance');
-    intro.textContent = 'Review and queue this on each chain’s Safe. Pick the nonce per chain — reusing a nonce already in the queue replaces that pending transaction.';
+    intro.textContent = 'Apply this change on each chain’s Safe. Chains with a hosted Safe service are queued for the multisig (sign once; co-sign + execute from the Operator tab). Chains without one are approved + executed on-chain right here. One “Sign & queue” does your part on every chain.';
     wrap.appendChild(intro);
-    if (chains.length > 1) {
-      var sigBanner = el('div', 'create-banner');
-      sigBanner.textContent = 'Your wallet will prompt once per chain — ' + chains.length + ' signatures, one for each chain’s Safe.';
-      wrap.appendChild(sigBanner);
+    if (chains.some(function (c) { return !hasSafeService(c.id); })) {
+      var coNote = el('div', 'modal-balance');
+      coNote.innerHTML = '<strong>Co-signing someone else’s transaction?</strong> Enter the <strong>exact</strong> values they gave you AND set the same <strong>nonce</strong> — the status under each on-chain chain reads ✓ when both match a pending approval (0 = they differ, and you’d start a separate tx). The first signer can queue several on-chain txs at sequential nonces; the Safe runs them lowest-nonce-first, and this modal executes the one whose nonce is current (click again to run the next).';
+      coNote.style.marginTop = '6px';
+      wrap.appendChild(coNote);
     }
+    var sigBanner = el('div', 'create-banner');
+    sigBanner.textContent = 'It’s a multisig — you sign/approve once per chain. If a chain needs more signers, switch wallets and click again; on-chain chains execute automatically once the threshold is met.';
+    wrap.appendChild(sigBanner);
     var listEl = el('div', 'safe-propose-list'); wrap.appendChild(listEl);
     var status = el('div', 'modal-status'); wrap.appendChild(status);
     var foot = el('div', 'modal-foot');
@@ -5592,6 +5607,8 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var btn = el('button', 'modal-submit'); btn.textContent = 'Sign & queue';
     foot.appendChild(cancel); foot.appendChild(btn); wrap.appendChild(foot);
     var modal = openModal(opts.title || 'Queue on Safe', wrap);
+    // Replace the input modal rather than stacking a second one over it — the review reads as the "next page".
+    if (opts.replaces && opts.replaces.close) { try { opts.replaces.close(); } catch (_) {} }
     var done = false;
     function finish(res) { if (done) return; done = true; modal.close(); resolve(res); }
 
@@ -5601,154 +5618,172 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       var block = el('div', 'safe-propose-chain');
       var head = el('div', 'safe-propose-head'); head.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = ' ' + c.name; head.appendChild(nm); block.appendChild(head);
       block.appendChild(renderTxReview({ chain: c.name, contract: resolveContractName(call.to, c.id) || call.to, address: call.to, calldata: call.data, value: '0' }));
-      var nrow = el('div', 'safe-propose-nonce');
-      var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
-      var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.disabled = true; nInput.placeholder = '…'; nrow.appendChild(nInput);
-      var hint = el('span', 'safe-propose-hint'); hint.textContent = ' checking Safe…'; nrow.appendChild(hint);
-      block.appendChild(nrow);
+      var st = el('div', 'safe-propose-hint'); st.style.marginTop = '6px'; st.textContent = 'checking Safe…'; block.appendChild(st);
       listEl.appendChild(block);
-      var rec = { cid: c.id, chain: c.name, to: call.to, data: call.data, deployed: false, nInput: nInput };
+      var rec = { cid: c.id, chain: c.name, to: call.to, data: call.data, deployed: false, onChain: false, st: st, block: block };
       rows.push(rec);
 
       fetchSafeInfo(safe, c.id).then(function (info) {
-        var isSigner = info && info.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); });
         if (!info) {
-          block.classList.add('safe-propose-skip');
-          hint.innerHTML = '';
-          var w = el('span'); w.textContent = ' Safe not deployed on ' + c.name + ' — '; hint.appendChild(w);
-          var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'add it (same address) in the Safe app ↗'; hint.appendChild(a);
-          var w2 = el('span'); w2.textContent = ', then reopen. Skipped for now.'; hint.appendChild(w2);
-          return;
+          block.classList.add('safe-propose-skip'); st.innerHTML = '';
+          st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — '));
+          var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'add it (same address) in the Safe app ↗'; st.appendChild(a);
+          st.appendChild(document.createTextNode('. Skipped.')); return;
         }
-        if (!isSigner) { block.classList.add('safe-propose-skip'); hint.textContent = ' You’re not a signer of this Safe — skipped.'; return; }
-        // No hosted Safe service on this chain (e.g. Arbitrum/OP Sepolia) → can't queue off-chain. Offer the
-        // on-chain approve + execute panel instead; exclude it from the service "Sign & queue" loop below.
-        if (!hasSafeService(c.id)) {
-          rec.deployed = true; rec.onChain = true; nrow.style.display = 'none';
-          var ocWrap = el('div', 'safe-propose-onchain'); ocWrap.style.marginTop = '6px';
-          var ocNote = el('div', 'safe-propose-hint'); ocNote.textContent = 'No Safe service on ' + c.name + ' — approve + execute on-chain:'; ocWrap.appendChild(ocNote);
-          var ocBtn = el('a', 'operator-cta'); ocBtn.href = '#'; ocBtn.textContent = 'Operate on-chain';
-          ocBtn.addEventListener('click', function (e) { e.preventDefault(); openOnChainSafeModal(c.id, safe, { to: call.to, data: call.data, value: 0 }, { signer: signer, title: opts.title, chainName: c.name }); });
-          ocWrap.appendChild(ocBtn); block.appendChild(ocWrap);
-          return;
+        rec.deployed = true; rec.threshold = info.threshold; rec.owners = info.owners;
+        if (hasSafeService(c.id)) {
+          st.textContent = 'Safe service · ' + info.threshold + '-of-' + info.owners.length + ' multisig.';
+          return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function () { return []; })]).then(function (rr) {
+            var next = rr[0] != null ? rr[0] : 0;
+            var queuedNonces = (rr[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
+            var def = queuedNonces.length ? Math.max(next, queuedNonces[queuedNonces.length - 1] + 1) : next;
+            var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
+            var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
+            var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.value = String(def); nrow.appendChild(nInput);
+            var nhint = el('span', 'safe-propose-hint'); nhint.textContent = queuedNonces.length ? (' next ' + def + ' · queued #' + queuedNonces.join(', #') + ' — reuse one to replace it') : ' next nonce'; nrow.appendChild(nhint);
+            rec.block.appendChild(nrow); rec.nInput = nInput;
+          });
         }
-        rec.deployed = true; nInput.disabled = false;
-        return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function () { return []; })]).then(function (r) {
-          var next = r[0] || 0;
-          var queued = (r[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
-          var def = queued.length ? Math.max(next, queued[queued.length - 1] + 1) : next;
-          nInput.value = String(def);
-          hint.textContent = queued.length ? (' next: ' + def + ' | queued: #' + queued.join(', #') + ' (reuse one to replace it)') : (' next nonce: ' + def);
-        });
-      }).catch(function () { block.classList.add('safe-propose-skip'); hint.textContent = ' Could not read the Safe here — skipped.'; });
+        rec.onChain = true;
+        return refreshOnChainStatus(rec);
+      }).catch(function () { block.classList.add('safe-propose-skip'); rec.deployed = false; st.textContent = 'Could not read the Safe here — skipped.'; });
     });
 
+    // (Re-)read an on-chain chain's approvals AT THE CHOSEN NONCE and paint its status. On first call it renders an
+    // editable nonce input defaulting to the next sequential slot (current Safe nonce, bumped by _onchainNonceHint as
+    // this signer queues more txs) so the first signer can queue several on-chain txs without colliding at one nonce.
+    // The Safe executes in strict nonce order, so the hash is computed at the CHOSEN nonce; the submit loop only
+    // executes the tx whose chosen nonce == the Safe's current nonce.
+    function refreshOnChainStatus(rec) {
+      return safeOnChainContext(rec.cid, safe).then(function (ctx) {
+        rec.ctx = ctx;
+        // Key the sequential-nonce hint by the CONNECTED SIGNER, not just safe:chain. The hint bumps as this signer
+        // queues txs (so their next tx defaults to N+1); keying it per-signer means a second owner co-signing in the
+        // SAME browser session starts with an empty hint → defaults to the current nonce (the pending tx to match),
+        // instead of inheriting the first signer's queue advancement and landing on a non-matching nonce.
+        var key = safe.toLowerCase() + ':' + rec.cid + ':' + (((getAccount && getAccount()) || '') + '').toLowerCase();
+        if (!rec.nInput) {
+          var def = Math.max(Number(ctx.nonce), _onchainNonceHint[key] || 0);
+          var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
+          var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
+          var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = String(ctx.nonce); nInput.value = String(def); nrow.appendChild(nInput);
+          var nHint = el('span', 'safe-propose-hint'); nrow.appendChild(nHint); rec.nHint = nHint;
+          rec.block.appendChild(nrow); rec.nInput = nInput;
+          nInput.addEventListener('change', function () { refreshOnChainStatus(rec); });
+        }
+        var chosen = Number(rec.nInput.value); rec.chosenNonce = chosen;
+        var ahead = chosen - Number(ctx.nonce);
+        rec.nHint.textContent = ahead < 0 ? ' below current nonce ' + ctx.nonce + ' — already used; pick ≥ ' + ctx.nonce
+          : ahead === 0 ? ' current — this one executes next'
+          : ahead === 1 ? ' +1 — queued behind nonce ' + ctx.nonce
+          : ' +' + ahead + ' — queued behind nonces ' + ctx.nonce + '-' + (chosen - 1);
+        rec.hash = safeTxHashForCall(rec.cid, safe, { to: rec.to, data: rec.data, value: 0, nonce: chosen });
+        return safeApprovalsOf(rec.cid, safe, rec.hash, ctx.owners).then(function (ap) {
+          rec.approved = ap;
+          // approvals read for THIS exact tx at the CHOSEN nonce → a non-zero count is the "your values (and nonce)
+          // match a pending approval" signal for a co-signer.
+          var note = ap.length >= ctx.threshold
+            ? (ahead === 0 ? ' — ✓ ready to execute' : ' — ✓ fully approved; executes once nonce ' + ctx.nonce + '-' + (chosen - 1) + ' clear')
+            : ap.length > 0
+              ? ' — ✓ matches a tx approved by ' + ap.length + ' signer' + (ap.length > 1 ? 's' : '')
+              : ' — none yet at nonce ' + chosen + '. Co-signing? match the first signer’s values AND nonce, or this starts a separate tx';
+          rec.st.textContent = 'No Safe service · nonce ' + chosen + ' · ' + ap.length + ' / ' + ctx.threshold + ' approvals' + note;
+        });
+      });
+    }
+
+    function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
     cancel.addEventListener('click', function () { finish({ queued: 0, skipped: [], cancelled: true }); });
+    // One CTA does the connected signer's part on EVERY chain: service chains get sign+queue; on-chain chains get
+    // approveHash, then execTransaction automatically once the threshold is met. Chains that still need more
+    // signers stay pending — switch wallets and click again (already-done chains are skipped). All in one flow.
     btn.addEventListener('click', function () {
-      var live = rows.filter(function (r) { return r.deployed && !r.onChain; }); // service chains queued here
-      var skipped = rows.filter(function (r) { return !r.deployed && !r.onChain; }).map(function (r) { return r.chain; });
-      if (!live.length) {
-        var anyOnChain = rows.some(function (r) { return r.onChain; });
-        status.textContent = anyOnChain
-          ? 'These chains have no hosted Safe service — use “Operate on-chain” on each above to approve + execute.'
-          : 'The owner Safe isn’t deployed on any selected chain yet (or you’re not a signer). Add it on those chains in the Safe app first.';
-        return;
-      }
+      var acct = (getAccount && getAccount()) || null;
+      var live = rows.filter(function (r) { return r.deployed; });
+      var skipped = rows.filter(function (r) { return !r.deployed; }).map(function (r) { return r.chain; });
+      if (!live.length) { setStatus('The Safe isn’t deployed (or readable) on any selected chain. Add it on those chains in the Safe app first.', 'error'); return; }
+      if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
       btn.disabled = true; cancel.disabled = true;
       (async function () {
-        var queued = 0;
+        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, notOwner = 0, pendingExec = 0, staleNonce = 0;
         try {
           for (var i = 0; i < live.length; i++) {
             var r = live[i];
-            status.className = 'modal-status pending';
-            status.textContent = 'Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…';
-            var nonce = Number(r.nInput.value);
-            if (!(nonce >= 0)) throw new Error('Enter a valid nonce for ' + r.chain);
-            await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: signer, nonce: nonce });
-            queued++;
+            if (r.done) continue; // already queued/executed in a prior run (re-click after a wallet switch)
+            var isOwner = (r.owners || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
+            if (!isOwner) { r.st.textContent = 'Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe — skipped.'; notOwner++; continue; }
+            if (!r.onChain) {
+              var nonce = r.nInput ? Number(r.nInput.value) : 0;
+              if (!(nonce >= 0)) throw new Error('Enter a valid nonce for ' + r.chain);
+              setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
+              await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce });
+              r.done = true; r.st.textContent = 'Queued ✓ — co-sign + execute it in the Operator tab’s “Pending Multisig Transactions”.'; queued++;
+            } else {
+              await refreshOnChainStatus(r); // re-read at the chosen nonce so a co-signer's earlier approval counts
+              var chosen = r.chosenNonce, current = Number(r.ctx.nonce);
+              if (chosen < current) { r.st.textContent = 'Nonce ' + chosen + ' already used on ' + r.chain + ' — set it to ≥ ' + current + '.'; staleNonce++; continue; }
+              var iApproved = (r.approved || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
+              if (!iApproved) {
+                setStatus('Approving on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
+                await approveSafeHashOnChain(r.cid, safe, r.hash);
+                r.approved = (r.approved || []).concat([acct]); approvedThisRun++;
+                _onchainNonceHint[safe.toLowerCase() + ':' + r.cid + ':' + acct.toLowerCase()] = chosen + 1; _saveOnchainNonceHint(); // this signer's next on-chain tx here defaults to the next nonce
+              }
+              if ((r.approved || []).length >= r.ctx.threshold) {
+                if (chosen === current) {
+                  setStatus('Executing on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
+                  await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o }; }) });
+                  r.done = true; r.st.textContent = 'Executed ✓ (nonce ' + chosen + ')'; executed++;
+                } else {
+                  // Fully approved but not next in line — the Safe executes in strict nonce order, so lower nonces
+                  // run first. Left un-done so a later click (once the nonce is current) picks it up and executes it.
+                  r.st.textContent = 'Fully approved ✓ at nonce ' + chosen + ' — executes after nonce ' + current + '-' + (chosen - 1) + ' run. Click again once they clear.'; pendingExec++;
+                }
+              } else {
+                r.st.textContent = 'Approved ' + r.approved.length + ' / ' + r.ctx.threshold + ' at nonce ' + chosen + ' — needs ' + (r.ctx.threshold - r.approved.length) + ' more signer(s). Switch wallets and click again.'; pending++;
+              }
+            }
           }
           document.dispatchEvent(new CustomEvent('jb:safe-queued'));
-          status.className = 'modal-status success';
-          status.textContent = 'Queued on ' + queued + ' chain' + (queued > 1 ? 's' : '') + (skipped.length ? ' | skipped ' + skipped.join(', ') : '') + '.';
-          setTimeout(function () { finish({ queued: queued, skipped: skipped, cancelled: false }); }, 1600);
+          document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+          btn.disabled = false; cancel.disabled = false;
+          var summary = [];
+          if (executed) summary.push('executed on ' + executed);
+          if (queued) summary.push('queued on ' + queued);
+          if (approvedThisRun) summary.push('approved on ' + approvedThisRun);
+          if (pendingExec) summary.push(pendingExec + ' awaiting nonce order');
+          var didSomething = (queued + executed + approvedThisRun) > 0;
+          var base = (summary.join(' · ') || 'No new actions') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.';
+          if (!didSomething && !pending && !pendingExec && !staleNonce && notOwner) {
+            // Nothing happened because the connected wallet signs for none of these Safes — say so loudly.
+            setStatus('Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe on ' + notOwner + ' selected chain' + (notOwner > 1 ? 's' : '') + '. Switch to an owner’s wallet and try again.', 'error');
+          } else if (staleNonce) {
+            // Chosen nonce is below the Safe's current nonce (already used) — actionable, so keep the modal open
+            // with an error rather than the green-success + auto-close path.
+            setStatus(base + ' ' + staleNonce + ' chain' + (staleNonce > 1 ? 's have' : ' has') + ' a stale nonce — raise it to the current value and click again.', 'error');
+          } else if (!pending && !pendingExec) {
+            setStatus(base, 'success');
+            setTimeout(function () { finish({ queued: queued, executed: executed, skipped: skipped, cancelled: false }); }, 2200);
+          } else if (pending) {
+            // Chains still short of threshold need a DIFFERENT signer — make clear the connected wallet is done.
+            setStatus(base + (didSomething
+              ? ' Your part is done — ' + pending + ' chain' + (pending > 1 ? 's' : '') + ' still need another signer. Switch to a different owner’s wallet, then click below.'
+              : ' You’ve already approved every chain you can with this wallet. Switch to a different owner’s wallet to add their approval — ' + pending + ' remaining.'), didSomething ? 'success' : '');
+            btn.textContent = 'Approve as another signer';
+          } else {
+            // pendingExec only: fully approved, but the Safe runs txs in strict nonce order — lower nonces execute
+            // first. Keep the modal open so a later click executes the next once earlier nonces have cleared.
+            setStatus(base + ' Fully approved — the Safe runs txs in nonce order; click again to execute the next once earlier nonces clear.', 'success');
+            btn.textContent = 'Execute next in order';
+          }
         } catch (e) {
-          btn.disabled = false; cancel.disabled = false; status.className = 'modal-status';
-          status.textContent = (e && (e.shortMessage || e.message)) || String(e);
+          if (typeof console !== 'undefined') console.error('[safe-apply]', e);
+          btn.disabled = false; cancel.disabled = false;
+          setStatus((e && (e.shortMessage || e.message)) || String(e), 'error');
         }
       })();
     });
   });
-}
-
-// On-chain Safe coordination for a single chain with NO Safe Transaction Service (e.g. Arbitrum/OP Sepolia).
-// There's no off-chain queue, so each signer approves the SafeTx hash on-chain (approveHash) and anyone executes
-// once the threshold is met (execTransaction with pre-validated approved-hash signatures). Switch wallets to
-// approve from each signer; the panel re-reads on every wallet change. `call` = { to, data, value }.
-function openOnChainSafeModal(chainId, safe, call, opts) {
-  opts = opts || {};
-  var chainName = opts.chainName || chainNameOf(chainId);
-  var content = el('div', 'modal-body');
-  var intro = el('div', 'modal-balance');
-  intro.textContent = 'No Safe transaction service on ' + chainName + ' — coordinate on-chain: each signer approves the transaction hash, then anyone executes once the Safe’s threshold is met.';
-  content.appendChild(intro);
-  var bodyEl = el('div'); bodyEl.appendChild(skel('100%', '70px')); content.appendChild(bodyEl);
-  var status = el('div', 'modal-status'); content.appendChild(status);
-  var modal = openModal(opts.title ? (opts.title + ' — on-chain') : 'Operate on-chain', content);
-  function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
-
-  var state = { ctx: null, hash: null, approved: [], busy: false };
-  function refresh() {
-    return safeOnChainContext(chainId, safe).then(function (ctx) {
-      state.ctx = ctx;
-      state.hash = safeTxHashForCall(chainId, safe, { to: call.to, data: call.data, value: call.value || 0, nonce: ctx.nonce });
-      return safeApprovalsOf(chainId, safe, state.hash, ctx.owners).then(function (ap) { state.approved = ap; render(); });
-    }).catch(function (e) { setStatus(errMessage(e, 'Could not read the Safe on ' + chainName), 'error'); });
-  }
-  function render() {
-    var ctx = state.ctx; if (!ctx) return;
-    bodyEl.innerHTML = '';
-    bodyEl.appendChild(renderTxReview({ chain: chainName, contract: resolveContractName(call.to, chainId) || call.to, address: call.to, calldata: call.data, value: '0' }));
-    var meta = el('div', 'operator-edit-cur'); meta.style.marginTop = '8px';
-    meta.textContent = 'Safe nonce ' + ctx.nonce + ' · ' + state.approved.length + ' / ' + ctx.threshold + ' approvals';
-    bodyEl.appendChild(meta);
-    var list = el('div', 'perm-list'); list.style.marginTop = '8px';
-    ctx.owners.forEach(function (o) {
-      var ok = state.approved.some(function (a) { return a.toLowerCase() === o.toLowerCase(); });
-      var row = el('div', 'powers-head');
-      row.appendChild(addressNode(o, chainId));
-      var st = el('span', 'powers-state ' + (ok ? 'on' : 'off')); st.textContent = ok ? 'approved' : 'pending'; row.appendChild(st);
-      list.appendChild(row);
-    });
-    bodyEl.appendChild(list);
-    var acct = (getAccount && getAccount()) || null;
-    var isOwner = !!(acct && ctx.owners.some(function (o) { return o.toLowerCase() === acct.toLowerCase(); }));
-    var mine = !!(acct && state.approved.some(function (a) { return a.toLowerCase() === acct.toLowerCase(); }));
-    var ready = state.approved.length >= ctx.threshold;
-    var actions = el('div', 'operator-edit-actions'); actions.style.marginTop = '12px';
-    var approveBtn = el('a', 'operator-cta'); approveBtn.href = '#';
-    approveBtn.textContent = !acct ? 'Connect a signer' : (!isOwner ? 'Connected wallet isn’t a signer' : (mine ? 'You approved ✓' : 'Approve on-chain'));
-    if (acct && (!isOwner || mine)) approveBtn.classList.add('cta-disabled');
-    approveBtn.addEventListener('click', function (e) {
-      e.preventDefault(); if (state.busy) return;
-      if (!acct) { connect().then(refresh).catch(function () {}); return; }
-      if (!isOwner || mine) return;
-      state.busy = true; setStatus('Approving on ' + chainName + ' — sign in your wallet…', 'pending');
-      approveSafeHashOnChain(chainId, safe, state.hash).then(function () { state.busy = false; setStatus('Approved. Switch wallets to approve from another signer, or execute once the threshold is met.', 'success'); return refresh(); }).catch(function (er) { state.busy = false; setStatus(errMessage(er, 'Approve failed'), 'error'); });
-    });
-    actions.appendChild(approveBtn);
-    var execBtn = el('a', 'operator-cta'); execBtn.href = '#'; execBtn.textContent = ready ? 'Execute' : ('Execute (' + state.approved.length + '/' + ctx.threshold + ')');
-    if (!ready) execBtn.classList.add('cta-disabled');
-    execBtn.addEventListener('click', function (e) {
-      e.preventDefault(); if (state.busy || !ready) return;
-      state.busy = true; setStatus('Executing on ' + chainName + ' — sign in your wallet…', 'pending');
-      var tx = { to: call.to, value: 0, data: call.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: state.approved.map(function (o) { return { owner: o }; }) };
-      executeSafeTx(chainId, safe, tx).then(function () { state.busy = false; setStatus('Executed on ' + chainName + ' ✓', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1800); }).catch(function (er) { state.busy = false; setStatus(errMessage(er, 'Execute failed'), 'error'); });
-    });
-    actions.appendChild(execBtn);
-    bodyEl.appendChild(actions);
-  }
-  refresh();
-  if (onWalletChange) onWalletChange(function () { if (state.ctx) render(); });
 }
 
 // A label-over-value cell for the onchain info grid.
@@ -7012,7 +7047,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       // Operator/owner txs there are coordinated on-chain (approve + execute via the action panels), not here.
       if (!hasSafeService(c.id)) {
         list.innerHTML = '';
-        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — txs are coordinated on-chain (use the action’s “Operate on-chain” panel).';
+        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — no off-chain queue here. A second signer completes a pending tx by re-running the same operator action (e.g. Buyback & swap router → Set buyback hook): it reads the on-chain approvals and lets them approve + execute.';
         list.appendChild(nos); return Promise.resolve();
       }
       return listPendingSafeTxs(c.id, safe).then(function (txs) {
@@ -7439,6 +7474,17 @@ function renderPowersCard(project) {
 // Operator/owner buyback + swap-router setup. Three per-project registry writes — set the buyback hook, set the
 // router terminal, initialize the Uniswap buyback pool — each queued on the chains you pick and bundled into one
 // relayr payment (or proposed to the Safe) via openPowerModal, exactly like the other operator actions.
+// Read a hook/terminal-style scalar on every AMM-available chain the project spans → [{name, value|null}].
+// Shared by the operator form (✓/⚠ consistency note) and the summary card (combined "Current:" line).
+function crossChainValues(project, field, chainAvailable) {
+  if (!field || !field.crossChainRead) return Promise.resolve([]);
+  var chains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !chainAvailable || chainAvailable(c.id); });
+  return Promise.all(chains.map(function (c) {
+    return field.crossChainRead(project, c.id).then(function (v) { return { name: c.name || chainNameOf(c.id), value: (v && v !== ZERO_ADDRESS) ? v : null }; }).catch(function () { return { name: c.name || chainNameOf(c.id), value: null }; });
+  }));
+}
+function shortAddr6(a) { return a.slice(0, 6) + '…' + a.slice(-4); }
+
 export function renderBuybackRouterCard(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Buyback & swap router'; card.appendChild(title);
@@ -7451,6 +7497,31 @@ export function renderBuybackRouterCard(project) {
     var lab = el('span', 'powers-label'); lab.textContent = action.title; head.appendChild(lab);
     row.appendChild(head);
     var desc = el('div', 'powers-desc'); desc.textContent = action.note; row.appendChild(desc);
+    // Current value across chains — combined when uniform, per-chain when it differs (like the ruleset display).
+    var f = (action.fields && action.fields[0]) || {};
+    if (f.crossChainRead) {
+      var cur = el('div', 'powers-desc'); cur.style.opacity = '0.8'; cur.style.marginTop = '2px'; cur.textContent = 'Current: reading across chains…'; row.appendChild(cur);
+      crossChainValues(project, f, action.chainAvailable).then(function (rows) {
+        var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
+        var setCount = rows.filter(function (r) { return r.value; }).length;
+        if (distinct.length === 0) cur.textContent = 'Current: not set on any chain';
+        else if (distinct.length === 1) cur.textContent = 'Current: ' + shortAddr6(distinct[0]) + (setCount === rows.length ? ' (all chains)' : ' (' + setCount + '/' + rows.length + ' chains — rest unset)');
+        else cur.textContent = 'Current: ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' · ');
+      });
+    } else if (action.poolStateRead) {
+      // Pool has no scalar getter; poolStateRead returns a per-chain summary string (initialized pairs + TWAP).
+      var pcur = el('div', 'powers-desc'); pcur.style.opacity = '0.8'; pcur.style.marginTop = '2px'; pcur.textContent = 'Current pool: reading across chains…'; row.appendChild(pcur);
+      var pchains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !action.chainAvailable || action.chainAvailable(c.id); });
+      Promise.all(pchains.map(function (c) {
+        return action.poolStateRead(project, c.id).then(function (s) { return { name: c.name || chainNameOf(c.id), value: s }; }).catch(function () { return { name: c.name || chainNameOf(c.id), value: null }; });
+      })).then(function (rows) {
+        var distinctP = []; rows.forEach(function (r) { if (r.value && distinctP.indexOf(r.value) < 0) distinctP.push(r.value); });
+        var known = rows.filter(function (r) { return r.value; }).length;
+        if (!known) pcur.textContent = 'Current pool: unknown';
+        else if (distinctP.length === 1 && known === rows.length) pcur.textContent = 'Current pool: ' + distinctP[0] + ' (all chains)';
+        else pcur.textContent = 'Current pool: ' + rows.map(function (r) { return r.name + ' — ' + (r.value || 'unknown'); }).join(' · ');
+      });
+    }
     var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = action.title;
     act.addEventListener('click', function (e) { e.preventDefault(); openPowerModal(project, action); });
     row.appendChild(act);
@@ -7680,25 +7751,53 @@ var POWER_SET_TOKEN = {
   fields: [{ name: 'token', label: 'Token', kind: 'address', placeholder: '0x… ERC-20 (IJBToken)' }],
   buildArgs: function (v, cid, pid) { return [pid, v.token]; },
 };
+// The buyback hook + swap-router terminal are only configured on chains with a full Uniswap v4 AMM. On chains
+// without one (e.g. OP Sepolia — no PositionManager) the registry has no default/allowlisted hook and no allowlisted
+// router terminal, so setHookFor / setTerminalFor / initializePoolFor all revert at execute (HookNotAllowed /
+// TerminalNotAllowed). Gate those actions so the chain picker greys the chain out instead of handing a signer a tx
+// that reverts (and wastes a Safe approve+execute round-trip).
+function ammChainAvailable(cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; }
+
 export var POWER_SET_BUYBACK_HOOK = {
   title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
+  chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
   fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… buyback hook',
-    defaultRead: function (project) { return read(project.chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); } }],
+    defaultRead: function (project) { return read(project.chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); },
+    crossChainRead: function (project, chainId) { return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]); } }],
   buildArgs: function (v, cid, pid) { return [pid, v.hook]; },
 };
 export var POWER_SET_ROUTER_TERMINAL = {
   title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
+  chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Pre-filled with the project’s current terminal.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
-    defaultRead: function (project) { return read(project.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); } }],
+    defaultRead: function (project) { return read(project.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); },
+    crossChainRead: function (project, chainId) { return read(chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]); } }],
   buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
 };
 export var POWER_INIT_BUYBACK_POOL = {
-  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHook', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
-  note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
+  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
+  chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
+  // Per-chain current-pool summary for the card. No scalar getter for the PoolKey (internal), so we resolve the
+  // project's hook and read twapWindowOf for the native + USDC pairs — non-zero = a pool is initialized there.
+  poolStateRead: function (project, chainId) {
+    return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (hook) {
+      if (!hook || hook === ZERO_ADDRESS) return 'no hook set';
+      var probes = [{ label: 'native', token: ZERO_ADDRESS }];
+      var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ label: 'USDC', token: usdc });
+      return Promise.all(probes.map(function (p) {
+        return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [BigInt(project.id), p.token] })
+          .then(function (w) { return { label: p.label, twap: Number(w) }; }).catch(function () { return { label: p.label, twap: 0 }; });
+      })).then(function (rows) {
+        var init = rows.filter(function (r) { return r.twap > 0; });
+        return init.length ? init.map(function (r) { return r.label + ' pool (TWAP ' + r.twap + 's)'; }).join(', ') : 'not initialized';
+      });
+    }).catch(function () { return null; });
+  },
+  note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Routed through the buyback hook registry, which forwards to the project’s configured hook (your new hook once Set buyback hook executes — set the hook first). Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
   danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
   fields: [
     { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
@@ -7734,6 +7833,13 @@ function openPowerModal(project, action) {
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to ' + action.title.toLowerCase() + '.', project.chainId));
   if (action.note) { var note = el('div', 'operator-edit-across'); note.textContent = action.note; content.appendChild(note); }
+  // Multisig co-signer heads-up: matching the first signer's values exactly is what lets you join their pending
+  // tx on chains without a hosted Safe service (any difference = a separate tx). Shown for fields-bearing actions.
+  if (action.fields && action.fields.length) {
+    var coTip = el('div', 'operator-edit-across');
+    coTip.innerHTML = '<strong>Co-signing another signer’s transaction?</strong> Enter the exact values they gave you. On chains without a Safe service, the next step shows ✓ when your values match their pending approval.';
+    coTip.style.opacity = '0.85'; content.appendChild(coTip);
+  }
 
   var inputs = {}; // name → { get(): value-or-throw }
   action.fields.forEach(function (f) {
@@ -7754,6 +7860,21 @@ function openPowerModal(project, action) {
     if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') input.value = val; input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = f.placeholder || ''; }); })(inp); }
     content.appendChild(inp);
     if (f.help) { var h = el('div', 'operator-edit-cur'); h.textContent = f.help; content.appendChild(h); }
+    // Cross-chain consistency: read this value's CURRENT setting on every AMM-available chain the project spans and
+    // flag if it isn't uniform, so the operator knows the starting state differs before overwriting it.
+    if (f.crossChainRead) {
+      var cc = el('div', 'operator-edit-cur'); cc.style.marginTop = '4px'; cc.textContent = 'checking current value across chains…'; content.appendChild(cc);
+      crossChainValues(project, f, action.chainAvailable).then(function (rows) {
+        var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
+        var setCount = rows.filter(function (r) { return r.value; }).length;
+        if (distinct.length <= 1) {
+          cc.textContent = setCount ? ('currently same on all ' + setCount + ' chain' + (setCount > 1 ? 's' : '') + ' — ' + shortAddr6(distinct[0])) : 'not set on any chain yet';
+        } else {
+          cc.innerHTML = '⚠ <strong>differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' · ') + '. The value you set applies only to the chains you check below.';
+          cc.style.color = '#b23550';
+        }
+      });
+    }
     inputs[f.name] = { get: function () {
       var raw = (inp.value || '').trim();
       if (f.kind === 'address') {
@@ -7777,9 +7898,14 @@ function openPowerModal(project, action) {
   var chainSelected = {}; allChains.forEach(function (c, i) { chainSelected[c.id] = action.chainsDefault === 'all' ? true : (c.id === project.chainId); });
   var chainBox = el('div', 'splits-edit-chains');
   allChains.forEach(function (c) {
-    var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = chainSelected[c.id] !== false;
+    // Some actions can't run on every chain (e.g. initialize buyback pool needs a Uniswap v4 AMM — OP Sepolia
+    // has none). Gate the checkbox so the user can't select a chain where the tx would revert at execute time.
+    var avail = !action.chainAvailable || action.chainAvailable(c.id);
+    if (!avail) chainSelected[c.id] = false;
+    var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = avail && chainSelected[c.id] !== false; cb.disabled = !avail;
     cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; });
     r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
+    if (!avail) { var un = el('span', 'operator-edit-cur'); un.style.marginLeft = '6px'; un.textContent = action.unavailableNote || '(unavailable here)'; r2.appendChild(un); r2.style.opacity = '0.55'; }
     chainBox.appendChild(r2);
   });
   content.appendChild(chainBox);
@@ -7810,7 +7936,7 @@ function openPowerModal(project, action) {
         return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(values, cid, pid) }) };
       };
       var shim = Object.assign({}, project, { chains: selected });
-      var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas }, setStatus)
+      var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal }, setStatus)
         .catch(function (err) { setStatus(errMessage(err, 'Failed'), 'error'); return null; });
       busy = false;
       if (!res) return;

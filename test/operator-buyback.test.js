@@ -28,8 +28,11 @@ describe('operator buyback/router descriptors', () => {
     expect(POWER_SET_ROUTER_TERMINAL.buildArgs({ terminal: '0x2222222222222222222222222222222222222222' }, 1, 5n))
       .toEqual([5n, '0x2222222222222222222222222222222222222222']);
   });
-  it('initialize pool → JBBuybackHook.initializePoolFor with numeric pool params, native pair = zero address', () => {
-    expect(POWER_INIT_BUYBACK_POOL.contract).toBe('JBBuybackHook');
+  it('initialize pool → JBBuybackHookRegistry.initializePoolFor (forwards to the project hook) with numeric pool params', () => {
+    // Target the REGISTRY, not the hook: the registry's initializePoolFor resolves _resolvedHookOf(projectId) and
+    // forwards, so the pool initializes on whatever hook the project is configured to use (the new hook once
+    // setHookFor executes), and the hook's own initializePoolFor (callable only via the registry) isn't called direct.
+    expect(POWER_INIT_BUYBACK_POOL.contract).toBe('JBBuybackHookRegistry');
     expect(POWER_INIT_BUYBACK_POOL.fn).toBe('initializePoolFor');
     // uint fields arrive as decimal strings from the modal parser; buildArgs casts to BigInt.
     const args = POWER_INIT_BUYBACK_POOL.buildArgs(
