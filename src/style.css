@@ -344,6 +344,70 @@ a:hover { color: var(--c-teal); }
   font-size: 10px;
 }
 
+.contract-address {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--muted-2);
+  cursor: copy;
+  font: inherit;
+  font-size: 10px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 0;
+  text-align: left;
+}
+
+.contract-address::before {
+  content: '[';
+}
+
+.contract-address::after {
+  content: ']';
+}
+
+.contract-address:hover,
+.contract-address:focus-visible,
+.contract-address.copied {
+  color: var(--c-pink);
+  text-decoration: underline;
+}
+
+.contract-addresses {
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.contract-addresses > summary {
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.contract-addresses > summary::-webkit-details-marker {
+  display: none;
+}
+
+.contract-addresses > summary:hover {
+  color: var(--c-pink);
+  text-decoration: underline;
+}
+
+.contract-address-list {
+  display: grid;
+  gap: 3px 10px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  padding: 5px 0 3px 18px;
+}
+
+.contract-address-row {
+  display: contents;
+}
+
+.contract-address-chain {
+  color: var(--text);
+}
+
 .contract-notice {
   color: var(--text);
   font-size: 12px;
@@ -2223,6 +2287,30 @@ input[type="checkbox"].field {
   display: inline-block;
 }
 .discover-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.discover-search {
+  display: block;
+  flex: 1;
+  max-width: 440px;
+}
+.discover-search input {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--c-orange-light);
+  background: var(--card-bg);
+  color: var(--text);
+  font: inherit;
+  padding: 8px 11px;
+}
+.discover-search input:focus {
+  outline: 1px solid var(--c-pink);
+  border-color: var(--c-pink);
+}
+.discover-search-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 10px 0;
+}
 
 .discover-grid {
   display: flex;
@@ -2534,6 +2622,12 @@ input[type="checkbox"].field {
 }
 
 @media (max-width: 600px) {
+  .discover-top { flex-wrap: wrap; }
+  .discover-search {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+  }
   .project-contract-warning-row {
     flex-direction: column;
     gap: 3px;
@@ -4886,6 +4980,14 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .chart-tip-date { font-weight: bold; margin-bottom: 2px; }
 .chart-tip-row { display: flex; align-items: center; gap: 5px; }
 .chart-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.chart-tip-reason {
+  width: 240px;
+  max-width: 68vw;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  white-space: normal;
+}
 
 /* Token issuance card (revnet Stages tab) */
 .issuance-rate { font-size: 20px; font-weight: bold; margin: 6px 0 2px; }

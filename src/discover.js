@@ -5763,8 +5763,10 @@ export function applyDiscoverRoute(route) {
 
 function renderGrid() {
   _gridWrapper = el('div', 'discover-grid-wrapper');
+  var searchQuery = '';
+  var pendingCards = 0;
 
-  // Top row: subtle network text-toggle on the left; Create button top-right.
+  // Top row: network toggle, grouped project search, and Create.
   var topRow = el('div', 'discover-top');
   // Network pivot: mainnet ⇄ testnet. Switches the queried chains + the indexer host.
   var netSel = el('select', 'discover-net-select');
@@ -5778,6 +5780,13 @@ function renderGrid() {
   // Size in ch so the width tracks the monospace font itself — a measured pixel width races font loading
   // and drifts under iframe zoom (the Safe app clipped the trailing glyph). 15px covers the caret padding.
   netSel.style.width = 'calc(' + (netSel.options[netSel.selectedIndex] || { text: 'Mainnets' }).text.length + 'ch + 15px)';
+  var searchWrap = el('label', 'discover-search');
+  var searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.placeholder = 'Search name, ticker, or project ID';
+  searchInput.setAttribute('aria-label', 'Search projects');
+  searchWrap.appendChild(searchInput);
+  topRow.appendChild(searchWrap);
   var rightCtrls = el('div', 'discover-top-ctrls');
   var createBtn = el('button', 'tab-create'); createBtn.textContent = 'New project';
   createBtn.title = 'Create — in tuning before launch';
@@ -5788,6 +5797,10 @@ function renderGrid() {
 
   var grid = el('div', 'discover-grid');
   _gridWrapper.appendChild(grid);
+  var searchEmpty = el('div', 'discover-search-empty');
+  searchEmpty.textContent = 'No matching projects.';
+  searchEmpty.style.display = 'none';
+  _gridWrapper.appendChild(searchEmpty);
   var gridFoot = discoverPromptFoot('Discover explorer (project grid)'); // [copy build prompt] — bottom-right (default)
   _gridWrapper.appendChild(gridFoot);
   _container.appendChild(_gridWrapper);
@@ -5796,14 +5809,43 @@ function renderGrid() {
   status.textContent = 'Discovering projects across chains…';
   grid.appendChild(status);
 
+  function normalizedSearchText(value) {
+    return String(value || '').trim().toLowerCase().replace(/^[$#]/, '');
+  }
+  function applySearch() {
+    searchQuery = normalizedSearchText(searchInput.value);
+    var cards = grid.querySelectorAll('.discover-card');
+    var visible = 0;
+    for (var i = 0; i < cards.length; i++) {
+      var numeric = /^\d+$/.test(searchQuery);
+      var ids = String(cards[i].dataset.projectIds || '').split(',');
+      var matches = !searchQuery || (numeric
+        ? ids.indexOf(searchQuery) !== -1
+        : normalizedSearchText(cards[i].dataset.search).indexOf(searchQuery) !== -1);
+      cards[i].style.display = matches ? '' : 'none';
+      if (matches && !cards[i].classList.contains('discover-card--loading')) visible++;
+    }
+    searchEmpty.style.display = searchQuery && pendingCards === 0 && visible === 0 ? '' : 'none';
+  }
+  searchInput.addEventListener('input', applySearch);
+
   ensureGroups().then(function (groups) {
     grid.innerHTML = '';
     if (!groups.length) { grid.textContent = 'No projects found.'; return; }
+    pendingCards = groups.length;
     groups.forEach(function (g) {
       var card = renderSkeletonCard(g.id);
+      card.dataset.search = g.chains.map(function (chain) {
+        return 'id:' + chain.projectId + ' ' + chain.projectId;
+      }).join(' ');
+      card.dataset.projectIds = g.chains.map(function (chain) { return String(chain.projectId); }).join(',');
       grid.appendChild(card);
-      loadGroupCard(g, card, grid);
+      loadGroupCard(g, card, grid, function () {
+        pendingCards--;
+        applySearch();
+      });
     });
+    applySearch();
   }).catch(function () {
     grid.innerHTML = '';
     var e = el('div', 'discover-card-desc');
@@ -5884,7 +5926,7 @@ function buildGroups() {
   });
 }
 
-function loadGroupCard(g, skeleton, grid) {
+function loadGroupCard(g, skeleton, grid, onSettled) {
   var key = g.primary.id + '-' + g.primary.projectId;
   var promise = _cache[key] ? Promise.resolve(_cache[key]) : fetchProject(g.primary.projectId, g.primary.id).then(function (data) {
     _cache[key] = data;
@@ -5895,6 +5937,7 @@ function loadGroupCard(g, skeleton, grid) {
     project.idByChain = Object.assign({}, g.idByChain);
     if (skeleton.parentNode !== grid) return;
     grid.replaceChild(renderProjectCard(project), skeleton);
+    if (onSettled) onSettled();
   }).catch(function () {
     if (skeleton.parentNode === grid) {
       skeleton.classList.remove('discover-card--loading');
@@ -5902,6 +5945,7 @@ function loadGroupCard(g, skeleton, grid) {
       var err = el('div', 'discover-card-desc'); err.textContent = 'Could not load this project from chain.';
       skeleton.appendChild(err);
     }
+    if (onSettled) onSettled();
   });
 }
 
@@ -5920,6 +5964,17 @@ function renderSkeletonCard() {
 
 function renderProjectCard(project) {
   var card = el('div', 'discover-card');
+  card.dataset.search = [
+    project.name,
+    project.tokenSymbol,
+    project.metaSymbol,
+  ].concat((project.chains || []).reduce(function (values, chain) {
+    values.push('id:' + chain.projectId, String(chain.projectId));
+    return values;
+  }, [])).filter(Boolean).join(' ').toLowerCase();
+  card.dataset.projectIds = (project.chains || []).map(function (chain) {
+    return String(chain.projectId);
+  }).join(',');
   card.dataset.metadataSource = project.projectMetadataSource || 'none';
   card.style.cursor = 'pointer';
   card.addEventListener('click', function () { showProjectDetail(project); });
@@ -9698,7 +9753,7 @@ function rulesetRows(r, m, project) {
     ['CYCLE', 'Rule change deadline', (r.approvalHook && r.approvalHook !== ZERO_ADDRESS) ? truncAddr(r.approvalHook) : 'No deadline'],
     ['TOKEN', 'Total issuance rate', (Number(r.weight) === 0 ? '0' : formatAmount(r.weight, 18)) + ' / ' + baseUnit],
     ['TOKEN', 'Reserved rate', percentFromRuleset(m.reservedPercent)],
-    ['TOKEN', 'Issuance cut percent', (Number(r.weightCutPercent) / 1e7).toFixed(2) + '%'],
+    ['TOKEN', 'Issuance cut percent', formatCutPercent(r.weightCutPercent)],
     ['TOKEN', 'Cash out tax rate', percentFromRuleset(m.cashOutTaxRate)],
     ['TOKEN', 'Cash outs use total surplus', m.useTotalSurplusForCashOuts ? 'Enabled' : 'Disabled'],
     ['TOKEN', 'Base currency', baseUnit],
@@ -14135,9 +14190,14 @@ function renderTermsTable(project, stages) {
 }
 
 // Cut percent formatted compactly (no trailing zeros): 38.00 → "38%", 7.5 → "7.5%".
-function formatCutPercent(weightCutPercent) {
+export function formatCutPercent(weightCutPercent) {
   var v = Number(weightCutPercent) / WEIGHT_CUT_SCALE;
-  return v.toFixed(2).replace(/\.?0+$/, '') + '%';
+  if (!Number.isFinite(v) || v === 0) return '0%';
+  var magnitude = Math.abs(v);
+  var decimals = magnitude >= 0.01
+    ? 2
+    : Math.min(8, Math.max(2, Math.ceil(-Math.log10(magnitude)) + 3));
+  return v.toFixed(decimals).replace(/\.?0+$/, '') + '%';
 }
 
 // Total auto-issuance per stage (index-aligned to `stages`), summed across chains + beneficiaries.
@@ -14606,6 +14666,10 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
       if (floor) html += row('Cash out', floor, '#c43550');
       var minAt = seriesValueAt(ch.minHistory || [], t);
       if (minAt) html += row('Cash out min', minAt, 'rgba(196,53,80,0.55)');
+      var floorPoint = seriesPointAt(ch.cashoutHistory || [], t);
+      if (floorPoint && floorPoint.reason) {
+        html += '<div class="chart-tip-reason">' + floorPoint.reason + '</div>';
+      }
       wrap._tip.innerHTML = html;
       wrap._guide.style.display = ''; wrap._guide.style.left = x + 'px';
       wrap._tip.style.display = '';
@@ -14659,6 +14723,16 @@ function seriesValueAt(series, timestamp) {
     if (series[i].value > 0) value = series[i].value;
   }
   return value;
+}
+
+function seriesPointAt(series, timestamp) {
+  if (!series || !series.length) return null;
+  var point = null;
+  for (var i = 0; i < series.length; i++) {
+    if (series[i].timestamp > timestamp) break;
+    if (series[i].value > 0) point = series[i];
+  }
+  return point;
 }
 
 function formatCountdown(secs) {
@@ -15551,14 +15625,55 @@ async function fetchPriceFloorHistory(project, stages) {
   var out = [];
   var firstMoment = Number(moments[0].timestamp);
   if (projectStart && firstMoment > projectStart) out.push({ timestamp: projectStart, value: 0 });
-  moments.forEach(function (moment) {
+  var previous = null;
+  moments.slice().sort(function (a, b) { return Number(a.timestamp) - Number(b.timestamp); }).forEach(function (moment) {
     var timestamp = Number(moment.timestamp);
     var tax = cashOutTaxAt(timestamp, taxes, currentTax);
-    var value = calculateFloorPrice(toBigInt(moment.balance), toBigInt(moment.tokenSupply), tax, pairDecimals);
-    var min = calculateFloorMinPrice(toBigInt(moment.balance), toBigInt(moment.tokenSupply), tax, pairDecimals);
-    out.push({ timestamp: timestamp, value: value, min: min });
+    var balance = toBigInt(moment.balance);
+    var supply = toBigInt(moment.tokenSupply);
+    var value = calculateFloorPrice(balance, supply, tax, pairDecimals);
+    var min = calculateFloorMinPrice(balance, supply, tax, pairDecimals);
+    var observation = { balance: balance, tokenSupply: supply, cashOutTax: tax, price: value };
+    out.push({
+      timestamp: timestamp,
+      value: value,
+      min: min,
+      reason: explainCashOutChange(previous, observation),
+    });
+    previous = observation;
   });
   return out.sort(function (a, b) { return a.timestamp - b.timestamp; });
+}
+
+function explainCashOutChange(previous, current) {
+  if (!previous) return 'First indexed cash-out price observation.';
+  var causes = [];
+  var balanceRose = current.balance > previous.balance;
+  var balanceFell = current.balance < previous.balance;
+  var supplyRose = current.tokenSupply > previous.tokenSupply;
+  var supplyFell = current.tokenSupply < previous.tokenSupply;
+  if (balanceRose && supplyRose) causes.push('a payment added backing and issued tokens');
+  else if (balanceFell && supplyFell) causes.push('a cash out removed backing and burned tokens');
+  else {
+    if (balanceRose) causes.push('funds were added to the project');
+    if (balanceFell) causes.push('a payout reduced project backing');
+    if (supplyRose) causes.push('token supply increased');
+    if (supplyFell) causes.push('tokens were burned');
+  }
+  if (current.cashOutTax !== previous.cashOutTax) {
+    causes.push('the cash-out tax changed from ' + percentFromRuleset(previous.cashOutTax)
+      + ' to ' + percentFromRuleset(current.cashOutTax));
+  }
+  var direction = current.price > previous.price ? 'rose'
+    : current.price < previous.price ? 'fell' : 'was unchanged';
+  if (!causes.length) {
+    return 'Cash-out price ' + direction
+      + '; the indexed backing, supply, and tax inputs did not change.';
+  }
+  var joined = causes.length === 1
+    ? causes[0]
+    : causes.slice(0, -1).join(', ') + ' and ' + causes[causes.length - 1];
+  return 'Cash-out price ' + direction + ' because ' + joined + '.';
 }
 
 // Historical AMM spot prices + buy/sell volume. PoolAdded seeds the series at

@@ -1,7 +1,11 @@
 // Cash out floor math for the settlement price chart: the live quote (with the own-share bonus)
 // vs the dashed minimum it approaches — (1 − tax) × balance ÷ supply.
 import { describe, it, expect } from 'vitest';
-import { calculateFloorPrice, calculateFloorMinPrice } from '../src/discover.js';
+import {
+  calculateFloorPrice,
+  calculateFloorMinPrice,
+  formatCutPercent,
+} from '../src/discover.js';
 
 // Real project state (Base Sepolia #11 "BEN", 2026-07-13): backing pinned at the 0.0001 ETH/BEN
 // issuance rate, 40% cash out tax.
@@ -28,5 +32,11 @@ describe('cash out floor price', () => {
   });
   it('zero tax: quote equals the minimum (pure pro-rata)', () => {
     expect(calculateFloorPrice(BAL, SUP, 0, 18)).toBeCloseTo(calculateFloorMinPrice(BAL, SUP, 0, 18), 12);
+  });
+});
+
+describe('issuance cut formatting', () => {
+  it('does not round a non-zero daily cut to zero', () => {
+    expect(formatCutPercent(9_496)).toBe('0.0009496%');
   });
 });
