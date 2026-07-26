@@ -2715,14 +2715,11 @@ input[type="checkbox"].field {
   box-shadow: 0 6px 18px rgba(44, 32, 24, 0.12);
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-2px);
-  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
   pointer-events: none;
 }
 .usd-balance--has-pop:hover .usd-balance-pop {
   opacity: 1;
   visibility: visible;
-  transform: translateY(0);
 }
 .usd-balance-pop-row {
   display: flex;
