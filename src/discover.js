@@ -5425,14 +5425,23 @@ async function fetchOnchainProjectMetadata(id, chainId) {
   } catch (_) { return null; }
 }
 
-// Project display metadata is indexed-first. If Bendystraw has only a URI, fetch that URI directly; only when
-// the indexed row/URI is absent or unusable do we ask the controller for its current URI.
+// Project display metadata follows the controller's current URI first so recent
+// logo/name edits do not wait for Bendystraw to catch up. Indexed fields remain
+// useful gap-fillers and the fail-soft fallback when the live read is unavailable.
 function fetchPreferredProjectMetadata(id, chainId) {
   var key = DISCOVER_NETWORK + ':' + chainId + ':' + id;
   if (_preferredProjectMetadataCache[key]) return _preferredProjectMetadataCache[key];
   _preferredProjectMetadataCache[key] = (async function () {
     var row = await fetchBendystrawProjectRecord(id, chainId);
     var indexed = projectMetadataFromBendystraw(row);
+    var live = await fetchOnchainProjectMetadata(id, chainId);
+    if (live) {
+      if (indexed) {
+        live.metadata = Object.assign({}, indexed.metadata || {}, live.metadata || {});
+        live.handle = indexed.handle || live.handle;
+      }
+      return live;
+    }
     if (indexed && indexed.hasEmbeddedMetadata) return indexed;
     if (indexed && indexed.uri) {
       var fetched = await fetchMetadata(indexed.uri).catch(function () { return null; });
@@ -5443,15 +5452,7 @@ function fetchPreferredProjectMetadata(id, chainId) {
         });
       }
     }
-    var fallback = await fetchOnchainProjectMetadata(id, chainId);
-    if (fallback && indexed) {
-      // Bendystraw remains primary for every field it has; the controller URI fills only missing indexed fields.
-      fallback.uri = indexed.uri || fallback.uri;
-      fallback.metadata = Object.assign({}, fallback.metadata || {}, indexed.metadata || {});
-      fallback.handle = indexed.handle || fallback.handle;
-      fallback.source = 'bendystraw';
-    }
-    return fallback || indexed;
+    return indexed;
   })();
   return _preferredProjectMetadataCache[key];
 }
