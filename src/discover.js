@@ -6318,6 +6318,19 @@ function sizeSelectToText(sel, fontPx) {
   sel.style.width = Math.ceil(w + 18) + 'px'; // text + caret gap (border-box: includes padding-right)
 }
 
+// Keep the pay sentence on one line. Ordinary network names (including Base
+// Sepolia) retain the standard type size; unusually long names get a compact
+// fallback instead of wrapping the chain onto a second line.
+export function payChainFontSize(name) {
+  return String(name || '').trim().length > 16 ? 9 : 11;
+}
+
+function applyPayChainFontSize(node, name) {
+  var fontPx = payChainFontSize(name);
+  node.classList.toggle('paybox-chain-compact', fontPx < 11);
+  return fontPx;
+}
+
 function renderPayRuleChangeNotice(project) {
   var link = el('a', 'paybox-rules-link');
   link.href = projectHash(project, project.isRevnet ? 'Terms' : 'Rulesets');
@@ -6764,7 +6777,10 @@ function renderPayCard(project, cart) {
       state.tokenTouched = false; // a new chain re-defaults to that chain's accounting token
       state.tokens = tokensForChain(state.chainId);
       state.token = state.tokens[0] || null;
-      sizeSelectToText(chainSel);
+      sizeSelectToText(
+        chainSel,
+        applyPayChainFontSize(chainSel, chainSel.options[chainSel.selectedIndex] && chainSel.options[chainSel.selectedIndex].textContent),
+      );
       rebuildCurrency();
       loadPaymentSurface(state.chainId);
       schedulePreview();
@@ -6772,10 +6788,14 @@ function renderPayCard(project, cart) {
       refreshNftCredits();
     });
     payOn.appendChild(chainSel);
-    sizeSelectToText(chainSel);
+    sizeSelectToText(
+      chainSel,
+      applyPayChainFontSize(chainSel, chainSel.options[chainSel.selectedIndex] && chainSel.options[chainSel.selectedIndex].textContent),
+    );
   } else {
     var chainStatic = el('span', 'paybox-chain-static');
     chainStatic.textContent = chains[0].name;
+    applyPayChainFontSize(chainStatic, chains[0].name);
     payOn.appendChild(chainStatic);
   }
   topRow.appendChild(payOn);

@@ -5007,11 +5007,16 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   display: flex; align-items: center; justify-content: space-between;
   gap: 6px 8px; flex-wrap: wrap; margin-bottom: 7px;
 }
-.paybox-payon { font-size: 11px; color: var(--muted-2); min-width: 0; }
+.paybox-payon {
+  display: flex; align-items: baseline; flex-wrap: nowrap;
+  font-size: 11px; color: var(--muted-2); min-width: 0; white-space: nowrap;
+}
 .paybox-payon-label { font-size: 11px; }
 .paybox-chain-static, .paybox-curr-static {
-  font-weight: bold; color: var(--text); font-size: 11px; display: inline-block; vertical-align: baseline;
+  font-weight: bold; color: var(--text); font-size: 11px; display: inline-block;
+  vertical-align: baseline; white-space: nowrap;
 }
+.paybox-chain-compact { font-size: 9px; }
 /* Inline text-style chain/currency picker — underlined label + small caret, no box. */
 .paybox-select {
   font-family: inherit; font-size: 11px; font-weight: bold; padding: 0 14px 0 0;
