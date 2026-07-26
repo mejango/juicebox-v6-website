@@ -6,7 +6,7 @@
 // It runs the same _computePayFrom path as a real payment, so the counts are authoritative
 // (currency/decimals come from the on-chain accounting context). No simulate, no funds, no wallet.
 //
-// Routing (Issuance vs AMM) comes from the buyback hook's data-hook spec inside hookSpecifications.
+// Routing (Issuance vs Swap) comes from the buyback hook's data-hook spec inside hookSpecifications.
 // Its `noop` flag is the signal (true = mint at the ruleset weight, false = swap on Uniswap) and its
 // `metadata` is the protocol's intentional public preview API (JBBuybackHook.beforePayRecordedWith).
 // When the AMM route wins, the buyback hook returns weight 0, so the top-level counts are 0 and the
@@ -67,11 +67,11 @@ export function shortHex(hex) {
   return hex.slice(0, 8) + '…' + hex.slice(-4);
 }
 
-// Routing chip — "Issuance" (mint at the ruleset weight) or "AMM" (buyback swap). Shared by both
+// Routing chip — "Issuance" (mint at the ruleset weight) or "Swap" (any AMM-backed route). Shared by both
 // pay surfaces so the tag looks identical everywhere.
 export function renderRoutingTag(routing) {
   var tag = el('span', 'pay-routing-tag' + (routing === 'amm' ? ' amm' : ''));
-  tag.textContent = routing === 'amm' ? 'AMM' : 'Issuance';
+  tag.textContent = routing === 'amm' ? 'Swap' : 'Issuance';
   return tag;
 }
 
