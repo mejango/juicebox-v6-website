@@ -14574,6 +14574,12 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
   var maxV = issuancePriceScaleMax(pts.map(function (point) { return point[1]; }));
   var ammSeries = visibleSeries(ammHistory || [], t0, t1);
   var cashSeries = visibleSeries(cashoutHistory || [], t0, t1);
+  var minimumSeries = pts.map(function (point) {
+    var tax = seriesTaxAt(cashoutHistory || [], point[0]);
+    return tax == null || point[1] == null
+      ? null
+      : { timestamp: point[0], value: calculatePaymentFloorPrice(point[1], tax) };
+  }).filter(function (point) { return point && point.value > 0; });
   // Zero-issuance (price → ∞) clamps to the top of the finite range so the curve reads as "maxed out".
   for (var p = 0; p < pts.length; p++) if (pts[p][1] === null) pts[p][1] = maxV;
   function X(t) { return padL + (W - padL - padR) * (t - t0) / (t1 - t0); }
@@ -14626,18 +14632,15 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
       cashLine += ' L' + X(cashSeries[ci].timestamp).toFixed(1) + ' ' + Y(cashSeries[ci].value).toFixed(1);
     }
     cashLine = '<path d="' + cashLine + '" fill="none" stroke="#c43550" stroke-width="1.7"/>';
-    // Dashed minimum underneath: (1 − tax) × balance ÷ supply — the level the cash out quote approaches
-    // as supply grows; only payouts can push it lower.
-    var minPts = cashSeries.filter(function (point) { return point.min > 0; });
-    if (minPts.length) {
-      var minLine = 'M' + X(minPts[0].timestamp).toFixed(1) + ' ' + Y(minPts[0].min).toFixed(1);
-      for (var mi = 1; mi < minPts.length; mi++) {
-        minLine += ' L' + X(minPts[mi].timestamp).toFixed(1) + ' ' + Y(minPts[mi].min).toFixed(1);
-      }
-      cashLine += '<path d="' + minLine + '" fill="none" stroke="rgba(196,53,80,0.55)" stroke-width="1.3" stroke-dasharray="5 4"/>';
-    }
   } else if (cashoutPrice && cashoutPrice > 0) {
     cashLine = '<line x1="' + padL + '" y1="' + Y(cashoutPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(cashoutPrice).toFixed(1) + '" stroke="#c43550" stroke-width="1.5" stroke-dasharray="2 4"/>';
+  }
+  if (minimumSeries.length) {
+    var minLine = 'M' + X(minimumSeries[0].timestamp).toFixed(1) + ' ' + Y(minimumSeries[0].value).toFixed(1);
+    for (var mi = 1; mi < minimumSeries.length; mi++) {
+      minLine += ' L' + X(minimumSeries[mi].timestamp).toFixed(1) + ' ' + Y(minimumSeries[mi].value).toFixed(1);
+    }
+    cashLine += '<path d="' + minLine + '" fill="none" stroke="rgba(196,53,80,0.55)" stroke-width="1.3" stroke-dasharray="5 4"/>';
   }
 
   var span = t1 - t0;
@@ -14653,7 +14656,11 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     + dividers + nowLine
     + '</svg>';
   // Axis endpoints + "Today" go to mountChart as HTML overlays (regular font, not viewBox-shrunk).
-  return { svg: svg, geo: { t0: t0, t1: t1, W: W, padL: padL, padR: padR, nowX: nowX, nowShow: nowShow, nearRight: nearRight, y0: y0, y1: y1 } };
+  return {
+    svg: svg,
+    minimumSeries: minimumSeries,
+    geo: { t0: t0, t1: t1, W: W, padL: padL, padR: padR, nowX: nowX, nowShow: nowShow, nearRight: nearRight, y0: y0, y1: y1 },
+  };
 }
 
 // Render the chart into a wrap + attach a hover tooltip/guide showing each series' value at that time.
@@ -14685,7 +14692,7 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
       var floor = seriesValueAt(ch.cashoutHistory || [], t) || ch.cashout;
       if (floor) html += row('Cash out', floor, '#c43550');
       var minAt = seriesValueAt(ch.minHistory || [], t);
-      if (minAt) html += row('Cash out min', minAt, 'rgba(196,53,80,0.55)');
+      if (minAt) html += row('Cash out asymptote', minAt, 'rgba(196,53,80,0.55)');
       var floorPoint = seriesPointAt(ch.cashoutHistory || [], t);
       if (floorPoint && floorPoint.reason) {
         html += '<div class="chart-tip-reason">' + floorPoint.reason + '</div>';
@@ -14693,7 +14700,8 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
       wrap._tip.innerHTML = html;
       wrap._guide.style.display = ''; wrap._guide.style.left = x + 'px';
       wrap._tip.style.display = '';
-      wrap._tip.style.left = Math.max(4, Math.min(rect.width - 130, x + 8)) + 'px';
+      var tipWidth = wrap._tip.offsetWidth;
+      wrap._tip.style.left = Math.max(4, Math.min(rect.width - tipWidth - 4, x + 8)) + 'px';
     });
   }
   holder.innerHTML = c.svg;
@@ -14708,8 +14716,7 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
   wrap._chart = {
     geo: c.geo, sorted: sorted, sym: sym, amm: amm, cashout: cashout,
     cashoutHistory: cashoutHistory || [], ammHistory: ammHistory || [],
-    minHistory: (cashoutHistory || []).filter(function (p) { return p.min > 0; })
-      .map(function (p) { return { timestamp: p.timestamp, value: p.min }; }),
+    minHistory: c.minimumSeries || [],
   };
 }
 
@@ -14727,10 +14734,9 @@ function visibleSeries(series, t0, t1) {
     if (point.timestamp > t1) break;
     out.push(point);
   }
-  // Synthetic edge points carry `min` too so companion lines (the cash out minimum) span the full range.
-  if (previous) out.unshift({ timestamp: t0, value: previous.value, min: previous.min });
+  if (previous) out.unshift({ timestamp: t0, value: previous.value, tax: previous.tax });
   if (out.length && out[out.length - 1].timestamp < t1) {
-    out.push({ timestamp: t1, value: out[out.length - 1].value, min: out[out.length - 1].min });
+    out.push({ timestamp: t1, value: out[out.length - 1].value, tax: out[out.length - 1].tax });
   }
   return out;
 }
@@ -14753,6 +14759,16 @@ function seriesPointAt(series, timestamp) {
     if (series[i].value > 0) point = series[i];
   }
   return point;
+}
+
+function seriesTaxAt(series, timestamp) {
+  if (!series || !series.length) return null;
+  var tax = null;
+  for (var i = 0; i < series.length; i++) {
+    if (series[i].timestamp > timestamp) break;
+    if (series[i].tax != null) tax = Number(series[i].tax);
+  }
+  return tax;
 }
 
 function formatCountdown(secs) {
@@ -15644,7 +15660,13 @@ async function fetchPriceFloorHistory(project, stages) {
 
   var out = [];
   var firstMoment = Number(moments[0].timestamp);
-  if (projectStart && firstMoment > projectStart) out.push({ timestamp: projectStart, value: 0 });
+  if (projectStart && firstMoment > projectStart) {
+    out.push({
+      timestamp: projectStart,
+      value: 0,
+      tax: cashOutTaxAt(projectStart, taxes, currentTax),
+    });
+  }
   var previous = null;
   moments.slice().sort(function (a, b) { return Number(a.timestamp) - Number(b.timestamp); }).forEach(function (moment) {
     var timestamp = Number(moment.timestamp);
@@ -15652,12 +15674,11 @@ async function fetchPriceFloorHistory(project, stages) {
     var balance = toBigInt(moment.balance);
     var supply = toBigInt(moment.tokenSupply);
     var value = calculateFloorPrice(balance, supply, tax, pairDecimals);
-    var min = calculateFloorMinPrice(balance, supply, tax, pairDecimals);
     var observation = { balance: balance, tokenSupply: supply, cashOutTax: tax, price: value };
     out.push({
       timestamp: timestamp,
       value: value,
-      min: min,
+      tax: tax,
       reason: explainCashOutChange(previous, observation),
     });
     previous = observation;
@@ -15665,15 +15686,38 @@ async function fetchPriceFloorHistory(project, stages) {
   return out.sort(function (a, b) { return a.timestamp - b.timestamp; });
 }
 
-function explainCashOutChange(previous, current) {
+// The cash-out price approached after arbitrarily many payments at the
+// current issuance price. `cashOutTax` is out of 10,000.
+export function calculatePaymentFloorPrice(issuancePrice, cashOutTax) {
+  var price = Number(issuancePrice);
+  if (!Number.isFinite(price) || price <= 0) return 0;
+  var tax = Math.max(0, Math.min(10000, Number(cashOutTax) || 0));
+  return price * (1 - tax / 10000);
+}
+
+export function explainCashOutChange(previous, current) {
   if (!previous) return 'First indexed cash-out price observation.';
   var causes = [];
   var balanceRose = current.balance > previous.balance;
   var balanceFell = current.balance < previous.balance;
   var supplyRose = current.tokenSupply > previous.tokenSupply;
   var supplyFell = current.tokenSupply < previous.tokenSupply;
-  if (balanceRose && supplyRose) causes.push('a payment added backing and issued tokens');
-  else if (balanceFell && supplyFell) causes.push('a cash out removed backing and burned tokens');
+  var ratioLeft = current.balance * previous.tokenSupply;
+  var ratioRight = previous.balance * current.tokenSupply;
+  var backingRatio = ratioLeft > ratioRight ? 1 : ratioLeft < ratioRight ? -1 : 0;
+  if (balanceRose && supplyRose) {
+    causes.push(backingRatio < 0
+      ? 'a payment increased token supply faster than backing, diluting backing per token'
+      : backingRatio > 0
+        ? 'a payment increased backing faster than token supply'
+        : 'a payment added backing and tokens at the same backing-per-token ratio');
+  } else if (balanceFell && supplyFell) {
+    causes.push(backingRatio > 0
+      ? 'a cash out burned supply faster than it removed backing, increasing backing per remaining token'
+      : backingRatio < 0
+        ? 'a cash out removed backing faster than it burned supply'
+        : 'a cash out removed backing and supply at the same ratio');
+  }
   else {
     if (balanceRose) causes.push('funds were added to the project');
     if (balanceFell) causes.push('a payout reduced project backing');
@@ -15867,9 +15911,9 @@ function cashOutTaxAt(timestamp, snapshots, fallback) {
   return tax;
 }
 
-// The floor's asymptote: (1 − tax) × balance ÷ supply — the cash out quote without the small own-share
-// bonus. The live quote approaches this from above as supply grows and can only drop below it when funds
-// leave the project (payouts); payments can only raise it.
+// The current cash-out curve's backing asymptote, without the small own-share
+// bonus. This is distinct from the chart's payment asymptote, which is based
+// on the issuance price new payments receive.
 export function calculateFloorMinPrice(balance, tokenSupply, cashOutTax, balanceDecimals) {
   if (!balance || !tokenSupply) return 0;
   var o = toBigInt(balance), s = toBigInt(tokenSupply), x = ONE_TOKEN;

@@ -4,6 +4,8 @@ import { describe, it, expect } from 'vitest';
 import {
   calculateFloorPrice,
   calculateFloorMinPrice,
+  calculatePaymentFloorPrice,
+  explainCashOutChange,
   formatCutPercent,
 } from '../src/discover.js';
 
@@ -35,8 +37,29 @@ describe('cash out floor price', () => {
   });
 });
 
+describe('payment floor price', () => {
+  it('is issuance price times the post-tax factor', () => {
+    expect(calculatePaymentFloorPrice(0.0001, 4000)).toBeCloseTo(0.00006, 12);
+  });
+
+  it('rises with an increasing issuance price at a fixed tax', () => {
+    expect(calculatePaymentFloorPrice(0.00011, 4000)).toBeGreaterThan(
+      calculatePaymentFloorPrice(0.0001, 4000),
+    );
+  });
+});
+
 describe('issuance cut formatting', () => {
   it('does not round a non-zero daily cut to zero', () => {
     expect(formatCutPercent(9_496)).toBe('0.0009496%');
+  });
+});
+
+describe('cash-out change explanation', () => {
+  it('explains when a payment dilutes backing per token', () => {
+    expect(explainCashOutChange(
+      { balance: 100n, tokenSupply: 100n, cashOutTax: 4000, price: 0.6 },
+      { balance: 150n, tokenSupply: 200n, cashOutTax: 4000, price: 0.45 },
+    )).toContain('increased token supply faster than backing');
   });
 });
