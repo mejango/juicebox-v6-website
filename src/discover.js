@@ -6325,6 +6325,15 @@ export function payChainFontSize(name) {
   return String(name || '').trim().length > 16 ? 9 : 11;
 }
 
+export function payChainName(chainId, fallback) {
+  var compact = {
+    11155420: 'OP Sep',
+    84532: 'Base Sep',
+    421614: 'Arb Sep',
+  };
+  return compact[Number(chainId)] || fallback || chainNameOf(chainId);
+}
+
 function applyPayChainFontSize(node, name) {
   var fontPx = payChainFontSize(name);
   node.classList.toggle('paybox-chain-compact', fontPx < 11);
@@ -6766,7 +6775,7 @@ function renderPayCard(project, cart) {
     chains.forEach(function (c) {
       var o = document.createElement('option');
       o.value = String(c.id);
-      o.textContent = c.name;
+      o.textContent = payChainName(c.id, c.name);
       chainSel.appendChild(o);
     });
     chainSel.addEventListener('change', function () {
@@ -6794,8 +6803,8 @@ function renderPayCard(project, cart) {
     );
   } else {
     var chainStatic = el('span', 'paybox-chain-static');
-    chainStatic.textContent = chains[0].name;
-    applyPayChainFontSize(chainStatic, chains[0].name);
+    chainStatic.textContent = payChainName(chains[0].id, chains[0].name);
+    applyPayChainFontSize(chainStatic, chainStatic.textContent);
     payOn.appendChild(chainStatic);
   }
   topRow.appendChild(payOn);
