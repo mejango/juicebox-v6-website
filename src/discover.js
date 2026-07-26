@@ -14442,13 +14442,16 @@ function renderPriceChart(project, stages) {
     else ammChip._val.textContent = swaps.count ? '—' : 'No liquidity yet';
     if (cashout) setChipVal(cashChip, formatPrice(cashout)); else cashChip._val.textContent = '—';
     // The floor's asymptote lives in the hover tip and the dashed chart line — not as a legend row.
-    var lastMin = 0;
-    for (var hi = history.length - 1; hi >= 0; hi--) { if (history[hi].min > 0) { lastMin = history[hi].min; break; } }
+    var currentTax = seriesTaxAt(history, now);
+    var lastMin = issPrice && currentTax != null
+      ? calculatePaymentFloorPrice(issPrice, currentTax)
+      : 0;
     if (cashout) {
-      cashChip.setAttribute('data-tip', 'Live quote for cashing out 1 ' + sym + ': (balance ÷ supply) × ((1 − tax) + tax × your share of supply). '
-        + 'As supply grows it approaches the dashed minimum'
-        + (lastMin > 0 ? ' — currently ' + formatPrice(lastMin) + ' ' + pairUnit : '')
-        + ', (1 − tax) × balance ÷ supply. Payments can only raise that minimum; only payouts lower it.');
+      var showsMinimum = shouldShowCashOutAsymptote(cashout, lastMin);
+      cashChip.setAttribute('data-tip', 'Live quote for cashing out 1 ' + sym + ': (balance ÷ supply) × ((1 − tax) + tax × your share of supply).'
+        + (showsMinimum
+          ? ' As paid issuance grows supply, the quote can fall toward the dashed cash-out asymptote — currently ' + formatPrice(lastMin) + ' ' + pairUnit + '.'
+          : ' The payment asymptote is hidden unless the current cash-out quote is above it and can fall toward it.'));
     }
     // (The liquidity-by-price depth chart lives in the Owners → AMM section, not here.)
   });
@@ -14562,6 +14565,15 @@ export function issuancePriceScaleRatio(price, max) {
   return Math.max(0, Math.min(1, price / max));
 }
 
+export function shouldShowCashOutAsymptote(cashOutPrice, asymptote) {
+  cashOutPrice = Number(cashOutPrice); asymptote = Number(asymptote);
+  return Number.isFinite(cashOutPrice)
+    && Number.isFinite(asymptote)
+    && cashOutPrice > 0
+    && asymptote > 0
+    && cashOutPrice > asymptote;
+}
+
 // Plots PRICE (base token per project token = 1/issuance), rising as issuance is cut. The card
 // header still shows issuance (tokens/ETH). Zero-issuance regions clamp to the top of the finite range.
 function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past, cashoutHistory, ammHistory) {
@@ -14590,6 +14602,11 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
       ? null
       : { timestamp: point[0], value: calculatePaymentFloorPrice(point[1], tax) };
   }).filter(function (point) { return point && point.value > 0; });
+  var currentCashOut = cashoutPrice;
+  if (cashSeries.length) currentCashOut = cashSeries[cashSeries.length - 1].value;
+  var currentMinimum = seriesValueAt(minimumSeries, now);
+  var showMinimum = shouldShowCashOutAsymptote(currentCashOut, currentMinimum);
+  if (!showMinimum) minimumSeries = [];
   // Zero-issuance (price → ∞) clamps to the top of the finite range so the curve reads as "maxed out".
   for (var p = 0; p < pts.length; p++) if (pts[p][1] === null) pts[p][1] = maxV;
   function X(t) { return padL + (W - padL - padR) * (t - t0) / (t1 - t0); }

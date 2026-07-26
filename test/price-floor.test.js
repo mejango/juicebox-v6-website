@@ -7,6 +7,7 @@ import {
   calculatePaymentFloorPrice,
   explainCashOutChange,
   formatCutPercent,
+  shouldShowCashOutAsymptote,
 } from '../src/discover.js';
 
 // Real project state (Base Sepolia #11 "BEN", 2026-07-13): backing pinned at the 0.0001 ETH/BEN
@@ -46,6 +47,12 @@ describe('payment floor price', () => {
     expect(calculatePaymentFloorPrice(0.00011, 4000)).toBeGreaterThan(
       calculatePaymentFloorPrice(0.0001, 4000),
     );
+  });
+
+  it('is shown only when the live quote can fall toward it', () => {
+    expect(shouldShowCashOutAsymptote(0.000066, 0.00006)).toBe(true);
+    expect(shouldShowCashOutAsymptote(0.00006, 0.00006)).toBe(false);
+    expect(shouldShowCashOutAsymptote(0.000009, 0.00144)).toBe(false);
   });
 });
 
