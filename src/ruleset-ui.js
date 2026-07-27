@@ -60,7 +60,7 @@ export function renderRulesetFieldset(rs, index, state, updateUI, opts) {
     wrap.appendChild(configCheckbox('Allow set controller', rs, 'allowSetController'));
     wrap.appendChild(configCheckbox('Allow add accounting context', rs, 'allowAddAccountingContext'));
     wrap.appendChild(configCheckbox('Allow add price feed', rs, 'allowAddPriceFeed'));
-    wrap.appendChild(configCheckbox('Owner must send payouts', rs, 'ownerMustSendPayouts'));
+    wrap.appendChild(configCheckbox('Project owner must send payouts', rs, 'ownerMustSendPayouts'));
     wrap.appendChild(configCheckbox('Hold fees', rs, 'holdFees'));
     wrap.appendChild(configCheckbox('Use total surplus for cash outs', rs, 'useTotalSurplusForCashOuts'));
     wrap.appendChild(configCheckbox('Use data hook for pay', rs, 'useDataHookForPay'));

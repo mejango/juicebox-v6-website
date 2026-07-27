@@ -40,6 +40,7 @@ one cannot silently enter the app.
 | Action | Boundary | Safety coverage |
 |---|---|---|
 | Reviewed direct write boundary | `executeTransaction` | Exact review payload, account/chain rechecks, simulation, receipt status, approval ordering, and Safe routing are unit-tested. |
+| Reviewed single-chain direct write | `discover.js` direct dispatcher | One-chain management calls use the exact review modal, recheck the account and chain, simulate the raw call, submit directly, and require a successful receipt. Relayr is reserved for bundles spanning multiple chains. |
 | Generic ABI contract write | `form.js` reviewed write | Displays target/function/arguments/calldata/value, rechecks account and chain, simulates, then requires a successful receipt. |
 | Relayr forwarded bundle / payment | `relayrPostBundle` / `relayrPay` | Canonical forward request, signer/account identity, quote/payment state, persistence, polling, and partial-chain failure are unit-tested. |
 | Safe proposal / confirmation / execution | Safe App and Safe service boundaries | Proposal hashes remain distinct from execution; exact `execTransaction` tuples, signatures, nonce, confirmation, and receipt status are tested. |
@@ -63,6 +64,9 @@ gates (recipient / over-100% / custom-token / approval), `parseAmount`/`addrOrZe
 
 Safe `execTransaction` encoding is covered in `components-tx.test.js`, including
 the exact outer tuple assembled from the queued Safe transaction and signatures.
+The project and account queue paths execute reviewed same-chain Safe batches
+directly, in nonce order; only batches spanning multiple distinct chains use
+Relayr.
 
 ## Adherence
 `verify-tx-builders-vs-contracts` (workflow, 5 agents) confirmed **every builder encodes correctly** against the

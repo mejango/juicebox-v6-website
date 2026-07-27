@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 
 const root = resolve('dist');
-const port = Number(process.env.PORT || 4173);
+const port = Number(process.env.PORT || 3000);
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
   '.gif': 'image/gif',

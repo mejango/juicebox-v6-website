@@ -7,6 +7,7 @@ import {
   calculatePaymentFloorPrice,
   explainCashOutChange,
   formatCutPercent,
+  issuanceStepPoints,
   shouldShowCashOutAsymptote,
 } from '../src/discover.js';
 
@@ -59,6 +60,30 @@ describe('payment floor price', () => {
 describe('issuance cut formatting', () => {
   it('does not round a non-zero daily cut to zero', () => {
     expect(formatCutPercent(9_496)).toBe('0.0009496%');
+  });
+
+  it('draws daily cuts as exact steps and compounds the onchain value', () => {
+    const day = 86_400;
+    const start = 1_000_000;
+    const stages = [{
+      start,
+      duration: day,
+      weight: 10_000n * 10n ** 18n,
+      weightCutPercent: 9_496,
+    }];
+    const points = issuanceStepPoints(stages, start, start + 3 * day);
+
+    expect(points).toHaveLength(6);
+    expect(points[1][0]).toBe(start + day);
+    expect(points[2][0]).toBe(start + day);
+    expect(points[1][1]).toBeCloseTo(10_000, 8);
+    expect(points[2][1]).toBeCloseTo(9_999.90504, 8);
+    expect(points[4][1]).toBeCloseTo(9_999.81008090144, 8);
+  });
+
+  it('does not misread raw 9,496 as a two-year halving schedule', () => {
+    const dailyMultiplier = (1_000_000_000 - 9_496) / 1_000_000_000;
+    expect(10_000 * dailyMultiplier ** 730).toBeCloseTo(9_930.91, 1);
   });
 });
 

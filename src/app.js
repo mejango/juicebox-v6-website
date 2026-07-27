@@ -2,7 +2,7 @@
 // Entry point: tabs, wallet, directory rendering
 // Chain selection is per-function-form, not global.
 
-import { contracts, meta, natspec, categories, commonActions, getFunctions, getAddress, getFunctionSource, getGithubUrl } from './abi-registry.js';
+import { contracts, meta, natspec, categories, chains, commonActions, getFunctions, getAddress, getFunctionSource, getGithubUrl } from './abi-registry.js';
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
@@ -423,6 +423,93 @@ function renderDirectory() {
 // --- Data tab ---
 // renderDataTab is imported from ./data-tab.js
 
+function sortedDeploymentAddresses(addresses) {
+  return Object.keys(addresses || {}).sort(function(a, b) {
+    return Number(a) - Number(b);
+  }).map(function(chainId) {
+    return {
+      chainId: chainId,
+      chainName: (chains[chainId] && chains[chainId].name) || ('Chain ' + chainId),
+      address: addresses[chainId],
+    };
+  }).filter(function(deployment) {
+    return !!deployment.address;
+  });
+}
+
+function makeCopyAddressButton(address, label, title) {
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'contract-address';
+  button.textContent = address;
+  button.setAttribute('aria-label', 'Copy ' + label + ' address');
+  button.title = title || 'Copy address';
+  button.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+    navigator.clipboard.writeText(address).then(function() {
+      var previousTitle = button.title;
+      button.title = 'Copied';
+      button.classList.add('copied');
+      window.setTimeout(function() {
+        button.title = previousTitle;
+        button.classList.remove('copied');
+      }, 1200);
+    }).catch(function() {});
+  });
+  return button;
+}
+
+function renderContractAddresses(contractName, addresses) {
+  var deployments = sortedDeploymentAddresses(addresses);
+  if (deployments.length === 0) return null;
+
+  var uniqueAddresses = [];
+  deployments.forEach(function(deployment) {
+    var normalized = deployment.address.toLowerCase();
+    if (!uniqueAddresses.some(function(address) { return address.toLowerCase() === normalized; })) {
+      uniqueAddresses.push(deployment.address);
+    }
+  });
+
+  // CREATE2 deployments commonly share one address across every supported chain.
+  if (uniqueAddresses.length === 1) {
+    return makeCopyAddressButton(
+      uniqueAddresses[0],
+      contractName,
+      'Copy address — ' + deployments.map(function(deployment) { return deployment.chainName; }).join(', ')
+    );
+  }
+
+  var details = document.createElement('details');
+  details.className = 'contract-addresses';
+  details.addEventListener('click', function(e) { e.stopPropagation(); });
+
+  var toggle = document.createElement('summary');
+  toggle.textContent = '[' + deployments.length + ' chain addresses]';
+  toggle.title = 'Show deployed addresses';
+  details.appendChild(toggle);
+
+  var list = document.createElement('div');
+  list.className = 'contract-address-list';
+  deployments.forEach(function(deployment) {
+    var row = document.createElement('div');
+    row.className = 'contract-address-row';
+    var chainLabel = document.createElement('span');
+    chainLabel.className = 'contract-address-chain';
+    chainLabel.textContent = deployment.chainName;
+    row.appendChild(chainLabel);
+    row.appendChild(makeCopyAddressButton(
+      deployment.address,
+      contractName + ' on ' + deployment.chainName,
+      'Copy ' + deployment.chainName + ' address'
+    ));
+    list.appendChild(row);
+  });
+  details.appendChild(list);
+  return details;
+}
+
 function renderContractSection(contractName) {
   var section = document.createElement('div');
   section.className = 'contract-section';
@@ -452,6 +539,9 @@ function renderContractSection(contractName) {
   summary.appendChild(arrow);
   summary.appendChild(nameSpan);
   summary.appendChild(countSpan);
+
+  var addressDisplay = renderContractAddresses(contractName, contractMeta && contractMeta.addresses);
+  if (addressDisplay) summary.appendChild(addressDisplay);
 
   // GitHub source link (contract-level)
   var ghUrl = getGithubUrl(contractName);

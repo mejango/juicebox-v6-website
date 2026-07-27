@@ -22,8 +22,8 @@
       "actions": ["Deploy ERC-20"]
     },
     "src/discover.js": {
-      "counts": { "approveSafeHashOnChain": 1, "confirmSafeTx": 1, "executeSafeTx": 2, "executeTransaction": 20, "proposeSafeTx": 1, "providerRequest": 2, "relayrPay": 3, "relayrPostBundle": 3, "signTypedData": 3, "writeContract": 3 },
-      "actions": ["Project management actions", "Relayr forwarded bundle / payment", "Safe proposal / confirmation / execution", "Permit2 and direct approvals"]
+      "counts": { "approveSafeHashOnChain": 1, "confirmSafeTx": 1, "executeSafeTx": 3, "executeTransaction": 20, "proposeSafeTx": 1, "providerRequest": 2, "relayrPay": 3, "relayrPostBundle": 3, "sendTransaction": 1, "signTypedData": 3, "writeContract": 3 },
+      "actions": ["Project management actions", "Reviewed single-chain direct write", "Relayr forwarded bundle / payment", "Safe proposal / confirmation / execution", "Permit2 and direct approvals"]
     },
     "src/form.js": {
       "counts": { "writeContract": 1 },

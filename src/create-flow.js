@@ -622,8 +622,17 @@ export function exportDraftFile(state) {
   var blob = new Blob([JSON.stringify(createDraftObject(state), null, 2)], { type: 'application/json' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a'); a.href = url; a.download = nm + '.jb';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  // Safari can discard a synthetic download when its anchor is removed in the
+  // same task as click(). Keep the node and object URL alive long enough for
+  // the browser to begin the download. This matters on the success screen,
+  // where Export is often the last action before closing the wizard.
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -704,13 +713,13 @@ function renderHeader(state, close, onImport, onExport) {
 
   // .jb import/export — save the in-progress draft to a file, or load one (e.g. to share for review).
   var actions = el('div', 'create-head-actions');
-  var imp = el('button', 'create-io-btn'); imp.textContent = 'Import';
+  var imp = el('button', 'create-io-btn'); imp.type = 'button'; imp.textContent = 'Import';
   imp.title = 'Load a saved or shared project draft (.jb)';
   imp.disabled = !!state.deploying;
   var fileIn = el('input'); fileIn.type = 'file'; fileIn.accept = '.jb,application/json'; fileIn.style.display = 'none';
   fileIn.addEventListener('change', function () { var f = fileIn.files && fileIn.files[0]; if (f && onImport) onImport(f); fileIn.value = ''; });
   imp.addEventListener('click', function () { if (!state.deploying) fileIn.click(); });
-  var exp = el('button', 'create-io-btn'); exp.textContent = 'Export';
+  var exp = el('button', 'create-io-btn'); exp.type = 'button'; exp.textContent = 'Export';
   exp.title = 'Download this draft as a .jb file to save or share for review';
   exp.addEventListener('click', function () { if (onExport) onExport(); });
   actions.appendChild(imp); actions.appendChild(exp); actions.appendChild(fileIn);
@@ -1015,7 +1024,7 @@ function customTokenBlock(state, render) {
   wrap.appendChild(input);
   wrap.appendChild(status);
   var note = el('div', 'create-hint');
-  note.textContent = 'Must be deployed at the SAME address on every selected chain. Every ruleset, payout, and shop price is denominated in ' + (ct.symbol || 'this token') + ' itself, so issuing tokens and paying need no price feed. Pricing in ETH or USD instead requires the owner to add a ' + (ct.symbol || 'token') + ' price feed after deploy (Owner tab → Add price feed) — the “Allow adding price feeds” rule is on by default for custom-token projects.';
+  note.textContent = 'Must be deployed at the SAME address on every selected chain. Every ruleset, payout, and shop price is denominated in ' + (ct.symbol || 'this token') + ' itself, so issuing tokens and paying need no price feed. Pricing in ETH or USD instead requires the project owner to add a ' + (ct.symbol || 'token') + ' price feed after deploy (Owner tab → Add price feed) — the “Allow adding price feeds” rule is on by default for custom-token projects.';
   wrap.appendChild(note);
   renderStatus();
   return wrap;
@@ -1048,7 +1057,7 @@ function operatorSection(state, render) {
   }
   box.appendChild(perChainAddrControl(state, render, 'op', state.revOperatorResolved || state.revOperator || ''));
   box.appendChild(infoNote('The address that operates the few controls available in revnets.'));
-  wrap.appendChild(fieldBlock('Operator', false, box));
+  wrap.appendChild(fieldBlock('Project operator', false, box));
   return wrap;
 }
 
@@ -1763,11 +1772,11 @@ function stageSummaryRaw(stage, idx, state) {
     var uRecips = (stage.payoutRecipients || []).filter(function (r) { return Number(r.percent) > 0; });
     if (!uRecips.length) {
       // No splits → everything goes to the owner; say so directly instead of "all funds" + "remainder → owner".
-      parts.push('pays out all funds to owner');
+      parts.push('pays out all funds to the project owner');
     } else {
       parts.push('pays out all funds');
       uRecips.forEach(function (r) { parts.push(round2(Number(r.percent)) + '% → ' + recipLabel(r)); });
-      parts.push('remainder → owner');
+      parts.push('remainder → project owner');
     }
   } else if (stage.payoutMode === 'limited') {
     var pc = fundAccessCurrencyLabel(stage.payoutCurrency, state);
@@ -1778,13 +1787,13 @@ function stageSummaryRaw(stage, idx, state) {
 
   // Surplus allowance.
   if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
-    if (stage.surplusAllowanceUnlimited) parts.push('owner can withdraw all surplus');
-    else if (Number(stage.surplusAllowanceAmount) > 0) parts.push('owner can withdraw ' + stage.surplusAllowanceAmount + ' ' + fundAccessCurrencyLabel(stage.surplusAllowanceCurrency, state) + ' of surplus');
+    if (stage.surplusAllowanceUnlimited) parts.push('project owner can withdraw all surplus');
+    else if (Number(stage.surplusAllowanceAmount) > 0) parts.push('project owner can withdraw ' + stage.surplusAllowanceAmount + ' ' + fundAccessCurrencyLabel(stage.surplusAllowanceCurrency, state) + ' of surplus');
     else parts.push('surplus allowance on');
   }
 
   // Noteworthy flags.
-  if (stage.allowOwnerMinting) parts.push('owner can mint tokens');
+  if (stage.allowOwnerMinting) parts.push('project owner can mint tokens');
   if (stage.pauseTransfers) parts.push('token credit transfers paused');
   if (stage.pausePay) parts.push('payments paused');
   if (stage.holdFees) parts.push('fees held');
@@ -2007,7 +2016,7 @@ function payoutKindBlock(stage, kind, render, state) {
   wrap.appendChild(toggleRow('Payout ' + kind.symbol + ' funds', dz('Routing some of the project’s ' + kind.symbol + ' to other accounts or projects.', 'All ' + kind.symbol + ' stays in the project for cash outs / later cycles.'), pk.mode !== 'none', function (v) { pk.mode = v ? 'unlimited' : 'none'; render(); }));
   if (pk.mode !== 'none') {
     var card = el('div', 'create-subcard');
-    card.appendChild(toggleRow('Payout all received ' + kind.symbol, dz('Paying out everything received; recipients get a percentage and the rest goes to the owner.', 'Paying out fixed amounts; anything else stays in the project.'), pk.mode === 'unlimited', function (v) { pk.mode = v ? 'unlimited' : 'limited'; if (!v && !pk.recipients.length) pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); }));
+    card.appendChild(toggleRow('Payout all received ' + kind.symbol, dz('Paying out everything received; recipients get a percentage and the rest goes to the project owner.', 'Paying out fixed amounts; anything else stays in the project.'), pk.mode === 'unlimited', function (v) { pk.mode = v ? 'unlimited' : 'limited'; if (!v && !pk.recipients.length) pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); }));
     pk.recipients.forEach(function (rec, i) { card.appendChild(payoutKindRow(pk, kind, rec, i, render, state, stage)); });
     var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add payout'; add.style.marginTop = pk.recipients.length ? '14px' : '4px';
     add.addEventListener('click', function (e) { e.preventDefault(); pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); });
@@ -2049,12 +2058,12 @@ function payoutsSection(stage, render, state) {
     kinds.forEach(function (kind) { wrap.appendChild(payoutKindBlock(stage, kind, render, state)); });
     var allUnlimited = kinds.every(function (k) { return pkState(stage, k.key).mode === 'unlimited'; });
     if (allUnlimited) {
-      wrap.appendChild(idleToggle('Give owner access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus available.'));
+      wrap.appendChild(idleToggle('Give project owner access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus available.'));
       wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus to cash out.'));
     } else {
       // Surplus is the project's TOTAL across all accepted tokens (cash out reclaim prices against the
       // cumulative surplus). Owner access is unlimited-across-tokens here to avoid per-token cap ambiguity.
-      wrap.appendChild(toggleRow('Give owner access to surplus funds', dz('The owner can withdraw the project’s surplus (funds beyond payouts) — an unlimited allowance per accepted token (ETH, USDC, …), each in its own currency.', 'The owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; stage.surplusAllowanceUnlimited = true; render(); }));
+      wrap.appendChild(toggleRow('Give project owner access to surplus funds', dz('The project owner can withdraw the project’s surplus (funds beyond payouts) — an unlimited allowance per accepted token (ETH, USDC, …), each in its own currency.', 'The project owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; stage.surplusAllowanceUnlimited = true; render(); }));
       wrap.appendChild(cashOutSection(state, stage, render));
     }
     return wrap;
@@ -2063,7 +2072,7 @@ function payoutsSection(stage, render, state) {
 
   if (stage.payoutMode !== 'none') {
     var card = el('div', 'create-subcard');
-    card.appendChild(toggleRow('Payout all received funds', dz('Paying out everything received; recipients get a percentage and the rest goes to the owner.', 'Paying out fixed amounts; anything else stays in the project.'), stage.payoutMode === 'unlimited', function (v) {
+    card.appendChild(toggleRow('Payout all received funds', dz('Paying out everything received; recipients get a percentage and the rest goes to the project owner.', 'Paying out fixed amounts; anything else stays in the project.'), stage.payoutMode === 'unlimited', function (v) {
       stage.payoutMode = v ? 'unlimited' : 'limited';
       // A specific (limited) payout needs at least one entry to fill in.
       if (!v && !stage.payoutRecipients.length) stage.payoutRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' });
@@ -2087,13 +2096,13 @@ function payoutsSection(stage, render, state) {
   // Surplus access — owner (allowance) and token holders (cash outs) both draw from surplus (funds beyond
   // payouts). When paying out everything there's no surplus, so both are shown idle/disabled.
   if (stage.payoutMode === 'unlimited') {
-    wrap.appendChild(idleToggle('Give owner access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus available.'));
+    wrap.appendChild(idleToggle('Give project owner access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus available.'));
     wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus to cash out.'));
   } else {
-    wrap.appendChild(toggleRow('Give owner access to surplus funds', dz('The owner can withdraw from the project’s surplus (funds beyond payouts).', 'The owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; render(); }));
+    wrap.appendChild(toggleRow('Give project owner access to surplus funds', dz('The project owner can withdraw from the project’s surplus (funds beyond payouts).', 'The project owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; render(); }));
     if (stage.surplusAllowanceOn) {
       var saCard = el('div', 'create-subcard');
-      saCard.appendChild(toggleRow('Unlimited', dz('No cap — the owner can withdraw the entire surplus.', 'Capped at the amount set below.'), stage.surplusAllowanceUnlimited, function (v) { stage.surplusAllowanceUnlimited = v; render(); }));
+      saCard.appendChild(toggleRow('Unlimited', dz('No cap — the project owner can withdraw the entire surplus.', 'Capped at the amount set below.'), stage.surplusAllowanceUnlimited, function (v) { stage.surplusAllowanceUnlimited = v; render(); }));
       if (!stage.surplusAllowanceUnlimited) {
         var saRow = el('div', 'create-inline-row');
         var saAmt = el('input', 'field create-inline-num'); saAmt.type = 'text'; saAmt.placeholder = '0.0'; saAmt.value = stage.surplusAllowanceAmount;
@@ -2457,7 +2466,7 @@ function tokenSection(stage, render, state, stageIdx) {
 
   // Token options apply whether or not THIS stage issues tokens (tokens can exist from prior stages or
   // owner mints) — always shown, each in its own container like the issuance section.
-  wrap.appendChild(toggleRow('Give owner privileged access to tokens', dz('The project owner can mint any amount of project tokens without paying.', 'The project owner can’t mint tokens without paying.'), t.allowOwnerMinting, function (v) { t.allowOwnerMinting = v; }));
+  wrap.appendChild(toggleRow('Give project owner privileged access to tokens', dz('The project owner can mint any amount of project tokens without paying.', 'The project owner can’t mint tokens without paying.'), t.allowOwnerMinting, function (v) { t.allowOwnerMinting = v; }));
   var transferCopy = t.tokenMode === 'custom'
     ? 'Internal project credits can be transferred until they are claimed as ERC-20 tokens.'
     : 'This stage issues no credits. Existing credits from earlier stages can still be transferred.';
@@ -2510,7 +2519,7 @@ function collectionExtrasSection(state, render) {
   f.appendChild(toggleRow('Require exact payment', dz('Payers must pay an item’s exact price — anything extra is turned away.', 'Payers can overpay; the extra is kept as spendable credit.'), c.preventOverspending, function (v) { c.preventOverspending = v; }));
   f.appendChild(toggleRow('Lock reserved items after launch', dz('New items added after launch can’t set aside reserved inventory.', 'New items added after launch can set aside reserved inventory.'), c.noNewTiersWithReserves, function (v) { c.noNewTiersWithReserves = v; }));
   f.appendChild(toggleRow('Lock voting items after launch', dz('New items added after launch can’t carry custom voting power.', 'New items added after launch can carry custom voting power.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
-  f.appendChild(toggleRow('Lock owner minting after launch', dz('New items added after launch can’t let the owner mint for free.', 'New items added after launch can let the owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
+  f.appendChild(toggleRow('Lock project owner minting after launch', dz('New items added after launch can’t let the project owner mint for free.', 'New items added after launch can let the project owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
   f.appendChild(toggleRow('Give split recipients project tokens', dz('Sale-split recipients also receive project tokens for their share.', 'Sale-split recipients receive funds only, no project tokens.'), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
   // useDataHookForCashOut — item holders redeem items against project surplus. Revnets force this on at the
   // deployer (so it's custom-only). Mutually exclusive with TOKEN cash out (set in rulesets): the 721 hook
@@ -2527,12 +2536,12 @@ function collectionExtrasSection(state, render) {
   // Revnet operator 721 permissions — REVDeployer grants the operator all four by default; these let the
   // user revoke individual ones at deploy time (encoded as the REVDeploy721TiersHookConfig preventOperator* flags).
   if (state.projectType === 'revnet') {
-    var opHead = el('div', 'create-label'); opHead.style.marginTop = '16px'; opHead.textContent = 'Operator store permissions'; f.appendChild(opHead);
-    var opNote = el('div', 'create-hint'); opNote.textContent = 'What the revnet operator can do to the store after launch.'; f.appendChild(opNote);
-    f.appendChild(toggleRow('Operator can add & remove items', dz('The operator can adjust the store’s items.', 'The operator can’t change the store’s items.'), c.opCanAdjustTiers, function (v) { c.opCanAdjustTiers = v; }));
-    f.appendChild(toggleRow('Operator can update item metadata', dz('The operator can update the store’s metadata.', 'The operator can’t update the store’s metadata.'), c.opCanUpdateMetadata, function (v) { c.opCanUpdateMetadata = v; }));
-    f.appendChild(toggleRow('Operator can mint items for free', dz('The operator can mint shop items from inventory without paying.', 'The operator pays like everyone else.'), c.opCanMint, function (v) { c.opCanMint = v; }));
-    f.appendChild(toggleRow('Operator can increase discounts', dz('The operator can raise an item’s discount.', 'The operator can’t raise item discounts.'), c.opCanIncreaseDiscount, function (v) { c.opCanIncreaseDiscount = v; }));
+    var opHead = el('div', 'create-label'); opHead.style.marginTop = '16px'; opHead.textContent = 'Project operator store permissions'; f.appendChild(opHead);
+    var opNote = el('div', 'create-hint'); opNote.textContent = 'What the revnet’s project operator can do to the store after launch.'; f.appendChild(opNote);
+    f.appendChild(toggleRow('Project operator can add & remove items', dz('The project operator can adjust the store’s items.', 'The project operator can’t change the store’s items.'), c.opCanAdjustTiers, function (v) { c.opCanAdjustTiers = v; }));
+    f.appendChild(toggleRow('Project operator can update item metadata', dz('The project operator can update the store’s metadata.', 'The project operator can’t update the store’s metadata.'), c.opCanUpdateMetadata, function (v) { c.opCanUpdateMetadata = v; }));
+    f.appendChild(toggleRow('Project operator can mint items for free', dz('The project operator can mint shop items from inventory without paying.', 'The project operator pays like everyone else.'), c.opCanMint, function (v) { c.opCanMint = v; }));
+    f.appendChild(toggleRow('Project operator can increase discounts', dz('The project operator can raise an item’s discount.', 'The project operator can’t raise item discounts.'), c.opCanIncreaseDiscount, function (v) { c.opCanIncreaseDiscount = v; }));
   }
   return f;
 }
@@ -2794,12 +2803,12 @@ function otherRulesSection(stage, render) {
   var warn = el('div', 'create-warn-zone');
   var wh = el('div', 'create-warn-zone-head'); wh.textContent = 'Superpowers';
   warn.appendChild(wh);
-  warn.appendChild(toggleRow('Allow setting payment terminals', dz('The owner can add/remove payment terminals at any time. This lets the project upgrade, but also lets the owner reroute where funds flow at will.', 'Payment terminals are fixed for this ruleset.'), stage.allowSetTerminals, function (v) { stage.allowSetTerminals = v; }));
-  warn.appendChild(toggleRow('Allow setting controller', dz('The owner can change the project’s controller at any time. This lets the project upgrade, but can also be used by the owner to change all the rules at will.', 'The controller is fixed for this ruleset.'), stage.allowSetController, function (v) { stage.allowSetController = v; }));
-  warn.appendChild(toggleRow('Allow terminal migration', dz('The owner can migrate the project’s terminals to a new version. This lets the project upgrade, but can also be used by the owner to move all funds to a terminal of their choosing.', 'Terminal migration is disabled.'), stage.allowTerminalMigration, function (v) { stage.allowTerminalMigration = v; }));
-  warn.appendChild(toggleRow('Allow setting a custom token', dz('The owner can replace the project’s token with a custom ERC-20 of their choosing.', 'The project token can’t be swapped for a custom one.'), stage.allowSetCustomToken, function (v) { stage.allowSetCustomToken = v; }));
-  warn.appendChild(toggleRow('Allow adding accounting tokens', dz('The owner can add new accounting tokens the project holds at any time.', 'The set of accounting tokens is fixed for this ruleset.'), stage.allowAddAccountingContext, function (v) { stage.allowAddAccountingContext = v; }));
-  warn.appendChild(toggleRow('Allow adding price feeds', dz('The owner can add price feeds the project uses to convert currencies.', 'Price feeds can’t be added during this ruleset.'), stage.allowAddPriceFeed, function (v) { stage.allowAddPriceFeed = v; }));
+  warn.appendChild(toggleRow('Allow setting payment terminals', dz('The project owner can add/remove payment terminals at any time. This lets the project upgrade, but also lets the project owner reroute where funds flow at will.', 'Payment terminals are fixed for this ruleset.'), stage.allowSetTerminals, function (v) { stage.allowSetTerminals = v; }));
+  warn.appendChild(toggleRow('Allow setting controller', dz('The project owner can change the project’s controller at any time. This lets the project upgrade, but can also be used by the project owner to change all the rules at will.', 'The controller is fixed for this ruleset.'), stage.allowSetController, function (v) { stage.allowSetController = v; }));
+  warn.appendChild(toggleRow('Allow terminal migration', dz('The project owner can migrate the project’s terminals to a new version. This lets the project upgrade, but can also be used by the project owner to move all funds to a terminal of their choosing.', 'Terminal migration is disabled.'), stage.allowTerminalMigration, function (v) { stage.allowTerminalMigration = v; }));
+  warn.appendChild(toggleRow('Allow setting a custom token', dz('The project owner can replace the project’s token with a custom ERC-20 of their choosing.', 'The project token can’t be swapped for a custom one.'), stage.allowSetCustomToken, function (v) { stage.allowSetCustomToken = v; }));
+  warn.appendChild(toggleRow('Allow adding accounting tokens', dz('The project owner can add new accounting tokens the project holds at any time.', 'The set of accounting tokens is fixed for this ruleset.'), stage.allowAddAccountingContext, function (v) { stage.allowAddAccountingContext = v; }));
+  warn.appendChild(toggleRow('Allow adding price feeds', dz('The project owner can add price feeds the project uses to convert currencies.', 'Price feeds can’t be added during this ruleset.'), stage.allowAddPriceFeed, function (v) { stage.allowAddPriceFeed = v; }));
   c.appendChild(warn);
   return c;
 }
@@ -3060,7 +3069,7 @@ function renderDeploy(state, render) {
   if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to ' + (isRev ? 'deploy.' : 'launch.')));
   if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
   if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Flavor step to launch.'));
-  if (needOperator) wrap.appendChild(infoNote('Set an operator on the Flavor step to deploy your revnet.'));
+  if (needOperator) wrap.appendChild(infoNote('Set a project operator on the Flavor step to deploy your revnet.'));
   if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet — fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
   if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying — otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
@@ -3341,7 +3350,7 @@ function reviewSummary(state) {
     c.appendChild(row('Token', '$' + tickerLabel(state)));
     c.appendChild(row('Accounting token', surplusTokenLabel(state)));
     var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-    c.appendChild(row('Operator', /^0x/.test(opRaw) ? shortAddr(opRaw) : 'Project owner'));
+    c.appendChild(row('Project operator', /^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || '—')));
     c.appendChild(row('Stages', String(state.stages.length)));
     state.stages.forEach(function (s, i) { c.appendChild(row('Stage #' + (i + 1), revStageSummary(s, i, state))); });
     c.appendChild(row('Chains', state.chainIds.map(chainName).join(', ')));
@@ -3501,6 +3510,7 @@ async function monitorCreateRelayr(state, session, resumed) {
     state.deployProgress = null;
     return records;
   } catch (error) {
+    if (error && error.code === 'RELAYR_PAYMENT_EXPIRED') session.paymentState = 'expired';
     if (error && error.records) persist(error.records);
     if (relayrProgress(session.records, expected).allFailed) {
       clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
@@ -3517,17 +3527,20 @@ async function monitorCreateRelayr(state, session, resumed) {
 function createRelayrReceiptNode(session, checking, onCheck, onClear) {
   var panel = el('div', 'relayr-pending-panel create-relayr-receipt');
   var progress = relayrProgress(session.records, session.expectedCount);
+  var paymentExpired = session.paymentState === 'expired';
   renderRelayrReceiptInto(panel, session, {
     stateLabel: function (record) { var s = relayrChainStatus(record); return { text: s.label, kind: s.kind }; },
     chainNameOf: chainName,
-    noteText: progress.failed
+    noteText: paymentExpired
+      ? 'The payment transaction was confirmed, but Relayr did not recognize it before the quote expired. Nothing deployed. Keep the payment hash and bundle ID for support; clear this receipt only when you are ready to create a new quote.'
+      : progress.failed
       ? 'Some chain outcomes may differ. Nothing was resubmitted—review the project state before clearing this receipt or retrying missing work.'
       : (session.persisted === false
-        ? 'The deployment is already paid, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never signs or pays again.'
-        : 'The deployment is already paid. It is safe to close this window; checking status never signs, pays, or creates another bundle.'),
+        ? 'The payment transaction confirmed, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never signs or pays again.'
+        : 'The payment transaction confirmed. It is safe to close this window; checking status never signs, pays, or creates another bundle.'),
   });
   var action = el('button', 'create-btn ghost'); action.type = 'button'; action.style.marginTop = '10px';
-  if (progress.failed) {
+  if (paymentExpired || progress.failed) {
     action.textContent = 'Clear saved receipt';
     action.addEventListener('click', function () {
       if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already deployed. Review every chain before launching any missing work.')) return;
@@ -3576,7 +3589,7 @@ function deploy(state, render) {
   }
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
-  // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
+  // The project owner / project operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
   if (state.projectType === 'revnet' ? !isAddr(operatorRaw) : !isAddr(ownerRaw)) {

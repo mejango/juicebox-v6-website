@@ -33,7 +33,7 @@ const path = require("path");
 const { execSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const REPOS_DIR = path.resolve(ROOT, "..");
+const REPOS_DIR = path.resolve(ROOT, "..", "..");
 const DATA_DIR = path.join(ROOT, "data");
 const OUT_FILE = path.join(DATA_DIR, "contract-sources.json");
 

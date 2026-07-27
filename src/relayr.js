@@ -243,6 +243,7 @@ export function saveRelayrPendingSession(scope, session) {
     }).filter(function (chain) { return Number.isSafeInteger(chain.id) && chain.id > 0; }),
     records: (session.records || []).map(relayrRecordSnapshot),
     itemCount: Math.max(0, Number(session.itemCount) || 0),
+    paymentState: session.paymentState === 'expired' ? 'expired' : null,
     persisted: true,
   };
   var key = relayrPendingStorageKey(scope);
@@ -303,6 +304,17 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs) {
           'Relayr bundle ' + uuid + ' failed on ' + failed.length + ' chain' + (failed.length > 1 ? 's' : '') + '. Nothing was resubmitted; check confirmed chains before trying again.',
           'RELAYR_FAILED', uuid, txs, false
         ));
+        // A wallet receipt only proves that the payment-contract call mined.
+        // Relayr separately reports whether it attributed that payment to this
+        // bundle. Once an unrecognized quote expires, "Pending" is terminal:
+        // continuing to poll forever hides the actual recovery path.
+        var expiresAt = body && body.expires_at ? Date.parse(body.expires_at) : NaN;
+        if (body && body.payment_received === false && Number.isFinite(expiresAt) && Date.now() >= expiresAt) {
+          return reject(relayrExecutionError(
+            'Relayr did not recognize the confirmed payment before bundle ' + uuid + ' expired. Nothing deployed. Keep the payment hash and bundle ID for support; do not treat this as a still-pending deployment.',
+            'RELAYR_PAYMENT_EXPIRED', uuid, txs, false
+          ));
+        }
         if (timedOut()) return reject(timeout());
         setTimeout(tick, intervalMs);
       }).catch(function () {

@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { createDraftObject, newCreateDraftState, parseCreateDraftJson, shopMediaUploadIssue } from '../src/create-flow.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createDraftObject, exportDraftFile, newCreateDraftState, parseCreateDraftJson, shopMediaUploadIssue } from '../src/create-flow.js';
 
 describe('.jb draft interchange', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it('round-trips the existing plain .jb state into an editable, unconfirmed draft', () => {
     const state = newCreateDraftState();
     state.projectType = 'custom';
@@ -69,5 +75,28 @@ describe('.jb draft interchange', () => {
     expect(shopMediaUploadIssue({ shopEnabled: true, nfts: [{ _mediaError: 'network failed' }] })).toMatch(/upload failed/i);
     expect(shopMediaUploadIssue({ shopEnabled: true, nfts: [{ imageUri: 'ipfs://video', mediaType: 'video/mp4' }] })).toBe('');
     expect(shopMediaUploadIssue({ shopEnabled: false, nfts: [{ _mediaError: 'stale error' }] })).toBe('');
+  });
+
+  it('keeps the synthetic export anchor alive until the browser starts the download', () => {
+    vi.useFakeTimers();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const revoke = vi.fn();
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:project-draft'),
+      revokeObjectURL: revoke,
+    });
+    const state = newCreateDraftState();
+    state.details.name = 'After launch';
+
+    exportDraftFile(state);
+
+    const anchor = document.querySelector('a[download="after-launch.jb"]');
+    expect(click).toHaveBeenCalledOnce();
+    expect(anchor).not.toBeNull();
+    expect(revoke).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1000);
+    expect(document.querySelector('a[download="after-launch.jb"]')).toBeNull();
+    expect(revoke).toHaveBeenCalledWith('blob:project-draft');
   });
 });

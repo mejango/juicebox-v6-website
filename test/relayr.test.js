@@ -9,6 +9,7 @@ import {
   relayrStateIsSuccess,
   saveRelayrPendingSession,
 } from '../src/relayr.js';
+import { shouldUseRelayrForChains } from '../src/discover.js';
 
 function relayrResponse(transactions) {
   return { ok: true, json: async () => ({ transactions }) };
@@ -55,6 +56,28 @@ describe('Relayr execution state', () => {
       name: 'RelayrExecutionError',
       code: 'RELAYR_FAILED',
       bundleUuid: 'bundle-failed',
+      records,
+      retryable: false,
+    });
+  });
+
+  it('stops calling an expired, unrecognized payment pending', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-26T21:00:00Z'));
+    const records = [{ status: { state: 'Pending' } }];
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        payment_received: false,
+        expires_at: '2026-07-26T20:53:52Z',
+        transactions: records,
+      }),
+    })));
+
+    await expect(relayrPoll('bundle-expired', null, 10, 100)).rejects.toMatchObject({
+      name: 'RelayrExecutionError',
+      code: 'RELAYR_PAYMENT_EXPIRED',
+      bundleUuid: 'bundle-expired',
       records,
       retryable: false,
     });
@@ -119,6 +142,15 @@ describe('Relayr execution state', () => {
     });
     await vi.advanceTimersByTimeAsync(45_000);
     await rejected;
+  });
+});
+
+describe('Relayr routing boundary', () => {
+  it('reserves Relayr for genuine multichain operations', () => {
+    expect(shouldUseRelayrForChains([])).toBe(false);
+    expect(shouldUseRelayrForChains([{ id: 8453 }])).toBe(false);
+    expect(shouldUseRelayrForChains([{ id: 8453 }, { id: 8453 }])).toBe(false);
+    expect(shouldUseRelayrForChains([{ id: 8453 }, { id: 10 }])).toBe(true);
   });
 });
 

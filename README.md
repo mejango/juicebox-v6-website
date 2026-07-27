@@ -11,16 +11,17 @@ A self-contained, client-only web app for discovering, paying, managing, and dep
 ```bash
 nvm use
 npm ci
+npm run dev          # regenerate the registry, bundle, and serve at http://localhost:3000
 npm run build        # regenerate data + bundle to dist/
 npm run test         # vitest unit/encoding suite
 npm run test:browser # deterministic production-bundle shape/a11y checks
 npm run test:ci      # every deterministic CI gate
 npm run check        # production dependency audit + every deterministic gate
-# serve dist/ with any static server, e.g.:
-npx serve dist
 ```
 
 `dist/` is the entire deployable app: `index.html` + `app.js` (the bundle, with all ABIs/data inlined) + `style.css` + a couple of static assets.
+
+`npm run serve` serves the existing `dist/` without rebuilding it. Set `PORT` to override its default port; Playwright does this automatically so its isolated test server remains on port 4181.
 
 ## Architecture
 
@@ -54,7 +55,7 @@ test/                     vitest unit/encoding tests + a CDP UI-smoke runner
 
 `npm run build` runs four steps; the deployed bytecode's ABIs/addresses are the source of truth:
 
-1. `sync-deployments` — pull ABIs + addresses from `../deploy-all-v6/deployments` into `data/`.
+1. `sync-deployments` — pull ABIs + addresses from `../../deploy-all-v6/deployments` into `data/`.
 2. `extract-sources` — pull verified contract sources (for the in-app source viewer).
 3. `generate-registry` — fold everything into `src/abi-registry.js` (one importable module).
 4. `bundle` — esbuild → `dist/app.js`; `style.css` is copied verbatim.

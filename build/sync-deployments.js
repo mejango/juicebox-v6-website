@@ -19,7 +19,7 @@ const MANIFEST_FILE = path.join(DATA_DIR, "manifest.json");
 const DEPLOYMENTS_FILE = path.join(DATA_DIR, "deployments.json");
 const DEPLOYMENTS_DIR = process.env.DEPLOY_ALL_DEPLOYMENTS_DIR
   ? path.resolve(process.env.DEPLOY_ALL_DEPLOYMENTS_DIR)
-  : path.resolve(ROOT, "..", "deploy-all-v6", "deployments");
+  : path.resolve(ROOT, "..", "..", "deploy-all-v6", "deployments");
 
 const CHAIN_NAMES = {
   "1": "Ethereum",

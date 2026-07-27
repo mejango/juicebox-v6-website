@@ -1,7 +1,7 @@
 // src/component-base.js
 // Shared building blocks for all component widgets
 
-import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected, proposeSafeTransactions } from './wallet.js';
+import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected, proposeSafeTransactions, waitForSafeInitialization } from './wallet.js';
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
@@ -1166,7 +1166,9 @@ export function executeTransaction(opts) {
         onError: function (m, meta) { r.showStatus(m, 'error', meta); base.onError(m, meta); },
       };
     }
-    sendNow();
+    waitForSafeInitialization().then(sendNow).catch(function (err) {
+      cbs.onError(errMessage(err, 'Could not determine the Safe connection.'));
+    });
   });
 
   function sendNow() {
@@ -1184,7 +1186,7 @@ export function executeTransaction(opts) {
     txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
     cbs.onStatus('Proposing to your Safe…', 'pending');
     proposeSafeTransactions(txs).then(function (safeTxHash) {
-      cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Open Safe{Wallet} to sign & execute it.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
+      cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
     }).catch(function (err) {
       cbs.onError(errMessage(err, 'Could not propose the transaction to your Safe.'));
     });

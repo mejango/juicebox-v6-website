@@ -48,7 +48,12 @@ export function detectSafeApp(timeoutMs) {
   if (!inIframe()) return Promise.resolve(null);
   return new Promise(function (resolve) {
     var settled = false;
-    var timer = setTimeout(function () { if (!settled) { settled = true; resolve(null); } }, timeoutMs == null ? 500 : timeoutMs);
+    // Safe Wallet can take more than 500ms to initialise a custom/IPFS app iframe,
+    // especially on the first load. A false negative is dangerous: Safe will still
+    // intercept eth_sendTransaction, but the app would treat the proposal hash as a
+    // mined transaction hash and poll it as a receipt. Give the parent handshake a
+    // real startup window and let transaction boundaries await the same probe.
+    var timer = setTimeout(function () { if (!settled) { settled = true; resolve(null); } }, timeoutMs == null ? 10000 : timeoutMs);
     safeRpc('getSafeInfo').then(function (info) {
       if (settled) return; settled = true; clearTimeout(timer);
       resolve(info && info.safeAddress ? info : null);
@@ -63,6 +68,23 @@ export function txHashForSafeTx(safeTxHash, tries) {
   return safeRpc('getTxBySafeTxHash', { safeTxHash: safeTxHash })
     .then(function (r) { return (r && r.txHash) || null; })
     .catch(function () { return null; });
+}
+
+// Resolve a Safe proposal to the actual mined execution hash. This is used by
+// legacy/direct wallet-write sites which still expect eth_sendTransaction to
+// behave like an EOA provider. The proposal hash itself must never be passed to
+// eth_getTransactionReceipt.
+export function waitForSafeExecution(safeTxHash, pollingIntervalMs) {
+  var interval = pollingIntervalMs == null ? 4000 : pollingIntervalMs;
+  return new Promise(function (resolve) {
+    function poll() {
+      txHashForSafeTx(safeTxHash).then(function (hash) {
+        if (hash) resolve(hash);
+        else setTimeout(poll, interval);
+      });
+    }
+    poll();
+  });
 }
 
 // Propose a BATCH of transactions as a single Safe queue entry (executed atomically once signed). Used to
@@ -105,7 +127,11 @@ export function makeSafeProvider(safeInfo) {
           try { value = tx.value == null ? '0' : (typeof tx.value === 'string' ? tx.value : ('0x' + BigInt(tx.value).toString(16))); }
           catch (_) { value = '0'; }
           return safeRpc('sendTransactions', { txs: [{ to: tx.to, value: value, data: tx.data || '0x' }] })
-            .then(function (r) { return r && r.safeTxHash; });
+            .then(function (r) {
+              var safeTxHash = r && r.safeTxHash;
+              if (!safeTxHash) throw new Error('Safe returned no proposal hash.');
+              return waitForSafeExecution(safeTxHash);
+            });
         }
         case 'personal_sign':
           return safeRpc('signMessage', { message: params[0] }).then(function (r) { return r && (r.signature || r.safeTxHash); });

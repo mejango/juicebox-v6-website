@@ -7,7 +7,7 @@ const DEPLOY_ALL_COMMIT = '316e9d4d3f9e1c5b41a5df7c0ad6183abbeccc7f';
 const DEPLOY_ALL_SOURCE_DIGEST = 'sha256:443959a5a09616f4b73a0b4046e82674bab5e4e86287380d43642fa4aa898484';
 const root = resolve(import.meta.dirname, '..');
 const deploymentsDir = resolve(
-  process.env.DEPLOY_ALL_DEPLOYMENTS_DIR || resolve(root, '..', 'deploy-all-v6', 'deployments'),
+  process.env.DEPLOY_ALL_DEPLOYMENTS_DIR || resolve(root, '..', '..', 'deploy-all-v6', 'deployments'),
 );
 
 if (!existsSync(deploymentsDir)) {

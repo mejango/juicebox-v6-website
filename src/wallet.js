@@ -12,6 +12,7 @@ let walletClient = null;
 let account = null;
 let safeInfo = null;         // set when the site runs inside a Safe App iframe
 let connectedViaSafe = false; // true once connected through the Safe provider — tx flow proposes to the queue
+let safeInitialization = null;
 export function isSafeConnected() { return connectedViaSafe; }
 export function getSafeInfo() { return safeInfo; }
 const listeners = [];
@@ -149,17 +150,28 @@ function notify() {
 
 // Detect the Safe App context and, if present, auto-connect the Safe (a Safe App is already authorized by
 // being opened inside Safe{Wallet}, so no manual connect step). Call once at startup, before eagerConnect.
-export async function initSafeApp() {
-  try { safeInfo = await detectSafeApp(); } catch (_) { safeInfo = null; }
-  if (!safeInfo) return null;
-  var chain = CHAINS[Number(safeInfo.chainId)] || CHAINS[getCurrentChainId()] || CHAINS[11155111];
-  activeProvider = makeSafeProvider(safeInfo);
-  connectedViaSafe = true;
-  setupClients(chain);
-  account = safeInfo.safeAddress;
-  bindEvents(activeProvider);
-  notify();
-  return safeInfo;
+export function initSafeApp() {
+  if (safeInitialization) return safeInitialization;
+  safeInitialization = (async function () {
+    try { safeInfo = await detectSafeApp(); } catch (_) { safeInfo = null; }
+    if (!safeInfo) return null;
+    var chain = CHAINS[Number(safeInfo.chainId)] || CHAINS[getCurrentChainId()] || CHAINS[11155111];
+    activeProvider = makeSafeProvider(safeInfo);
+    connectedViaSafe = true;
+    setupClients(chain);
+    account = safeInfo.safeAddress;
+    bindEvents(activeProvider);
+    notify();
+    return safeInfo;
+  })();
+  return safeInitialization;
+}
+
+// Transaction entry points await this before deciding between the Safe proposal
+// path and the ordinary EOA path. It closes the first-load iframe race without
+// making callers start a second, conflicting Safe probe.
+export function waitForSafeInitialization() {
+  return safeInitialization || initSafeApp();
 }
 
 export async function connect(chosen) {

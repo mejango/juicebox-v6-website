@@ -1225,7 +1225,7 @@ function renderShopSection(project, shop, cart) {
   var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; head.appendChild(title);
   // Top-right "+ Add items" for the owner/operator (shown once the 721 hook resolves; gated on submit).
   var headAdd = el('a', 'operator-cta shop-head-add'); headAdd.href = '#'; headAdd.textContent = '+ Add items';
-  headAdd.title = 'Add NFT items for sale (operator only)'; headAdd.style.display = 'none';
+  headAdd.title = 'Add NFT items for sale (project operator only)'; headAdd.style.display = 'none';
   head.appendChild(headAdd);
   card.appendChild(head);
   var body = el('div', 'shop-body'); card.appendChild(body);
@@ -1581,7 +1581,7 @@ function renderRecentPurchases(project, mediaP) {
     box.className = '';
     var table = el('div', 'detail-ops-table shop-recent-table');
     var head = el('div', 'detail-ops-row detail-ops-head detail-ops-3 shop-recent-row');
-    ['Item', 'Owner', ''].forEach(function (h) { var c = el('span', 'detail-ops-cell'); c.textContent = h; head.appendChild(c); });
+    ['Item', 'Holder', ''].forEach(function (h) { var c = el('span', 'detail-ops-cell'); c.textContent = h; head.appendChild(c); });
     table.appendChild(head);
     res.rows.slice(0, 25).forEach(function (m) {
       var row = el('div', 'detail-ops-row detail-ops-3 shop-recent-row');
@@ -2622,7 +2622,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   var fl = tier.flags || {};
   var FLAG_DESCS = [
     ['allowOwnerMint', project.isRevnet ? 'Revnet operator can mint' : 'Project owner can mint', 'The ' + (project.isRevnet ? 'revnet operator' : 'project owner') + ' can mint this item for free, without a payment.'],
-    ['transfersPausable', 'Transfers pausable', 'The owner can pause transfers of this item.'],
+    ['transfersPausable', 'Transfers pausable', 'The project owner can pause transfers of this item.'],
     ['cantBeRemoved', 'Cannot be removed', 'This item can never be removed from the shop.'],
     ['cantBuyWithCredits', 'No credit buys', 'Buyers can’t use project credits to mint this item — only a fresh payment.'],
     ['cantIncreaseDiscountPercent', 'Discount capped', 'This item’s discount can only be lowered, never increased.'],
@@ -2646,7 +2646,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   var authority = projectAuthorityAddress(project);
   var acct = getAccount && getAccount();
   if (acct && authority && acct.toLowerCase() === authority.toLowerCase()) {
-    var opH = el('div', 'tier-detail-section-h'); opH.textContent = 'Operator'; content.appendChild(opH);
+    var opH = el('div', 'tier-detail-section-h'); opH.textContent = 'Project operator'; content.appendChild(opH);
     var opBox = el('div', 'tier-detail-op');
     var opStatus = el('div', 'modal-status'); opStatus.style.display = 'none';
     var dRow = el('div', 'tier-detail-op-row');
@@ -5098,7 +5098,7 @@ async function revnetOperatorOf(projectId, chainId) {
 }
 
 function projectAuthorityLabel(project) {
-  return project && project.isRevnet ? 'Operator' : 'Owner';
+  return project && project.isRevnet ? 'Project operator' : 'Project owner';
 }
 
 function projectAuthorityAddress(project) {
@@ -7734,7 +7734,7 @@ function renderAboutCard(project) {
 
   var foot = el('div', 'detail-about-foot');
   var edit = el('a', 'operator-cta'); edit.textContent = 'Edit'; edit.href = '#';
-  edit.title = 'Edit the project — logo, tagline, description, links (operator only)';
+  edit.title = 'Edit the project — logo, tagline, description, links (project operator only)';
   edit.addEventListener('click', function (e) { e.preventDefault(); openEditProjectModal(project); });
   foot.appendChild(edit);
   card.appendChild(foot);
@@ -8038,21 +8038,21 @@ function openTransferAuthorityModal(project, opts) {
   var homeChainId = (chains[0] && chains[0].id) || project.chainId;
   var chainListText = chains.map(function (c) { return c.name || chainNameOf(c.id); }).join(', ');
   var content = el('div', 'modal-body operator-edit');
-  content.appendChild(operatorGateNode((projectAuthorityLabel(project) || (isRev ? 'Operator' : 'Owner')).toLowerCase(), authorityAddr, isRev ? 'to transfer the operator role.' : 'to transfer ownership.', homeChainId));
+  content.appendChild(operatorGateNode((projectAuthorityLabel(project) || (isRev ? 'Project operator' : 'Project owner')).toLowerCase(), authorityAddr, isRev ? 'to transfer the project operator role.' : 'to transfer project ownership.', homeChainId));
   var warn = el('div', 'operator-edit-across');
   warn.textContent = isRev
-    ? 'Hands over operator control on ' + chainListText + '. Use the zero address to relinquish operator powers permanently. Does not move funds or change rulesets.'
-    : 'Transfers project ownership (the JBProjects NFT) on ' + chainListText + '. The new owner controls owner-only actions there. Does not move funds or change rulesets.';
+    ? 'Hands over project operator control on ' + chainListText + '. Use the zero address to relinquish project operator powers permanently. Does not move funds or change rulesets.'
+    : 'Transfers project ownership (the JBProjects NFT) on ' + chainListText + '. The new project owner controls owner-only actions there. Does not move funds or change rulesets.';
   content.appendChild(warn);
-  var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = isRev ? 'New operator' : 'New owner'; content.appendChild(nlbl);
-  var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new ' + (isRev ? 'operator' : 'owner') + ' address'; content.appendChild(addrInput);
+  var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = isRev ? 'New project operator' : 'New project owner'; content.appendChild(nlbl);
+  var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new ' + (isRev ? 'project operator' : 'project owner') + ' address'; content.appendChild(addrInput);
   var addrHint = el('div', 'operator-edit-token-name'); content.appendChild(addrHint);
-  var authorityValueOf = attachAddressRecognition(addrInput, addrHint, homeChainId, { label: isRev ? 'New operator' : 'New owner' });
+  var authorityValueOf = attachAddressRecognition(addrInput, addrHint, homeChainId, { label: isRev ? 'New project operator' : 'New project owner' });
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = isRev ? 'Transfer operator' : 'Transfer ownership';
+  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = isRev ? 'Transfer project operator' : 'Transfer project ownership';
   actions.appendChild(submit); content.appendChild(actions);
-  var modal = openModal(isRev ? 'Transfer operator' : 'Transfer ownership', content);
+  var modal = openModal(isRev ? 'Transfer project operator' : 'Transfer project ownership', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -8229,8 +8229,8 @@ function operatorGateNode(authorityLabel, operatorAddr, actionText, chainId) {
       var isSigner = acc && info.owners.some(function (o) { return o.toLowerCase() === acc.toLowerCase(); });
       gate.className = 'operator-gate' + (isSigner ? ' ok' : '');
       gate.textContent = isSigner
-        ? 'Owner is a ' + info.threshold + '-of-' + info.owners.length + ' Safe — you’re a signer, so this is proposed to the Safe’s queue (approve + execute in the Owner tab).'
-        : 'Owner is a ' + info.threshold + '-of-' + info.owners.length + ' Safe (' + truncAddr(operatorAddr) + '). Connect one of its signers to propose this.';
+        ? 'Project owner is a ' + info.threshold + '-of-' + info.owners.length + ' Safe — you’re a signer, so this is proposed to the Safe’s queue (approve + execute in the Owner tab).'
+        : 'Project owner is a ' + info.threshold + '-of-' + info.owners.length + ' Safe (' + truncAddr(operatorAddr) + '). Connect one of its signers to propose this.';
     }).catch(function () {});
   }
   return gate;
@@ -8395,7 +8395,16 @@ async function monitorRelayrSession(session, setStatus, opts) {
   }
 }
 
-// Shared: sign one ERC-2771 call per chain, quote the Relayr bundle, take one payment, poll to completion.
+export function shouldUseRelayrForChains(chains) {
+  if (!Array.isArray(chains)) return false;
+  return new Set(chains.map(function (chain) {
+    return Number(chain && typeof chain === 'object' ? chain.id : chain);
+  }).filter(Number.isFinite)).size > 1;
+}
+
+// Shared dispatcher: submit a one-chain EOA call directly on that chain. Relayr is reserved for a
+// genuine multichain change: sign one ERC-2771 call per chain, quote the bundle, take one payment,
+// and poll it to completion.
 // buildCall(chainId) -> { to, data }. Once payment confirms, `onSession` receives the durable receipt callers
 // can use to resume polling the SAME bundle. A post-payment error carries that receipt as `.relayrSession` so
 // callers never have to guess whether it is safe to create a second bundle.
@@ -8417,6 +8426,51 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     var call = buildCall(cid);
     if (!call || !call.to) throw new Error('No target contract on ' + (chains[i].name || cid));
     calls.push({ cid: cid, name: chains[i].name || ('chain ' + cid), to: call.to, data: call.data });
+  }
+  if (!shouldUseRelayrForChains(chains)) {
+    var direct = calls[0];
+    var directOk = await confirmTransactionModal({
+      via: 'Direct wallet transaction',
+      action: confirmOpts.label || 'Project update',
+      chain: direct.name,
+      chainId: direct.cid,
+      contract: resolveContractName(direct.to, direct.cid) || direct.to,
+      address: direct.to,
+      calldata: direct.data,
+    }, { title: confirmOpts.title || 'Confirm transaction', confirmText: 'Confirm & send' });
+    if (!directOk || !directOk.ok) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
+    setStatus('Checking wallet network…', 'pending');
+    var directWallet = getWalletClient();
+    if (!directWallet) throw new Error('Connect a wallet to continue.');
+    var directWalletChainId = await directWallet.getChainId();
+    if (directWalletChainId !== direct.cid) {
+      setStatus('Switch your wallet to ' + direct.name + '…', 'pending');
+      await switchChain(direct.cid);
+    }
+    if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) {
+      throw new Error('Connected account changed. Review the transaction again.');
+    }
+    var directClient = clientFor(direct.cid);
+    setStatus('Simulating the confirmed transaction…', 'pending');
+    await directClient.call({ account: account, to: direct.to, data: direct.data });
+    setStatus('Awaiting wallet confirmation…', 'pending');
+    var directHash = await directWallet.sendTransaction({
+      account: account,
+      chain: CHAINS[direct.cid],
+      to: direct.to,
+      data: direct.data,
+      value: 0n,
+    });
+    setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
+    var directReceipt = await directClient.waitForTransactionReceipt({ hash: directHash });
+    if (!directReceipt || directReceipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
+    setStatus('Confirmed in block ' + directReceipt.blockNumber + ' | TX: ' + truncAddr(directReceipt.transactionHash), 'success');
+    return {
+      direct: true,
+      expectedCount: 1,
+      chains: [{ id: direct.cid, name: direct.name }],
+      records: [{ status: { state: 'Completed' }, data: { hash: directReceipt.transactionHash } }],
+    };
   }
   var ok = await confirmTransactionModal({
     via: 'Relayr — one prepaid payment relays the same change to every chain below',
@@ -8777,9 +8831,33 @@ function runRelayrBundle(entries, opts) {
   });
 }
 
-function executeReadySafeTransactions(readyExecs, opts) {
+async function executeReadySafeTransactions(readyExecs, opts) {
   opts = opts || {};
   readyExecs = readyExecs || [];
+  var chainIds = Array.from(new Set(readyExecs.map(function (r) { return Number(r.cid); })));
+  if (readyExecs.length && chainIds.length === 1) {
+    var ordered = readyExecs.slice().sort(function (a, b) { return Number(a.tx.nonce) - Number(b.tx.nonce); });
+    var directOk = await confirmTransactionModal({
+      via: 'Direct wallet transactions',
+      action: opts.title || ('Execute ' + ordered.length + ' queued transaction' + (ordered.length === 1 ? '' : 's')),
+      transactions: ordered.map(function (r) {
+        var call = safeExecRelayrTx(r.cid, r.safe, r.tx);
+        return {
+          chain: r.chain || chainNameOf(r.cid),
+          chainId: r.cid,
+          contract: resolveContractName(call.target, r.cid) || call.target,
+          address: call.target,
+          calldata: call.data,
+          value: call.value,
+        };
+      }),
+    }, { title: opts.title || 'Confirm queued transactions', confirmText: 'Confirm & execute' });
+    if (directOk !== true) return { done: false, cancelled: true };
+    for (var i = 0; i < ordered.length; i++) {
+      await executeSafeTx(ordered[i].cid, ordered[i].safe, ordered[i].tx);
+    }
+    return { done: true, direct: true };
+  }
   var entries = readyExecs.map(function (r) { return safeExecRelayrTx(r.cid, r.safe, r.tx); });
   var preview = readyExecs.map(function (r) {
     return {
@@ -9787,11 +9865,11 @@ function rulesetRows(r, m, project) {
     ['TOKEN', 'Cash out tax rate', percentFromRuleset(m.cashOutTaxRate)],
     ['TOKEN', 'Cash outs use total surplus', m.useTotalSurplusForCashOuts ? 'Enabled' : 'Disabled'],
     ['TOKEN', 'Base currency', baseUnit],
-    ['TOKEN', 'Owner token minting', m.allowOwnerMinting ? 'Enabled' : 'Disabled'],
+    ['TOKEN', 'Project owner token minting', m.allowOwnerMinting ? 'Enabled' : 'Disabled'],
     ['TOKEN', 'Token transfers', m.pauseCreditTransfers ? 'Disabled' : 'Enabled'],
     ['OTHER RULES', 'Payments to this project', m.pausePay ? 'Disabled' : 'Enabled'],
     ['OTHER RULES', 'Hold fees', m.holdFees ? 'Enabled' : 'Disabled'],
-    ['OTHER RULES', 'Owner must send payouts', m.ownerMustSendPayouts ? 'Enabled' : 'Disabled'],
+    ['OTHER RULES', 'Project owner must send payouts', m.ownerMustSendPayouts ? 'Enabled' : 'Disabled'],
     ['OTHER RULES', 'Set payment terminals', m.allowSetTerminals ? 'Enabled' : 'Disabled'],
     ['OTHER RULES', 'Set controller', m.allowSetController ? 'Enabled' : 'Disabled'],
     ['OTHER RULES', 'Migrate payment terminal', m.allowTerminalMigration ? 'Enabled' : 'Disabled'],
@@ -11289,11 +11367,7 @@ function renderExtrasSection(project) {
 
   var status = el('div', 'operator-edit-status'); body.appendChild(status);
   var actions = el('div', 'operator-edit-actions extras-actions');
-  var deployRelayr = el('a', 'operator-cta extras-relayr-submit');
-  deployRelayr.href = '#';
-  deployRelayr.textContent = 'Use Relayr';
   var deploy = el('a', 'operator-cta operator-edit-submit'); deploy.href = '#'; deploy.textContent = 'Deploy payer address';
-  actions.appendChild(deployRelayr);
   actions.appendChild(deploy);
   body.appendChild(actions);
   var payerList = renderProjectPayerAddresses(project);
@@ -11309,12 +11383,11 @@ function renderExtrasSection(project) {
   function syncDeployActions() {
     var selected = selectedChains();
     deploy.textContent = selected.length > 1 ? 'Deploy payer addresses' : 'Deploy payer address';
-    deployRelayr.style.display = selected.length === 1 ? '' : 'none';
   }
   chainChecks.forEach(function (r) { r.cb.addEventListener('change', syncDeployActions); });
   syncDeployActions();
 
-  function submitDeploy(forceRelayr) {
+  function submitDeploy() {
     if (busy) return;
     var selected = selectedChains();
     if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
@@ -11340,7 +11413,7 @@ function renderExtrasSection(project) {
         }
         return buildProjectPayerDeployCall(cid, pidOn(project, cid), ben, memoInput.value, metadata, addToBalance, own);
       });
-      if (calls.length === 1 && !forceRelayr) {
+      if (calls.length === 1) {
         await new Promise(function (resolve, reject) {
           var call = calls[0];
           executeTransaction({
@@ -11373,19 +11446,13 @@ function renderExtrasSection(project) {
     }).finally(function () {
       busy = false;
       deploy.classList.remove('disabled');
-      deployRelayr.classList.remove('disabled');
     });
     busy = true;
     deploy.classList.add('disabled');
-    deployRelayr.classList.add('disabled');
   }
   deploy.addEventListener('click', function (e) {
     e.preventDefault();
-    submitDeploy(false);
-  });
-  deployRelayr.addEventListener('click', function (e) {
-    e.preventDefault();
-    submitDeploy(true);
+    submitDeploy();
   });
 
   return section;
@@ -11470,7 +11537,7 @@ function renderAccountCard(project) {
   // For a revnet, the JBProjects owner is the REVDeployer — the controlling account is the OPERATOR; show
   // that instead. For custom projects, the owner IS the controlling account (read per chain via ownerOf).
   var isRev = project.isRevnet;
-  var addrLabel = isRev ? 'Operator' : 'Owner';
+  var addrLabel = isRev ? 'Project operator' : 'Project owner';
   var authorityRowsP = isRev
     ? fetchOperatorsPerChain(project).then(function (res) {
       var byChain = {};
@@ -11815,7 +11882,8 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       });
     });
 
-    // Offer to execute unambiguous ready txs in ONE Relayr payment. Same-nonce alternatives are deliberately left out:
+    // Offer to execute unambiguous ready txs together. A single-chain batch stays direct and runs in nonce
+    // order; only a genuinely cross-chain batch uses Relayr. Same-nonce alternatives are deliberately left out:
     // only an explicit per-row Execute click can choose which tx should consume that nonce.
     Promise.all(chainLoads).then(function () {
       batchBar.innerHTML = '';
@@ -11836,9 +11904,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       var allBtn = el('button', 'detail-check-btn'); allBtn.textContent = 'Execute all';
       allBtn.addEventListener('click', function () {
         if (!(getAccount && getAccount())) { connect(); return; }
-        var entries = ready.map(function (r) { return safeExecRelayrTx(r.cid, safe, r.tx); });
-        var preview = ready.map(function (r) { return { cid: r.cid, chain: r.chain, nonce: r.tx.nonce, details: labelForQueuedTx(r.tx) + ' → ' + (resolveContractName(r.tx.to, r.cid) || r.tx.to) }; });
-        runRelayrBundle(entries, { title: 'Execute ' + ready.length + ' transaction' + (ready.length > 1 ? 's' : ''), preview: preview }).then(function (res) {
+        executeReadySafeTransactions(ready, { title: 'Execute ' + ready.length + ' transaction' + (ready.length > 1 ? 's' : '') }).then(function (res) {
           if (res && res.done) loadQueues(info);
         });
       });
@@ -12561,22 +12627,22 @@ function renderPermissionsCard(project) {
   var title = el('div', 'detail-card-title'); title.textContent = 'Permissions'; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro');
   intro.textContent = isRev
-    ? 'What this revnet’s operator is allowed to do. These powers come with the operator role (the default revnet powers plus any NFT powers granted when the revnet was deployed).'
-    : 'Operators the owner has authorized to act on the project’s behalf, and what each one can do. The owner can grant or revoke permissions at any time.';
+    ? 'What this revnet’s project operator is allowed to do. These powers come with the project operator role (the default revnet powers plus any NFT powers granted when the revnet was deployed).'
+    : 'Project operators the project owner has authorized to act on the project’s behalf, and what each one can do. The project owner can grant or revoke permissions at any time.';
   card.appendChild(intro);
   var body = el('div'); body.appendChild(skel('100%', '40px')); card.appendChild(body);
 
   fetchPermissionOperators(project).then(function (ops) {
     body.innerHTML = '';
     if (!ops.length) {
-      var empty = el('div', 'powers-desc'); empty.textContent = isRev ? 'No operator permissions found.' : 'No operators authorized yet.';
+      var empty = el('div', 'powers-desc'); empty.textContent = isRev ? 'No project operator permissions found.' : 'No project operators authorized yet.';
       body.appendChild(empty);
     } else {
       ops.forEach(function (g) {
         var row = el('div', 'powers-row');
         var head = el('div', 'powers-head');
         var lab = el('span', 'powers-label'); lab.appendChild(addressNode(g.operator, project.chainId)); head.appendChild(lab);
-        if (g.isRevnetOperator) { var b = el('span', 'powers-state on'); b.textContent = 'Operator'; head.appendChild(b); }
+        if (g.isRevnetOperator) { var b = el('span', 'powers-state on'); b.textContent = 'Project operator'; head.appendChild(b); }
         row.appendChild(head);
         var list = el('div', 'perm-list');
         g.permsUnion.forEach(function (id) {
@@ -12595,7 +12661,7 @@ function renderPermissionsCard(project) {
       });
     }
     if (!isRev) {
-      var add = el('a', 'operator-cta powers-act'); add.href = '#'; add.textContent = '+ Add operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
+      var add = el('a', 'operator-cta powers-act'); add.href = '#'; add.textContent = '+ Add project operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
       add.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, null, []); });
       body.appendChild(add);
     }
@@ -12607,23 +12673,23 @@ function renderPermissionsCard(project) {
 // operator's full set on each chain (unchecking revokes; clearing all removes the operator). Routed by owner
 // type — Safe → proposed per chain; EOA → one relayr payment — via runAuthorityActionAcrossChains.
 function openSetPermissionsModal(project, existingOperator, existingPermIds) {
-  var authorityLabel = (projectAuthorityLabel(project) || 'Owner').toLowerCase();
+  var authorityLabel = (projectAuthorityLabel(project) || 'Project owner').toLowerCase();
   var account = projectAuthorityAddress(project); // the grantor — for a custom project this is the owner
   var allChains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   var editing = !!existingOperator;
 
   var content = el('div', 'modal-body operator-edit');
-  content.appendChild(operatorGateNode(authorityLabel, account, editing ? 'to change this operator’s permissions.' : 'to authorize a new operator.', project.chainId));
+  content.appendChild(operatorGateNode(authorityLabel, account, editing ? 'to change this project operator’s permissions.' : 'to authorize a new project operator.', project.chainId));
   var note = el('div', 'operator-edit-across');
-  note.textContent = 'Grants the checked permissions to the operator for this project. Setting permissions REPLACES the operator’s current set on each selected chain — unchecking a box revokes that power, and clearing every box removes the operator.';
+  note.textContent = 'Grants the checked permissions to the project operator. Setting permissions REPLACES the project operator’s current set on each selected chain — unchecking a box revokes that power, and clearing every box removes the project operator.';
   content.appendChild(note);
 
-  var olbl = el('div', 'operator-edit-label'); olbl.style.marginTop = '12px'; olbl.textContent = 'Operator'; content.appendChild(olbl);
-  var opInput = el('input', 'operator-edit-jwt'); opInput.type = 'text'; opInput.placeholder = '0x… operator address';
+  var olbl = el('div', 'operator-edit-label'); olbl.style.marginTop = '12px'; olbl.textContent = 'Project operator'; content.appendChild(olbl);
+  var opInput = el('input', 'operator-edit-jwt'); opInput.type = 'text'; opInput.placeholder = '0x… project operator address';
   if (editing) { opInput.value = existingOperator; opInput.disabled = true; }
   content.appendChild(opInput);
   var opHint = el('div', 'operator-edit-token-name'); content.appendChild(opHint);
-  var operatorValueOf = attachAddressRecognition(opInput, opHint, project.chainId, { label: 'Operator' });
+  var operatorValueOf = attachAddressRecognition(opInput, opHint, project.chainId, { label: 'Project operator' });
 
   var plbl = el('div', 'operator-edit-label'); plbl.style.marginTop = '14px'; plbl.textContent = 'Permissions'; content.appendChild(plbl);
   var have = {}; (existingPermIds || []).forEach(function (id) { have[id] = true; });
@@ -12655,7 +12721,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
   var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = editing ? 'Update permissions' : 'Add operator'; actions.appendChild(submit);
-  var gate = appendDangerGate(content, 'Granting permissions lets the operator act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious operator can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the operator address and the permissions I’m granting.');
+  var gate = appendDangerGate(content, 'Granting permissions lets the project operator act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious project operator can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the project operator address and the permissions I’m granting.');
   content.appendChild(actions);
   var modal = openModal(editing ? 'Edit permissions' : 'Add operator', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
@@ -14272,9 +14338,65 @@ function issuanceAtTime(sortedStages, t) {
 function formatRate(n) {
   if (!isFinite(n)) return '—';
   if (n === 0) return '0';
-  if (n >= 1000) return Math.round(n).toLocaleString();
+  if (n >= 1000) {
+    // Keep small but real cycle cuts visible. Rounding 9,999.905 to 10,000
+    // made a daily issuance schedule look fixed even though the onchain weight
+    // changes at every cycle.
+    var high = Math.abs(n - Math.round(n)) < 1e-9 ? 0 : 2;
+    return n.toLocaleString('en-US', { minimumFractionDigits: high, maximumFractionDigits: high });
+  }
   if (n >= 1) return n.toFixed(2);
   return n.toPrecision(3);
+}
+
+// Exact stepped issuance points for a chart window. Each cycle boundary is
+// emitted twice (the outgoing and incoming values), creating a vertical step
+// instead of a diagonal interpolation. Daily cycles across a two-year stage
+// remain exact; only truly dense schedules are sampled.
+export function issuanceStepPoints(sorted, t0, t1, maxBreaks) {
+  if (!sorted || !sorted.length || !(t1 > t0)) return [];
+  maxBreaks = Math.max(1, Number(maxBreaks) || 2000);
+  var breaks = [];
+  var dense = false;
+  for (var i = 0; i < sorted.length; i++) {
+    var stage = sorted[i];
+    var start = Number(stage.start);
+    var end = Math.min(i + 1 < sorted.length ? Number(sorted[i + 1].start) : t1, t1);
+    var from = Math.max(start, t0);
+    if (end <= from) continue;
+    if (start > t0 && start < t1) breaks.push(start);
+    var duration = Number(stage.duration);
+    if (duration > 0 && Number(stage.weightCutPercent) > 0) {
+      if ((end - from) / duration > maxBreaks) {
+        dense = true;
+        break;
+      }
+      var firstCycle = Math.max(1, Math.ceil((from - start) / duration));
+      for (var cycle = firstCycle; start + cycle * duration < end; cycle++) {
+        var boundary = start + cycle * duration;
+        if (boundary > t0 && boundary < t1) breaks.push(boundary);
+      }
+    }
+  }
+  if (dense || breaks.length > maxBreaks) {
+    var samples = 720;
+    var sampled = [];
+    for (var sample = 0; sample <= samples; sample++) {
+      var timestamp = t0 + (t1 - t0) * sample / samples;
+      sampled.push([timestamp, issuanceAtTime(sorted, timestamp)]);
+    }
+    return sampled;
+  }
+  breaks.sort(function (a, b) { return a - b; });
+  var edges = [t0].concat(breaks.filter(function (value, index) {
+    return index === 0 || value !== breaks[index - 1];
+  }), [t1]);
+  var points = [];
+  for (var edge = 0; edge + 1 < edges.length; edge++) {
+    var rate = issuanceAtTime(sorted, edges[edge]);
+    points.push([edges[edge], rate], [edges[edge + 1], rate]);
+  }
+  return points;
 }
 
 // Price for the y-axis: base/pair token per project token, trimmed for small numbers.
@@ -14585,15 +14707,15 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
   }
   var t0 = bounds.t0, t1 = bounds.t1;
 
-  var W = 600, H = 200, padL = 8, padR = 8, padT = 24, padB = 22, N = 240; // padT headroom so "Today" clears the line/now-line peak
-  var pts = [];
-  for (var i = 0; i <= N; i++) {
-    var t = t0 + (t1 - t0) * i / N;
-    var iss = issuanceAtTime(sorted, t);
-    var v = iss > 0 ? 1 / iss : null; // price (base token per project token); null when issuance is off
-    pts.push([t, v]);
-  }
+  var W = 600, H = 200, padL = 8, padR = 8, padT = 24, padB = 22; // padT headroom so "Today" clears the line/now-line peak
+  var pts = issuanceStepPoints(sorted, t0, t1).map(function (point) {
+    return [point[0], point[1] > 0 ? 1 / point[1] : null];
+  });
   var maxV = issuancePriceScaleMax(pts.map(function (point) { return point[1]; }));
+  var finitePrices = pts.map(function (point) { return point[1]; }).filter(function (value) {
+    return Number.isFinite(value) && value > 0;
+  });
+  var minV = finitePrices.length ? Math.min.apply(Math, finitePrices) : 0;
   var ammSeries = visibleSeries(ammHistory || [], t0, t1);
   var cashSeries = visibleSeries(cashoutHistory || [], t0, t1);
   var minimumSeries = pts.map(function (point) {
@@ -14610,7 +14732,12 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
   // Zero-issuance (price → ∞) clamps to the top of the finite range so the curve reads as "maxed out".
   for (var p = 0; p < pts.length; p++) if (pts[p][1] === null) pts[p][1] = maxV;
   function X(t) { return padL + (W - padL - padR) * (t - t0) / (t1 - t0); }
-  function Y(v) { return padT + (H - padT - padB) * (1 - issuancePriceScaleRatio(v, maxV)); }
+  function Y(v) {
+    var ratio = !past && maxV > minV
+      ? Math.max(0, Math.min(1, (v - minV) / (maxV - minV)))
+      : issuancePriceScaleRatio(v, maxV);
+    return padT + (H - padT - padB) * (1 - ratio);
+  }
 
   var line = 'M' + X(pts[0][0]).toFixed(1) + ' ' + Y(pts[0][1]).toFixed(1);
   for (var j = 1; j < pts.length; j++) line += ' L' + X(pts[j][0]).toFixed(1) + ' ' + Y(pts[j][1]).toFixed(1);
@@ -16956,8 +17083,8 @@ function renderOwnersSplits(project, opts) {
 
   var intro = el('div', 'splits-intro');
   intro.textContent = reserved
-    ? 'A reserved percentage of newly issued ' + sym + ' is split between these accounts. The owner can adjust the recipients at any time, up to the reserved rate set by the ruleset.'
-    : 'Newly issued and bought back ' + sym + ' are split between these accounts. The operator can adjust the splits at any time within each stage’s permanent split limit.';
+    ? 'A reserved percentage of newly issued ' + sym + ' is split between these accounts. The project owner can adjust the recipients at any time, up to the reserved rate set by the ruleset.'
+    : 'Newly issued and bought back ' + sym + ' are split between these accounts. The project operator can adjust the splits at any time within each stage’s permanent split limit.';
   wrap.appendChild(intro);
 
   var stages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
@@ -17055,7 +17182,7 @@ function renderOwnersSplits(project, opts) {
   if (!reserved) {
     var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '20px';
     var edit = el('a', 'operator-cta'); edit.textContent = 'Edit splits'; edit.href = '#';
-    edit.title = 'Edit the current stage’s split recipients (operator only)';
+    edit.title = 'Edit the current stage’s split recipients (project operator only)';
     edit.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project); });
     foot.appendChild(edit);
     wrap.appendChild(foot);
@@ -17763,8 +17890,8 @@ function openQueueRulesetModal(project) {
       });
       body.appendChild(chainBox);
       var memoNote = el('div', 'rf-funds-sub'); memoNote.style.marginTop = '8px'; memoNote.textContent = state.isOmnichain
-        ? 'Queues the same ruleset(s) through the verified omnichain data-hook wrapper on each selected chain (one prepaid relayr payment).'
-        : 'Queues the same ruleset(s) directly through each chain’s controller (one prepaid relayr payment).'; body.appendChild(memoNote);
+        ? 'Queues the same ruleset(s) through the verified omnichain data-hook wrapper on each selected chain. One selected chain executes directly; multiple chains use one prepaid Relayr payment.'
+        : 'Queues the same ruleset(s) directly through each chain’s controller. One selected chain executes directly; multiple chains use one prepaid Relayr payment.'; body.appendChild(memoNote);
     }
   }
 

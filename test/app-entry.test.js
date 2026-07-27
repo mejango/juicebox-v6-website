@@ -29,16 +29,33 @@ const readThing = {
 };
 
 vi.mock('../src/abi-registry.js', () => ({
-  contracts: { JBExample: [readThing] },
-  meta: { JBExample: { singleton: true, notice: 'Canonical example contract.' } },
+  contracts: { JBExample: [readThing], JBDifferent: [readThing] },
+  meta: {
+    JBExample: {
+      singleton: true,
+      notice: 'Canonical example contract.',
+      addresses: {
+        1: '0x1111111111111111111111111111111111111111',
+        10: '0x1111111111111111111111111111111111111111',
+      },
+    },
+    JBDifferent: {
+      singleton: true,
+      addresses: {
+        1: '0x2222222222222222222222222222222222222222',
+        10: '0x3333333333333333333333333333333333333333',
+      },
+    },
+  },
   natspec: { JBExample: { readThing: { notice: 'Reads canonical state.', params: { id: 'Identifier.' } } } },
-  categories: { Core: ['JBExample'], Empty: [] },
+  categories: { Core: ['JBExample', 'JBDifferent'], Empty: [] },
+  chains: { 1: { name: 'Ethereum' }, 10: { name: 'Optimism' } },
   commonActions: [{
     title: 'Read actions',
     className: 'read-actions',
     entries: [{ contract: 'JBExample', function: 'readThing', label: 'READ THING', hint: 'from the contract' }],
   }],
-  getFunctions: name => name === 'JBExample' ? [readThing] : [],
+  getFunctions: name => ['JBExample', 'JBDifferent'].includes(name) ? [readThing] : [],
   getAddress: () => '0x1111111111111111111111111111111111111111',
   getFunctionSource: () => ({ source: 'function readThing(uint256 id) external view returns (uint256);', startLine: 10, endLine: 12 }),
   getGithubUrl: (_name, fn) => fn ? 'https://github.com/example/contracts/blob/main/JBExample.sol#L10' : 'https://github.com/example/contracts',
@@ -153,6 +170,21 @@ describe('production app entry point', () => {
 
     const contract = document.querySelector('.contract-section');
     expect(contract.textContent).toMatch(/Canonical example contract/);
+    const address = contract.querySelector('.contract-address');
+    expect(address.textContent).toBe('0x1111111111111111111111111111111111111111');
+    expect(address.title).toMatch(/Ethereum, Optimism/);
+    address.click();
+    await vi.waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      '0x1111111111111111111111111111111111111111',
+    ));
+    const different = document.querySelectorAll('.contract-section')[1];
+    expect(different.querySelector('.contract-addresses > summary').textContent).toBe('[2 chain addresses]');
+    expect([...different.querySelectorAll('.contract-address-chain')].map(node => node.textContent))
+      .toEqual(['Ethereum', 'Optimism']);
+    expect([...different.querySelectorAll('.contract-address')].map(node => node.textContent)).toEqual([
+      '0x2222222222222222222222222222222222222222',
+      '0x3333333333333333333333333333333333333333',
+    ]);
     contract.querySelector('.contract-summary').click();
     contract.querySelector('.fn-summary').click();
     expect(contract.textContent).toMatch(/readThing\(uint256 id\).*view.*returns \(uint256 value\)/s);
