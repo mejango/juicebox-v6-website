@@ -850,7 +850,8 @@ function shapeDecoded(abi, fnName, argsArr) {
 export function decodeCallForDisplay(tx) {
   if (!tx) return null;
   var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
-  var abi = null; try { if (name) abi = getABI(name); } catch (_) {}
+  var abi = Array.isArray(tx.abi) ? tx.abi : null;
+  try { if (!abi && name) abi = getABI(name); } catch (_) {}
   var cd = txCalldata(tx), fn = txFnName(tx);
   if (cd && cd !== '0x' && abi) {
     try { var dec = decodeFunctionData({ abi: abi, data: cd }); return shapeDecoded(abi, dec.functionName, dec.args); } catch (_) {}
@@ -863,7 +864,8 @@ export function decodeCallForDisplay(tx) {
 function decodeCallRich(tx) {
   if (!tx) return null;
   var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
-  var abi = null; try { if (name) abi = getABI(name); } catch (_) {}
+  var abi = Array.isArray(tx.abi) ? tx.abi : null;
+  try { if (!abi && name) abi = getABI(name); } catch (_) {}
   var cd = txCalldata(tx), fn = txFnName(tx), ar = txArgsArray(tx);
   if (cd && cd !== '0x' && abi) {
     try {
@@ -929,7 +931,7 @@ export function renderDecodedTx(tx) {
   if (tx.chain) { var ch = el('div', 'tx-decoded-chain'); ch.textContent = tx.chain; box.appendChild(ch); }
   var who = el('div', 'tx-decoded-target');
   var nm = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : null;
-  who.textContent = (nm ? nm + ' | ' : '') + (tx.address || tx.to || tx.contract || '');
+  who.textContent = 'To: ' + (nm ? nm + ' | ' : '') + (tx.address || tx.to || tx.contract || '');
   box.appendChild(who);
   var rich = decodeCallRich(tx);
   if (rich) {
@@ -981,7 +983,7 @@ function txRawJson(tx) {
   var cd = txCalldata(tx);
   try {
     var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
-    var abi = name ? getABI(name) : null;
+    var abi = Array.isArray(tx.abi) ? tx.abi : (name ? getABI(name) : null);
     if (cd && cd !== '0x' && abi) {
       var dec = decodeFunctionData({ abi: abi, data: cd });
       var frag = abi.filter(function (e) { return e.type === 'function' && e.name === dec.functionName; })[0];

@@ -2291,7 +2291,11 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
   if (!forms.length) { setStatus('Add at least one item', 'error'); return; }
   if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
   if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin item media + metadata.', 'error'); return; }
-  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  // Authorize against the live hook permission table. The indexed revnet operator is useful as a
+  // display hint, but may lag behind REVOwner/JBPermissions or be unavailable with the indexer.
+  setStatus('Reading 721 hooks and permissions…', 'pending');
+  var hookMap = (await resolveHookMap(project, selectedChains)).hooks;
+  var account = await ensureShopManagerAccount(project, selectedChains, hookMap, operatorAddr, setStatus);
   if (!account) return;
 
   // Validate + pin + build a tier for each form.
@@ -2397,9 +2401,6 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
   // The hook requires tiers added in ascending category order.
   built = sortTierEntriesByCategory(built, function (b) { return { category: b.category }; });
 
-  setStatus('Reading 721 hooks…', 'pending');
-  var hookMap = (await resolveHookMap(project, selectedChains)).hooks;
-
   function tiersFor(cid) {
     return built.map(function (b) {
       var splits = b.splitOn ? b.splitDefs.map(function (d) {
@@ -2416,7 +2417,14 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
   var n = built.length;
   var session = await runRelayrAcrossChains(selectedChains, account, function (cid) {
     var tx = buildAdjustTiersArgs({ chainId: cid, hookAddr: hookMap[cid], tiersToAdd: tiersFor(cid), tierIdsToRemove: [] });
-    return { to: tx.address, data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }) };
+    return {
+      to: tx.address,
+      data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }),
+      contract: tx.contractName,
+      abi: tx.abi,
+      functionName: tx.functionName,
+      args: tx.args,
+    };
   }, (400000n + BigInt(n) * 400000n), setStatus, {
     label: 'Add items for sale', title: 'Confirm add items', manualRecovery: true,
     onSession: function (relaySession) {
@@ -2707,9 +2715,9 @@ function shopChainsOf(project) {
 async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
   var setStatus = shopOpSetStatus(statusEl);
   if (!Number.isFinite(Number(pctOff)) || Number(pctOff) < 0 || Number(pctOff) > 100) { setStatus('Discount must be between 0 and 100%.', 'error'); return; }
-  var account = await ensureOperatorAccount(project, projectAuthorityAddress(project), setStatus);
-  if (!account) return;
   var avail = shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id), hookMap = resolved.hooks;
+  var account = await ensureShopManagerAccount(project, avail, hookMap, projectAuthorityAddress(project), setStatus);
+  if (!account) return;
   var cfg = buildSetDiscountConfig(tier.id, pctOff);
   avail.forEach(function (chain) {
     var live = resolved.tiers[chain.id];
@@ -2718,7 +2726,14 @@ async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
     }
   });
   var relaySession = await runRelayrAcrossChains(avail, account, function (cid) {
-    return { to: hookMap[cid], data: encodeFunctionData({ abi: setDiscountPercentsOfAbi, functionName: 'setDiscountPercentsOf', args: [[cfg]] }) };
+    return {
+      to: hookMap[cid],
+      data: encodeFunctionData({ abi: setDiscountPercentsOfAbi, functionName: 'setDiscountPercentsOf', args: [[cfg]] }),
+      contract: 'JB721TiersHook',
+      abi: setDiscountPercentsOfAbi,
+      functionName: 'setDiscountPercentsOf',
+      args: [[cfg]],
+    };
   }, 300000n, setStatus, { label: 'Set discount', title: 'Confirm discount', pendingScope: relayrActionScope(project, 'set-discount', tier.id) });
   bustTiersCache(project);
   if (relaySession && relaySession.resumed) { setStatus(relayrRecoveredMessage(relaySession), 'success'); return; }
@@ -2727,15 +2742,22 @@ async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
 // Operator: remove a tier from the shop on every chain (JB721TiersHook.adjustTiers with tierIdsToRemove).
 async function submitRemoveTier(project, tier, statusEl) {
   var setStatus = shopOpSetStatus(statusEl);
-  var account = await ensureOperatorAccount(project, projectAuthorityAddress(project), setStatus);
-  if (!account) return;
   var avail = shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id), hookMap = resolved.hooks;
+  var account = await ensureShopManagerAccount(project, avail, hookMap, projectAuthorityAddress(project), setStatus);
+  if (!account) return;
   avail.forEach(function (chain) {
     if (resolved.tiers[chain.id].flags && resolved.tiers[chain.id].flags.cantBeRemoved) throw new Error('Item #' + tier.id + ' cannot be removed on ' + (chain.name || chain.id) + '.');
   });
   var relaySession = await runRelayrAcrossChains(avail, account, function (cid) {
     var tx = buildAdjustTiersArgs({ chainId: cid, hookAddr: hookMap[cid], tiersToAdd: [], tierIdsToRemove: [tier.id] });
-    return { to: tx.address, data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }) };
+    return {
+      to: tx.address,
+      data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }),
+      contract: tx.contractName,
+      abi: tx.abi,
+      functionName: tx.functionName,
+      args: tx.args,
+    };
   }, 300000n, setStatus, { label: 'Remove item', title: 'Confirm remove', pendingScope: relayrActionScope(project, 'remove-item', tier.id) });
   bustTiersCache(project);
   if (relaySession && relaySession.resumed) { setStatus(relayrRecoveredMessage(relaySession), 'success'); return; }
@@ -6985,6 +7007,11 @@ function renderPayCard(project, cart) {
       row('Shop credit', formatShopPrice(state.shop, state.nftCredits, state.chainId), 'muted');
     }
     if (breakdown.restrictedCost > 0n) {
+      row(
+        breakdown.restrictedCost === breakdown.subtotal ? 'Shop credit not accepted' : 'Shop credit not accepted by some items',
+        formatShopPrice(state.shop, breakdown.restrictedCost, state.chainId),
+        'short'
+      );
       row('Fresh payment required', formatShopPrice(state.shop, breakdown.restrictedCost, state.chainId), 'muted');
     }
     row('Amount due', formatShopPrice(state.shop, breakdown.due, state.chainId), 'total');
@@ -8244,6 +8271,45 @@ function descriptionTextToHtml(text) {
   return paras.map(function (p) { return '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>'; }).join('');
 }
 
+var shopOwnerAbi = [{
+  type: 'function', name: 'owner', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }],
+}];
+var JB_PERMISSION_ADJUST_721_TIERS = 24n;
+
+// `JB721TiersHook.adjustTiers` checks permission 24 against the hook's live owner. Mirror that
+// exact authorization instead of rejecting a valid wallet because indexed operator data is stale.
+async function accountCanAdjustShopOn(project, chainId, hook, account) {
+  if (!hook || !account) return false;
+  var owner = await clientFor(chainId).readContract({
+    address: hook, abi: shopOwnerAbi, functionName: 'owner', args: [],
+  }).catch(function () { return null; });
+  if (!owner) return false;
+  if (String(owner).toLowerCase() === String(account).toLowerCase()) return true;
+  return read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
+    account, owner, pidOn(project, chainId), JB_PERMISSION_ADJUST_721_TIERS, true, true,
+  ]).then(Boolean).catch(function () { return false; });
+}
+
+async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, setStatus) {
+  var account = getAccount();
+  if (!account) {
+    setStatus('Connecting wallet…', 'pending');
+    account = await connect().then(getAccount).catch(function () { return null; });
+  }
+  if (!account) { setStatus('Connect a wallet to continue', 'error'); return null; }
+  setStatus('Checking live shop permissions…', 'pending');
+  var allowed = await Promise.all(chains.map(function (chain) {
+    return accountCanAdjustShopOn(project, chain.id, hookMap[chain.id], account);
+  }));
+  if (allowed.every(Boolean)) return account;
+  var denied = chains.filter(function (_, i) { return !allowed[i]; }).map(function (chain) {
+    return chain.name || chainNameOf(chain.id);
+  });
+  var hint = operatorHint ? (' The indexed project operator is ' + truncAddr(operatorHint) + '.') : '';
+  setStatus('This wallet does not have permission to manage the shop on ' + denied.join(', ') + '.' + hint, 'error');
+  return null;
+}
+
 // Shared: require a connected wallet equal to the project's operator/owner. Returns the account or null.
 async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   var account = getAccount();
@@ -8425,7 +8491,13 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     var cid = chains[i].id;
     var call = buildCall(cid);
     if (!call || !call.to) throw new Error('No target contract on ' + (chains[i].name || cid));
-    calls.push({ cid: cid, name: chains[i].name || ('chain ' + cid), to: call.to, data: call.data });
+    calls.push({
+      cid: cid, name: chains[i].name || ('chain ' + cid), to: call.to, data: call.data,
+      contract: call.contract || call.contractName || null,
+      abi: call.abi || null,
+      functionName: call.functionName || call.function || null,
+      args: Array.isArray(call.args) ? call.args : null,
+    });
   }
   if (!shouldUseRelayrForChains(chains)) {
     var direct = calls[0];
@@ -8434,11 +8506,14 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
       action: confirmOpts.label || 'Project update',
       chain: direct.name,
       chainId: direct.cid,
-      contract: resolveContractName(direct.to, direct.cid) || direct.to,
+      contract: direct.contract || resolveContractName(direct.to, direct.cid) || direct.to,
       address: direct.to,
       calldata: direct.data,
+      abi: direct.abi,
+      functionName: direct.functionName,
+      rawArgs: direct.args,
     }, { title: confirmOpts.title || 'Confirm transaction', confirmText: 'Confirm & send' });
-    if (!directOk || !directOk.ok) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
+    if (!directOk || (typeof directOk === 'object' && !directOk.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
     setStatus('Checking wallet network…', 'pending');
     var directWallet = getWalletClient();
     if (!directWallet) throw new Error('Connect a wallet to continue.');
@@ -8475,7 +8550,13 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
   var ok = await confirmTransactionModal({
     via: 'Relayr — one prepaid payment relays the same change to every chain below',
     action: confirmOpts.label || 'Cross-chain update',
-    chains: calls.map(function (c) { var nm = resolveContractName(c.to, c.cid); return nm ? { chain: c.name, chainId: c.cid, contract: nm, address: c.to, calldata: c.data } : { chain: c.name, chainId: c.cid, contract: c.to, calldata: c.data }; }),
+    chains: calls.map(function (c) {
+      var nm = c.contract || resolveContractName(c.to, c.cid);
+      return {
+        chain: c.name, chainId: c.cid, contract: nm || c.to, address: c.to, calldata: c.data,
+        abi: c.abi, functionName: c.functionName, rawArgs: c.args,
+      };
+    }),
   }, { title: confirmOpts.title || 'Confirm cross-chain transaction', confirmText: 'Confirm & send' });
   if (!ok) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
 

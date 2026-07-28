@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData } from 'viem';
 import { decodeCallForDisplay, renderDecodedTx } from '../src/component-base.js';
+import { buildAdjustTiersArgs } from '../src/discover.js';
 
 const REVO = '0x2ba4705ad0332cdfb299b452068438bcba3faaf3';
 const AUTOISSUE_ABI = [{ type: 'function', name: 'autoIssueFor', stateMutability: 'nonpayable',
@@ -44,5 +45,27 @@ describe('decodeCallForDisplay normalizes tx field aliases (no more spurious "co
     expect(node.textContent).toContain(native);
     expect(node.textContent).toContain('ETH native token');
     expect(node.textContent).toContain('address(0)');
+  });
+  it('decodes a project-specific 721 hook call from the ABI carried by the transaction', () => {
+    const hook = '0xD32f93eB2EcB2379C96b739c73052F54A04C61A9';
+    const tx = buildAdjustTiersArgs({
+      chainId: 84532,
+      hookAddr: hook,
+      tiersToAdd: [],
+      tierIdsToRemove: [1],
+    });
+    const data = encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args });
+    const node = renderDecodedTx({
+      chain: 'Base Sepolia',
+      chainId: 84532,
+      contract: tx.contractName,
+      address: tx.address,
+      calldata: data,
+      abi: tx.abi,
+    });
+    expect(node.textContent).toContain('JB721TiersHook');
+    expect(node.textContent).toContain('adjustTiers');
+    expect(node.textContent).toContain('tierIdsToRemove');
+    expect(node.textContent).not.toContain('Could not decode');
   });
 });
