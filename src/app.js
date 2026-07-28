@@ -12,6 +12,7 @@ import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab } from './discove
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links.js';
+import { reverseEns } from './create-flow.js';
 
 // Component renderers for pretty mode
 import { renderPayComponent } from './pay-component.js';
@@ -101,6 +102,12 @@ function initTabs() {
       connectBtn.textContent = acc ? truncAddr(acc) : (connecting ? 'Connecting…' : 'Connect wallet');
       connectBtn.classList.toggle('connected', !!acc);
       connectBtn.title = acc || 'Connect a wallet';
+      // Show the primary ENS name when the account has one (address stays in the tooltip and menu).
+      if (acc) {
+        reverseEns(acc).then(function (name) {
+          if (name && getAccount() === acc) connectBtn.textContent = name;
+        });
+      }
     };
     updateConnect();
     onWalletChange(updateConnect);

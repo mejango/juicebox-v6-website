@@ -91,6 +91,7 @@ vi.mock('../src/discover.js', () => ({
   renderAdminTab: entry.renderAdminTab,
 }));
 vi.mock('../src/data-tab.js', () => ({ renderDataTab: entry.renderDataTab }));
+vi.mock('../src/create-flow.js', () => ({ reverseEns: vi.fn().mockResolvedValue(null) }));
 vi.mock('../src/font-selector.js', () => ({
   mountFontSelector: entry.mountFontSelector,
   applySavedFont: entry.applySavedFont,

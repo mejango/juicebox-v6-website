@@ -4533,7 +4533,7 @@ function resolveEns(name) {
 }
 // Reverse ENS: a 0x address → its primary ENS name (or null). Cached.
 var _ensRevCache = {};
-function reverseEns(address) {
+export function reverseEns(address) {
   var a = (address || '').toLowerCase();
   if (_ensRevCache[a] !== undefined) return Promise.resolve(_ensRevCache[a]);
   return ensClient().getEnsName({ address: address }).then(function (name) { _ensRevCache[a] = name || null; return name || null; })
