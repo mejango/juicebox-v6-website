@@ -24,13 +24,14 @@ export var cashOutAbi = [{
   outputs: [{ name: '', type: 'uint256' }],
 }];
 
-// 95% floor on the previewed reclaim (covers the 2.5% protocol fee + ~2.5% slippage) so a burn can't
-// reclaim ~0 silently (surplus drained / MEV).
+// 99% floor on the previewed reclaim (1% slippage, the cross-client default; the preview is pre-fee, so
+// the floor is compared before the protocol fee applies) so a burn can't reclaim ~0 silently (surplus
+// drained / MEV).
 export function cashOutMinReclaimed(reclaimAmount) {
   try {
     var quoted = BigInt(reclaimAmount || 0);
     if (quoted <= 0n) return 0n;
-    var floor = quoted * 95n / 100n;
+    var floor = quoted * 99n / 100n;
     return floor > 0n ? floor : 1n;
   } catch (_) { return 0n; }
 }
@@ -322,8 +323,10 @@ export function renderCashOutComponent() {
     var reclaimToken = state.selectedToken.address;
     var amountText = state.amount;
 
-    // Slippage floor: 95% of the previewed reclaim (covers the 2.5% protocol fee + ~2.5% tolerance). Reverts
-    // a burn that would reclaim near-zero (surplus drained / MEV) instead of letting it silently succeed.
+    // Slippage floor: 99% of the previewed reclaim (1% tolerance, the cross-client default). A nonzero
+    // terminal minimum forces the direct treasury route, so this floor also keeps a buyback data hook from
+    // AMM-routing the cash out. Reverts a burn that would reclaim near-zero (surplus drained / MEV)
+    // instead of letting it silently succeed.
     var minReclaimed = 0n;
     try {
       var preview = await executeRead({

@@ -55,8 +55,8 @@ describe('pay — JBMultiTerminal.pay', () => {
 });
 
 describe('cashout — JBMultiTerminal.cashOutTokensOf', () => {
-  it('minReclaimed = 95% of the previewed reclaim', () => {
-    expect(cashOutMinReclaimed(parseEther('100'))).toBe((parseEther('100') * 95n) / 100n);
+  it('minReclaimed = 99% of the previewed reclaim (1% cross-client default)', () => {
+    expect(cashOutMinReclaimed(parseEther('100'))).toBe((parseEther('100') * 99n) / 100n);
   });
   it('minReclaimed 0 when reclaim is unknown or zero (preview failed / delay active)', () => {
     expect(cashOutMinReclaimed(null)).toBe(0n);
@@ -68,7 +68,7 @@ describe('cashout — JBMultiTerminal.cashOutTokensOf', () => {
     expect(tx.args[1]).toBe(7n);
     expect(tx.args[2]).toBe(parseEther('10'));
     expect(tx.args[3]).toBe(NATIVE_TOKEN);
-    expect(tx.args[4]).toBe((parseEther('100') * 95n) / 100n);
+    expect(tx.args[4]).toBe((parseEther('100') * 99n) / 100n);
     expect(tx.args[5]).toBe(BOB);
     expect(roundTrips(cashOutAbi, 'cashOutTokensOf', tx.args)).toBe(true);
   });

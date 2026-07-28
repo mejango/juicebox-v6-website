@@ -89,6 +89,12 @@ body {
 a { color: inherit; }
 a:hover { color: var(--c-teal); }
 
+/* Clickables: browsers default button/select to cursor:default — pointer whenever enabled. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary,
+select:not(:disabled) { cursor: pointer; }
+
 /* Palette display */
 .palette {
   display: flex;
@@ -5229,7 +5235,8 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   cursor: pointer; padding: 7px 10px; background: transparent; color: var(--bg); border: none;
 }
 .wallet-menu-item:hover { background: var(--c-black-light); }
-.wallet-menu-danger { color: var(--c-pink); }
+/* Danger (Disconnect) reads light pink on the dark menu — palette --c-pink is invisible on --c-black. */
+.wallet-menu-danger { color: var(--c-pink-light); }
 .wallet-menu-link { text-decoration: none; }
 .wallet-menu-note {
   padding: 8px 10px;
