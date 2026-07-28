@@ -2317,6 +2317,28 @@ input[type="checkbox"].field {
   font-size: 12px;
   padding: 10px 0;
 }
+.discover-account-hit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 440px;
+  margin-bottom: 12px;
+  padding: 8px 11px;
+  background: var(--card-bg);
+  border: 1px solid var(--c-orange-light);
+  cursor: pointer;
+  font-size: 13px;
+}
+.discover-account-hit:hover,
+.discover-account-hit:focus {
+  outline: 1px solid var(--c-pink);
+  border-color: var(--c-pink);
+}
+.discover-account-hit-avatar { width: 18px; height: 18px; border-radius: 50%; flex: none; }
+.discover-account-hit-kicker { color: var(--muted-2); font-weight: bold; white-space: nowrap; }
+.discover-account-hit-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.discover-account-hit-sub { color: var(--muted-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.discover-account-hit-view { margin-left: auto; color: var(--c-teal); white-space: nowrap; }
 
 .discover-grid {
   display: flex;

@@ -1,7 +1,7 @@
 // The table account-search matches by address substring (ENS is layered on async). matchAccountsByAddress is
 // the pure core: case-insensitive substring, excludes already-chipped addresses, capped at `limit`.
 import { describe, it, expect } from 'vitest';
-import { matchAccountsByAddress } from '../src/discover.js';
+import { matchAccountsByAddress, classifyAccountQuery } from '../src/discover.js';
 
 const items = [
   { address: '0x0ee8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5e26' },
@@ -44,5 +44,35 @@ describe('matchAccountsByAddress', () => {
     expect(addrs(matchAccountsByAddress(named, 'ARTIZEN', [], 8, nameOf))).toEqual([named[0].address]); // case-insensitive
     expect(matchAccountsByAddress(named, '0xbbb', [], 8, nameOf).length).toBe(1); // address path still works
     expect(matchAccountsByAddress(named, 'nope', [], 8, nameOf)).toEqual([]);
+  });
+});
+
+// classifyAccountQuery is the pure core of the primary-search account hit: a full 0x address or an
+// ENS-looking name routes to the account view; everything else stays a plain project-text query.
+describe('classifyAccountQuery', () => {
+  const addr = '0x1111111111111111111111111111111111111111';
+
+  it('classifies a full 0x address (any case, trimmed)', () => {
+    expect(classifyAccountQuery(addr)).toEqual({ kind: 'address', address: addr });
+    const mixed = '0xCAFE000000000000000000000000000000005e26';
+    expect(classifyAccountQuery(mixed)).toEqual({ kind: 'address', address: mixed });
+    expect(classifyAccountQuery('  ' + addr + '  ')).toEqual({ kind: 'address', address: addr });
+  });
+  it('rejects short/long/non-hex 0x strings as plain text (never ENS)', () => {
+    expect(classifyAccountQuery('0x1234')).toEqual({ kind: 'text' });
+    expect(classifyAccountQuery(addr + '1')).toEqual({ kind: 'text' });
+    expect(classifyAccountQuery('0xzz11111111111111111111111111111111111111')).toEqual({ kind: 'text' });
+    expect(classifyAccountQuery('0xabc.eth')).toEqual({ kind: 'text' }); // isEnsName excludes 0x-prefixed
+  });
+  it('classifies ENS-looking names, lowercased', () => {
+    expect(classifyAccountQuery('jango.eth')).toEqual({ kind: 'ens', name: 'jango.eth' });
+    expect(classifyAccountQuery('Team.Banny.ETH')).toEqual({ kind: 'ens', name: 'team.banny.eth' });
+  });
+  it('leaves plain text, numbers, and empty queries alone', () => {
+    expect(classifyAccountQuery('banny')).toEqual({ kind: 'text' });
+    expect(classifyAccountQuery('12')).toEqual({ kind: 'text' });
+    expect(classifyAccountQuery('1.23')).toEqual({ kind: 'text' }); // trailing digits — not a TLD
+    expect(classifyAccountQuery('')).toEqual({ kind: 'text' });
+    expect(classifyAccountQuery(null)).toEqual({ kind: 'text' });
   });
 });
