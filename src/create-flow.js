@@ -4523,7 +4523,7 @@ function ensClient() {
   if (!_ensClient) _ensClient = createPublicClient({ chain: mainnet, transport: http('https://ethereum-rpc.publicnode.com') });
   return _ensClient;
 }
-function isEnsName(v) { v = (v || '').trim(); return /\.[a-z]{2,}$/i.test(v) && !/^0x/i.test(v); }
+export function isEnsName(v) { v = (v || '').trim(); return /\.[a-z]{2,}$/i.test(v) && !/^0x/i.test(v); }
 function resolveEns(name) {
   name = (name || '').trim().toLowerCase();
   if (_ensCache[name] !== undefined) return Promise.resolve(_ensCache[name]);

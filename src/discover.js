@@ -85,6 +85,10 @@ export function setDiscoverNetwork(mode) {
   if (_container) renderDiscoverTab();
 }
 
+// Live view of the active network's chain set (reassigned by setDiscoverNetwork) for modules that
+// need to fan out across chains (e.g. the account view's Safe-owner scan).
+export function activeDiscoverChains() { return DISCOVER_CHAINS.slice(); }
+
 var ETH_SUCKS_GATEWAY_HOST = 'eth.sucks';
 var IPFS_GATEWAY = 'https://gateway.pinata.cloud/ipfs/';
 var IPFS_PATH_GATEWAYS = [
@@ -161,7 +165,7 @@ var CHAIN_SLUGS = [
   { slug: 'base', id: 8453 }, { slug: 'basesep', id: 84532 },
   { slug: 'op', id: 10 }, { slug: 'opsep', id: 11155420 },
 ];
-function slugForChain(id) {
+export function slugForChain(id) {
   for (var i = 0; i < CHAIN_SLUGS.length; i++) if (CHAIN_SLUGS[i].id === id) return CHAIN_SLUGS[i].slug;
   return String(id);
 }
@@ -3301,8 +3305,8 @@ var JB_PERMISSION_DESCS = {
   38: 'Move collateral between the project’s loans.',
   39: 'Repay the project’s loans.',
 };
-function permissionLabel(id) { return JB_PERMISSION_LABELS[id] || ('Permission #' + id); }
-function permissionDesc(id) { return JB_PERMISSION_DESCS[id] || ''; }
+export function permissionLabel(id) { return JB_PERMISSION_LABELS[id] || ('Permission #' + id); }
+export function permissionDesc(id) { return JB_PERMISSION_DESCS[id] || ''; }
 // Decode a packed permissions bitmap (uint256/BigInt) → sorted array of granted permission ids.
 var totalBalanceOfAbi = [{
   type: 'function', name: 'totalBalanceOf', stateMutability: 'view',
@@ -5071,7 +5075,7 @@ export function ensNameCached(address) { return _ensResolved[(address || '').toL
 
 // Forward ENS resolution (name → address), mainnet, cached. Returns null for non-names / no record.
 var _ensAddrCache = {};
-function ensAddressOf(name) {
+export function ensAddressOf(name) {
   var key = (name || '').trim().toLowerCase();
   if (!key || key.indexOf('.') === -1) return Promise.resolve(null);
   if (_ensAddrCache[key]) return _ensAddrCache[key];
@@ -5200,7 +5204,7 @@ function chainById(chainId) {
 
 // A span that shows the truncated address immediately, then upgrades to the ENS name
 // (keeping the address as a tooltip) if one resolves.
-function addressNode(address, chainId) {
+export function addressNode(address, chainId) {
   var span = el('span', 'detail-address');
   if (!address || address === ZERO_ADDRESS) { span.textContent = '—'; return span; }
   var label = el('span', 'detail-address-label'); label.textContent = truncAddr(address); span.appendChild(label);
@@ -5287,7 +5291,7 @@ var SAFE_ICON_SVG = '<svg viewBox="0 0 661.62 661.47" xmlns="http://www.w3.org/2
 
 var _safeCache = {};
 // Return { owners, threshold } if `address` is a Safe on `chainId`, else null. Onchain (works any chain).
-function fetchSafeInfo(address, chainId) {
+export function fetchSafeInfo(address, chainId) {
   if (!address || address === ZERO_ADDRESS || !chainId) return Promise.resolve(null);
   var key = chainId + ':' + address.toLowerCase();
   if (_safeCache[key]) return _safeCache[key];
@@ -9630,7 +9634,7 @@ function chainAddrBubble(chainId, address) {
   return a;
 }
 
-function renderActivityRow(row, project) {
+export function renderActivityRow(row, project) {
   var item = el('div', 'activity-row');
   var chains = (row.chains && row.chains.length) ? row.chains : [{ chainId: row.chainId, txHash: row.txHash }];
   // Identity key for refresh diffing — all tx hashes in this (possibly merged) row.
@@ -9689,7 +9693,7 @@ function renderActivityRow(row, project) {
   return item;
 }
 
-function activityRowFromEvent(event, project) {
+export function activityRowFromEvent(event, project) {
   var sym = project.tokenSymbol || 'tokens';
   var chainId = Number(event.chainId);
   if (event.payEvent) {
@@ -15120,7 +15124,7 @@ function txUrl(chainId, txHash) {
   return url && txHash ? (url.replace(/\/$/, '') + '/tx/' + txHash) : null;
 }
 
-function identGradient(seed) {
+export function identGradient(seed) {
   var str = String(seed || '');
   var hash = 0;
   for (var i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
@@ -15456,7 +15460,7 @@ var BENDYSTRAW_CASH_OUT_TAX_SNAPSHOTS_QUERY = 'query($suckerGroupId: String!, $v
   + 'items { chainId start duration rulesetId cashOutTax } totalCount } }';
 // Activity feed spans every meaningful event the indexer tracks (pays, cash outs, payouts,
 // reserved-token distributions, loans, NFT mints, ERC20 deploys, project creation).
-var BENDYSTRAW_ACTIVITY_OR = 'OR: [{ payEvent_not: null }, { cashOutTokensEvent_not: null }, '
+export var BENDYSTRAW_ACTIVITY_OR = 'OR: [{ payEvent_not: null }, { cashOutTokensEvent_not: null }, '
   + '{ sendPayoutsEvent_not: null }, { sendReservedTokensToSplitsEvent_not: null }, '
   + '{ autoIssueEvent_not: null }, { mintTokensEvent_not: null }, '
   + '{ borrowLoanEvent_not: null }, { repayLoanEvent_not: null }, { liquidateLoanEvent_not: null }, '
@@ -15464,7 +15468,7 @@ var BENDYSTRAW_ACTIVITY_OR = 'OR: [{ payEvent_not: null }, { cashOutTokensEvent_
   + '{ addToBalanceEvent_not: null }, { setUriEvent_not: null }, { projectTransferEvent_not: null }, '
   + '{ operatorPermissionsSetEvent_not: null }, { addNftTierEvent_not: null }, { removeNftTierEvent_not: null }, '
   + '{ swapEvent_not: null }, { buybackPoolEvent_not: null }, { bridgeClaimEvent_not: null }]';
-var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId timestamp txHash from type '
+export var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId projectId timestamp txHash from type '
   + 'payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount from txHash timestamp } '
   + 'cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd holder beneficiary from txHash timestamp } '
   + 'mintTokensEvent { beneficiary beneficiaryTokenCount caller from txHash timestamp } '

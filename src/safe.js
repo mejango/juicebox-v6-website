@@ -382,6 +382,17 @@ var SAFE_ONCHAIN_ABI = [
 // True when Safe's hosted Transaction Service covers this chain. False → use the onchain approveHash path.
 export function hasSafeService(chainId) { return !!txBase(chainId); }
 
+// Safes on `chainId` that `owner` signs for, via the Safe Transaction Service owners endpoint.
+// Returns [] when the chain has no service; throws on a service error so callers can degrade.
+export async function safesForOwner(owner, chainId) {
+  var base = txBase(chainId);
+  if (!base) return [];
+  var res = await safeFetch(base + '/api/v1/owners/' + cs(owner) + '/safes/', { headers: headers(false) });
+  if (!res.ok) throw new Error('Safe service HTTP ' + res.status);
+  var body = await res.json();
+  return Array.isArray(body && body.safes) ? body.safes : [];
+}
+
 // Deploy the SAME-address Safe on a chain the Safe app doesn't list, by replaying its original creation. The Safe
 // address is CREATE2(factory, keccak(initializer)+saltNonce, singleton), so re-running createProxyWithNonce with the
 // exact factory/singleton/initializer/saltNonce the Safe was first deployed with reproduces the identical address on
