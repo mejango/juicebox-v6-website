@@ -12,7 +12,7 @@ import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgre
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
+import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, isEnsName } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -5788,6 +5788,15 @@ export function applyDiscoverRoute(route) {
   });
 }
 
+// Pure: classify the primary-search query. A full 0x address or an ENS-looking name surfaces an
+// account hit above the project results; anything else stays a plain project-text query.
+export function classifyAccountQuery(query) {
+  var q = String(query || '').trim();
+  if (isAddr(q)) return { kind: 'address', address: q };
+  if (isEnsName(q)) return { kind: 'ens', name: q.toLowerCase() };
+  return { kind: 'text' };
+}
+
 function renderGrid() {
   _gridWrapper = el('div', 'discover-grid-wrapper');
   var searchQuery = '';
@@ -5822,6 +5831,48 @@ function renderGrid() {
   topRow.appendChild(rightCtrls);
   _gridWrapper.appendChild(topRow);
 
+  // Account hit: a full 0x address or a resolving ENS name typed into the project search surfaces a
+  // "View account" row above the project results, routing to #account/. Project filtering is untouched.
+  var accountHit = el('div', 'discover-account-hit');
+  accountHit.style.display = 'none';
+  accountHit.setAttribute('role', 'button');
+  accountHit.tabIndex = 0;
+  var accountHitTarget = null;
+  var ensHitSeq = 0, ensHitTimer = null;
+  function openAccountHit() { if (accountHitTarget) location.hash = '#account/' + accountHitTarget; }
+  accountHit.addEventListener('click', openAccountHit);
+  accountHit.addEventListener('keydown', function (e) { if (e.key === 'Enter') openAccountHit(); });
+  function showAccountHit(primary, sub, target, seed) {
+    accountHit.innerHTML = '';
+    var avatar = el('span', 'discover-account-hit-avatar');
+    avatar.style.background = identGradient(String(seed || '').toLowerCase());
+    accountHit.appendChild(avatar);
+    var kicker = el('span', 'discover-account-hit-kicker'); kicker.textContent = 'Account'; accountHit.appendChild(kicker);
+    var label = el('span', 'discover-account-hit-label'); label.textContent = primary; accountHit.appendChild(label);
+    if (sub) { var s = el('span', 'discover-account-hit-sub'); s.textContent = sub; accountHit.appendChild(s); }
+    var view = el('span', 'discover-account-hit-view'); view.textContent = 'View account'; accountHit.appendChild(view);
+    accountHitTarget = target;
+    accountHit.style.display = '';
+  }
+  function hideAccountHit() { accountHit.style.display = 'none'; accountHitTarget = null; }
+  function updateAccountHit(rawQuery) {
+    ensHitSeq++;
+    if (ensHitTimer) { clearTimeout(ensHitTimer); ensHitTimer = null; }
+    var c = classifyAccountQuery(rawQuery);
+    if (c.kind === 'address') { showAccountHit(truncAddr(c.address), null, c.address, c.address); return; }
+    if (c.kind !== 'ens') { hideAccountHit(); return; }
+    // ENS: debounce-resolve; the row only appears once the name actually resolves. The route carries the
+    // NAME (#account/<name>) — the account view re-resolves it, keeping the URL human-readable.
+    var seq = ensHitSeq;
+    ensHitTimer = setTimeout(function () {
+      ensAddressOf(c.name).then(function (addr) {
+        if (seq !== ensHitSeq) return; // stale — the query changed while resolving
+        if (addr) showAccountHit(c.name, truncAddr(addr), c.name, addr); else hideAccountHit();
+      });
+    }, 250);
+  }
+  _gridWrapper.appendChild(accountHit);
+
   var grid = el('div', 'discover-grid');
   _gridWrapper.appendChild(grid);
   var searchEmpty = el('div', 'discover-search-empty');
@@ -5840,6 +5891,7 @@ function renderGrid() {
     return String(value || '').trim().toLowerCase().replace(/^[$#]/, '');
   }
   function applySearch() {
+    updateAccountHit(searchInput.value);
     searchQuery = normalizedSearchText(searchInput.value);
     var cards = grid.querySelectorAll('.discover-card');
     var visible = 0;
@@ -5855,6 +5907,10 @@ function renderGrid() {
     searchEmpty.style.display = searchQuery && pendingCards === 0 && visible === 0 ? '' : 'none';
   }
   searchInput.addEventListener('input', applySearch);
+  // Enter with a pure address / resolved ENS prefers the account hit over the (empty) project filter.
+  searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && accountHitTarget) { e.preventDefault(); openAccountHit(); }
+  });
 
   ensureGroups().then(function (groups) {
     grid.innerHTML = '';
