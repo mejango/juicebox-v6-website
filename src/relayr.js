@@ -13,7 +13,7 @@
 // No API key. Host confirmed from juice-sdk-v4: https://api.relayr.ba5ed.com
 
 import { encodeFunctionData, isAddress } from 'viem';
-import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain } from './component-base.js';
+import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR } from './component-base.js';
 import { CHAINS } from './chain.js';
 
 var RELAYR_API = 'https://api.relayr.ba5ed.com';
@@ -62,6 +62,7 @@ var FORWARDER_ABI = [
 // `value` is the ETH forwarded to the target (e.g. a project-creation fee); the relayer sends it with
 // `execute`, so it appears as the bundle tx's `value` and Relayr's quote covers it.
 export async function buildForwardedTx(chainId, from, to, data, gasHint, value) {
+  if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var forwarder = getAddress('ERC2771Forwarder', chainId);
   if (!forwarder) throw new Error('No ERC2771Forwarder on ' + (CHAINS[chainId] && CHAINS[chainId].name || chainId));
   var pub = createPublicClientForChain(chainId);
@@ -146,6 +147,7 @@ export async function relayrPostBundle(transactions) {
 // Send the single prepaid payment that funds execution on every chain. Caller ensures the wallet is on
 // payment.chain. Returns the payment tx hash.
 export async function relayrPay(payment, expectedAccount) {
+  if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var chainId = Number(payment && payment.chain);
   if (!Number.isSafeInteger(chainId) || !CHAINS[chainId]) throw new Error('Relayr returned an unsupported payment chain.');
   if (!payment || !isAddress(payment.target, { strict: false })) throw new Error('Relayr returned an invalid payment target.');

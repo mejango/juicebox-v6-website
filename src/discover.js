@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { createPublicClient, http, keccak256, stringToHex, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -428,6 +428,7 @@ async function latestChainTimestamp(client) {
   return timestamp;
 }
 async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount, onStatus) {
+  if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   amount = BigInt(amount);
   if (amount <= 0n || amount > (1n << 160n) - 1n) throw new Error('Payment amount is outside Permit2’s uint160 range.');
   var client = clientFor(chainId);
@@ -1242,7 +1243,7 @@ function renderShopSection(project, shop, cart) {
     s = s || resolvedShop;
     var old = card.querySelector('.shop-credits');
     if (old) old.remove();
-    var acct = getAccount();
+    var acct = getEffectiveAccount();
     if (!acct || !s || !s.hook) return;
     clientFor(project.chainId).readContract({ address: s.hook, abi: TIER721_PAY_CREDITS_ABI, functionName: 'payCreditsOf', args: [acct] }).then(toBigInt).then(function (credit) {
       if (!credit || credit <= 0n || !wrap.isConnected || card.querySelector('.shop-credits')) return;
@@ -1485,7 +1486,7 @@ function tallyItems(rows, names) {
 function renderCustomerYou(project, mediaP) {
   var box = el('div', 'detail-card-body');
   function load() {
-    var acct = getAccount && getAccount();
+    var acct = getEffectiveAccount();
     box.className = 'detail-card-body';
     if (!acct) { box.className = 'detail-card-body owners-empty'; box.textContent = 'Connect a wallet to see the items you own.'; return; }
     box.textContent = 'Loading your items…';
@@ -2656,7 +2657,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   // these are the ONLY mutable bits (price/supply/category/flags are immutable; any other change is remove +
   // re-add as a new id). Shown only when the connected wallet is the authority; gated again on submit.
   var authority = projectAuthorityAddress(project);
-  var acct = getAccount && getAccount();
+  var acct = getEffectiveAccount();
   if (acct && authority && acct.toLowerCase() === authority.toLowerCase()) {
     var opH = el('div', 'tier-detail-section-h'); opH.textContent = 'Project operator'; content.appendChild(opH);
     var opBox = el('div', 'tier-detail-op');
@@ -3853,6 +3854,7 @@ function buildDirectSwapNativeTx(chainId, pool, amountIn, minOut, recipient) {
 // gasless Permit2 single-allowance for the Universal Router, then sends PERMIT2_PERMIT + V4_SWAP in one tx
 // (the swap's SETTLE pulls the USDC via that allowance). Async: may send an approval tx + request a sig.
 async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus) {
+  if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   amountIn = BigInt(amountIn); minOut = BigInt(minOut);
   var max128 = (1n << 128n) - 1n;
   if (amountIn <= 0n || amountIn > max128 || minOut <= 0n || minOut > max128) throw new Error('Swap amounts are outside Uniswap V4’s uint128 range.');
@@ -6662,7 +6664,7 @@ function renderPayCard(project, cart) {
     var key = chainId + ':' + acc.address.toLowerCase();
     if (_rateCache[key]) return Promise.resolve(_rateCache[key]);
     var unit = 10n ** BigInt(acc.decimals == null ? 18 : acc.decimals);
-    return computePayPreview({ chainId: chainId, projectId: pidOn(project, chainId), token: acc.address, amount: unit, beneficiary: getAccount() || undefined })
+    return computePayPreview({ chainId: chainId, projectId: pidOn(project, chainId), token: acc.address, amount: unit, beneficiary: getEffectiveAccount() || undefined })
       .then(function (r) {
         if (r && !r.unavailable && r.received != null) {
           var per = (r.received || 0n) + (r.reserved || 0n);
@@ -6744,7 +6746,7 @@ function renderPayCard(project, cart) {
 
   var nftCreditGeneration = 0;
   function refreshNftCredits() {
-    var acct = getAccount();
+    var acct = getEffectiveAccount();
     var shop = state.shop;
     var gen = ++nftCreditGeneration;
     if (!acct || !shop || !shop.hook) {
@@ -6760,7 +6762,7 @@ function renderPayCard(project, cart) {
       .then(toBigInt)
       .catch(function () { return 0n; })
       .then(function (credits) {
-        var currentAccount = getAccount();
+        var currentAccount = getEffectiveAccount();
         if (gen !== nftCreditGeneration || state.shop !== shop || !currentAccount || currentAccount.toLowerCase() !== acct.toLowerCase()) return credits;
         state.nftCredits = credits;
         state.nftCreditsLoading = false;
@@ -7057,7 +7059,7 @@ function renderPayCard(project, cart) {
       box.appendChild(r);
     }
     row('Items', formatShopPrice(state.shop, breakdown.subtotal, state.chainId));
-    if (!getAccount()) {
+    if (!getEffectiveAccount()) {
       row('Shop credit', 'Connect wallet to check', 'muted');
     } else if (state.nftCreditsLoading) {
       row('Shop credit', 'Checking…', 'muted');
@@ -7280,7 +7282,7 @@ function renderPayCard(project, cart) {
       projectId: pidOn(project, state.chainId),
       token: state.token.address,
       amount: amt,
-      beneficiary: getAccount() || undefined,
+      beneficiary: getEffectiveAccount() || undefined,
       terminal: state.token.viaRouter ? routerTerminalFor(state.chainId) : undefined,
       metadata: previewMetadata,
       allowZero: previewTierIds.length > 0,
@@ -7362,6 +7364,7 @@ function renderPayCard(project, cart) {
     }
     if (amt === 0n && !tierIds.length) { status.textContent = 'Enter an amount'; return; }
 
+    if (getViewAs()) { status.className = 'paybox-status error'; status.textContent = VIEW_AS_TX_ERROR; return; }
     var beneficiary = getAccount();
     if (!beneficiary) {
       connect().then(function () {
@@ -7894,6 +7897,7 @@ async function accountCanManageProjectToken(project, account, permissionId) {
 }
 
 async function ensureProjectTokenManager(project, permissionId, setStatus) {
+  if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   var account = getAccount();
   if (!account) {
     setStatus('Connecting wallet…', 'pending');
@@ -8312,7 +8316,7 @@ function operatorGateNode(authorityLabel, operatorAddr, actionText, chainId) {
   if (operatorAddr && chainId) {
     fetchSafeInfo(operatorAddr, chainId).then(function (info) {
       if (!info || !gate.isConnected) return;
-      var acc = getAccount && getAccount();
+      var acc = getEffectiveAccount();
       var isSigner = acc && info.owners.some(function (o) { return o.toLowerCase() === acc.toLowerCase(); });
       gate.className = 'operator-gate' + (isSigner ? ' ok' : '');
       gate.textContent = isSigner
@@ -8351,6 +8355,7 @@ async function accountCanAdjustShopOn(project, chainId, hook, account) {
 }
 
 async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, setStatus) {
+  if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   var account = getAccount();
   if (!account) {
     setStatus('Connecting wallet…', 'pending');
@@ -8372,6 +8377,7 @@ async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, 
 
 // Shared: require a connected wallet equal to the project's operator/owner. Returns the account or null.
 async function ensureOperatorAccount(project, operatorAddr, setStatus) {
+  if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   var account = getAccount();
   if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
   if (!account) { setStatus('Connect a wallet to continue', 'error'); return null; }
@@ -8744,7 +8750,7 @@ function openEditTokenModal(project) {
     + (deployed ? 'SET_TOKEN_METADATA' : 'DEPLOY_ERC20') + ' permission on every project chain.';
   content.appendChild(permissionGate);
   function refreshPermissionGate() {
-    var account = getAccount && getAccount();
+    var account = getEffectiveAccount();
     if (!account) return;
     accountCanManageProjectToken(project, account, permissionId).then(function (allowed) {
       if (!permissionGate.isConnected) return;
@@ -11883,7 +11889,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
 
   function loadQueues(info) {
     body.innerHTML = '';
-    var acc = getAccount && getAccount();
+    var acc = getEffectiveAccount();
     var isSigner = acc && info.owners.some(function (o) { return o.toLowerCase() === acc.toLowerCase(); });
     var batchBar = el('div', 'backoffice-batch'); body.appendChild(batchBar);
     var ready = []; // { cid, chain, tx } across all chains
@@ -13716,6 +13722,7 @@ function buildPayoutsModal(project, acctKind) {
   onChainChange();
 
   btn.addEventListener('click', function () {
+    if (getViewAs()) { status.classList.remove('pending'); status.textContent = VIEW_AS_TX_ERROR; return; }
     if (!(getAccount && getAccount())) { connect(); return; }
     if (!state.acct || !state.meta || !state.selected) { status.textContent = 'No available payout limit.'; return; }
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { status.textContent = 'Invalid amount'; return; }
@@ -13858,7 +13865,7 @@ function buildUseAllowanceModal(project, acctKind) {
       // The fee is still deducted from the withdrawal, but _processFee forgives it and credits it back.
       var rt = el('div', 'ops-preview-line ops-preview-feetok'); rt.textContent = 'The 2.5% returns to the project’s balance — the protocol can’t accept this token.'; preview.appendChild(rt);
     } else if (state.meta.tokenKeyed) {
-      renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: amount / 40n, beneficiary: getAccount && getAccount() });
+      renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: amount / 40n, beneficiary: getEffectiveAccount() });
     } else {
       var cv = el('div', 'ops-preview-line ops-preview-feetok');
       cv.textContent = 'Protocol fee is converted by the terminal at the onchain price.';
@@ -13946,10 +13953,10 @@ function buildUseAllowanceModal(project, acctKind) {
         if (seq !== loadSeq) return;
         state.feeRoutes = routes; updateAllowancePreview();
       });
-      var allowanceCaller = getAccount && getAccount();
+      var allowanceCaller = getEffectiveAccount();
       var allowanceChain = state.chainId;
       isAllowanceFeeless(allowanceChain, pidOn(project, allowanceChain), allowanceCaller, allowanceCaller).then(function (f) {
-        var current = getAccount && getAccount();
+        var current = getEffectiveAccount();
         if (seq === loadSeq && state.chainId === allowanceChain && current && allowanceCaller && current.toLowerCase() === allowanceCaller.toLowerCase()) {
           state.feeless = f; updateAllowancePreview();
         }
@@ -13975,6 +13982,7 @@ function buildUseAllowanceModal(project, acctKind) {
   onChainChange();
 
   btn.addEventListener('click', function () {
+    if (getViewAs()) { status.classList.remove('pending'); status.textContent = VIEW_AS_TX_ERROR; return; }
     var acc = getAccount && getAccount();
     if (!acc) { connect(); return; }
     if (!state.acct || !state.meta || !state.selected) { status.textContent = 'No available surplus allowance.'; return; }
@@ -18706,6 +18714,7 @@ function makeChainDistribute(project, pc, hasPending, isCurrent) {
   }
   btn.addEventListener('click', function () {
     status.className = 'modal-status splits-status'; status.textContent = '';
+    if (getViewAs()) { status.className = 'modal-status splits-status error'; status.textContent = VIEW_AS_TX_ERROR; return; }
     if (!(getAccount && getAccount())) {
       btn.disabled = true; btn.textContent = 'Connecting…'; status.textContent = 'Connecting wallet…';
       connect().then(function () { btn.disabled = false; btn.textContent = 'Distribute'; btn.click(); })
@@ -18911,7 +18920,7 @@ function renderOpsActions(project) {
 // Per chain: the connected wallet's token balance, its cash out value (reclaimable ETH), and its max
 // loan (borrowable ETH against that balance via REVLoans). Null fields where unavailable on a chain.
 function fetchYouPosition(project) {
-  var acct = getAccount && getAccount();
+  var acct = getEffectiveAccount();
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   return Promise.all(chains.map(function (chain) {
     var cid = chain.id;
@@ -19040,12 +19049,12 @@ function renderYouCard(project, opts) {
   var loadSeq = 0;
   var renderedAccountKey = null;
   function currentAccountKey() {
-    var current = getAccount && getAccount();
+    var current = getEffectiveAccount();
     return current ? current.toLowerCase() : '';
   }
   function load() {
     var seq = ++loadSeq; // guard: stale in-flight loads must not append a second table (caused duplicate cards on connect)
-    var acct = getAccount && getAccount();
+    var acct = getEffectiveAccount();
     renderedAccountKey = acct ? acct.toLowerCase() : '';
     body.innerHTML = '';
     if (!acct) {
@@ -19091,7 +19100,7 @@ function renderYouCard(project, opts) {
       // async (the getLogs scan is slower than the balance reads). Clickable → the remove-liquidity modal.
       function fillLpCell(span, cid) {
         span.innerHTML = ''; span.style.cursor = ''; span.style.textDecoration = ''; span.onclick = null;
-        var acct = getAccount && getAccount();
+        var acct = getEffectiveAccount();
         if (!acct || !POSITION_MANAGER_BY_CHAIN[cid]) { span.textContent = '—'; return; }
         var g = skel('44px', '11px'); g.style.display = 'inline-block'; g.style.verticalAlign = 'middle';
         span.appendChild(g); // ghost while the getLogs position scan runs
@@ -19644,7 +19653,7 @@ function opsPercentButtons(input, getMax) {
 
 // Read the connected wallet's token balance for the project on a chain (credits + ERC-20).
 function readUserBalance(project, chainId) {
-  var acct = getAccount && getAccount();
+  var acct = getEffectiveAccount();
   if (!acct) return Promise.resolve(null);
   var tokens = getAddress('JBTokens', chainId);
   if (!tokens) return Promise.resolve(null);
@@ -19669,7 +19678,7 @@ function renderBalanceTables(balTable, project, sym, opts) {
 
   // YOUR BALANCE — Chain | <project token>.
   balTable.appendChild(title('Your balance'));
-  if (!(getAccount && getAccount())) { var cc = el('div', 'modal-balance'); cc.textContent = 'Connect a wallet to see your balance.'; balTable.appendChild(cc); }
+  if (!getEffectiveAccount()) { var cc = el('div', 'modal-balance'); cc.textContent = 'Connect a wallet to see your balance.'; balTable.appendChild(cc); }
   else {
     var yt = makeTable('1.4fr auto');
     addRow(yt, [th('Chain'), th(sym, true)], true);
@@ -19824,7 +19833,7 @@ function buildRedeemItemsModal(project, requestClose) {
 
   var _meta = { names: {}, media: {} };
   function loadItems() {
-    var acct = getAccount && getAccount();
+    var acct = getEffectiveAccount();
     if (!acct) { itemsBox.className = 'redeem-items owners-empty'; itemsBox.textContent = 'Connect a wallet to redeem your items.'; btn.disabled = true; return; }
     state.owned = null; renderItems(_meta);
     resolveShopItemMedia(project).then(function (n) { _meta = n; renderItems(_meta); });
@@ -19850,7 +19859,7 @@ function buildRedeemItemsModal(project, requestClose) {
   function schedulePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(updatePreview, 250); }
   function updatePreview() {
     var seq = ++previewSeq;
-    var acct = getAccount && getAccount();
+    var acct = getEffectiveAccount();
     var ids = selectedTokenIds();
     state.net = null; btn.disabled = true;
     if (!acct || !ids.length || !state.hook || !state.localPid) { preview.textContent = ids.length ? '' : (state.owned && state.owned.length ? 'Select items to redeem.' : ''); return; }
@@ -19891,6 +19900,7 @@ function buildRedeemItemsModal(project, requestClose) {
   }
 
   btn.addEventListener('click', function () {
+    if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; return; }
     var acct = getAccount && getAccount();
     var ids = selectedTokenIds();
     if (!acct) { status.textContent = 'Connect a wallet.'; return; }
@@ -19993,7 +20003,7 @@ function buildCashOutModal(project, requestClose) {
     readUserBalance(project, cid).then(function (b) {
       if (seq !== cashBalanceSeq || state.chainId !== cid) return;
       state.balance = b;
-      if (!(getAccount && getAccount())) { availLine.textContent = 'Connect a wallet to cash out.'; return; }
+      if (!getEffectiveAccount()) { availLine.textContent = 'Connect a wallet to cash out.'; return; }
       availLine.textContent = 'Your ' + sym + ' available on ' + chainNameOf(cid) + ': ' + (b == null ? '—' : (formatTokens(b) + ' ' + sym));
     });
   }
@@ -20013,7 +20023,7 @@ function buildCashOutModal(project, requestClose) {
   var cashAggregateSeq = 0;
   function onChainChange() {
     var cid = state.chainId;
-    var contextAccount = getAccount && getAccount();
+    var contextAccount = getEffectiveAccount();
     var contextSeq = ++cashContextSeq;
     ++cashAggregateSeq; // invalidate any cross-chain breakdown for the previous chain/reclaim selection
     refreshBalance();
@@ -20052,7 +20062,7 @@ function buildCashOutModal(project, requestClose) {
       ]);
     }).then(function (r) {
       if (!r || contextSeq !== cashContextSeq || state.chainId !== cid) return;
-      var currentAccount = getAccount && getAccount();
+      var currentAccount = getEffectiveAccount();
       if (!currentAccount || currentAccount.toLowerCase() !== contextAccount.toLowerCase()) throw new Error('Connected account changed.');
       if (r[0] == null || r[1] == null || !r[2] || !r[2][1] || r[3] == null || r[4] == null) {
         throw new Error('The live cash out inputs could not be verified.');
@@ -20115,7 +20125,7 @@ function buildCashOutModal(project, requestClose) {
     var pid = pidOn(project, state.chainId); // this chain's own project id
     var a = state.acct;
     if (!a) { preview.innerHTML = ''; state.reclaim = null; state.net = null; btn.disabled = true; return; }
-    var currentAccount = getAccount && getAccount();
+    var currentAccount = getEffectiveAccount();
     if (!state.contextAccount || !currentAccount || currentAccount.toLowerCase() !== state.contextAccount.toLowerCase() || state.feeless == null) {
       preview.textContent = 'Connected account or fee status changed. Refreshing is required before anything can be sent.';
       state.reclaim = null; state.net = null; btn.disabled = true; return;
@@ -20129,7 +20139,7 @@ function buildCashOutModal(project, requestClose) {
     preview.textContent = 'Calculating…';
     // Beneficiary drives feeless + REV-fee math; use the connected wallet so the preview matches what
     // that wallet will see. A placeholder (not feeless) is fine for the disconnected preview.
-    var who = (getAccount && getAccount()) || '0x0000000000000000000000000000000000000001';
+    var who = getEffectiveAccount() || '0x0000000000000000000000000000000000000001';
     Promise.all([
       // Hook-aware reclaim: for revnets this already nets out the REVOwner 2.5%-of-tokens fee + buyback.
       clientFor(state.chainId).readContract({
@@ -20140,7 +20150,7 @@ function buildCashOutModal(project, requestClose) {
       read(state.chainId, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, count, state.supply, state.surplus]).catch(function () { return null; }),
     ]).then(function (r) {
       if (seq !== previewSeq) return;
-      var liveAccount = getAccount && getAccount();
+      var liveAccount = getEffectiveAccount();
       if (!liveAccount || liveAccount.toLowerCase() !== quoteAccount.toLowerCase()) { onChainChange(); return; }
       var preCut = r[0];
       var fullGross = r[1] != null ? toBigInt(r[1]) : null;
@@ -20222,7 +20232,7 @@ function buildCashOutModal(project, requestClose) {
       var erc20P = (pool && acct) ? clientFor(state.chainId).readContract({ address: pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n);
       Promise.all([qDirect, qBuyback, erc20P]).then(function (q) {
         if (seq !== previewSeq) return;
-        var liveAccount = getAccount && getAccount();
+        var liveAccount = getEffectiveAccount();
         if (!acct || !liveAccount || liveAccount.toLowerCase() !== acct.toLowerCase()) { onChainChange(); return; }
         var directOut = q[0], buybackOut = q[1], erc20Bal = q[2] || 0n;
         // Route 3 — direct pool sell (preferred when the user holds enough claimed ERC-20 to cover the cash out).
@@ -20251,7 +20261,7 @@ function buildCashOutModal(project, requestClose) {
     if (seq !== previewSeq) return;
     var a = state.acct;
     if (!a) return;
-    var liveAccount = getAccount && getAccount();
+    var liveAccount = getEffectiveAccount();
     if (!state.contextAccount || !liveAccount || liveAccount.toLowerCase() !== state.contextAccount.toLowerCase()) {
       preview.textContent = 'Connected account changed. Refresh the cash out quote before continuing.';
       state.net = null; btn.disabled = true; return;
@@ -20314,7 +20324,7 @@ function buildCashOutModal(project, requestClose) {
         var revTok = el('div', 'ops-preview-line ops-preview-feetok');
         revTok.textContent = '• minting the fee revnet’s token to you…';
         preview.appendChild(revTok);
-        var racct = (getAccount && getAccount()) || undefined;
+        var racct = getEffectiveAccount() || undefined;
         feeRevnetIdOf(state.chainId, dataHook).then(function (frid) {
           if (seq !== previewSeq) return;
           if (frid == null) { if (revTok.parentNode) revTok.parentNode.removeChild(revTok); return; }
@@ -20343,7 +20353,7 @@ function buildCashOutModal(project, requestClose) {
       // Protocol fee → JB #1 (the fee project), minting its token back to the casher. Linked + token-previewed.
       renderFeeReceipt(preview, {
         chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: a.address || NATIVE_TOKEN,
-        decimals: a.decimals, symbol: a.symbol, feeAmount: f.protocolFee, beneficiary: (getAccount && getAccount()) || undefined,
+        decimals: a.decimals, symbol: a.symbol, feeAmount: f.protocolFee, beneficiary: getEffectiveAccount() || undefined,
         onReceived: function (amount, fsym) { if (seq === previewSeq && state.outcome) state.outcome.protoToken = { amount: amount, sym: fsym }; },
       });
     }
@@ -20394,6 +20404,7 @@ function buildCashOutModal(project, requestClose) {
   }).catch(function () {});
 
   btn.addEventListener('click', function () {
+    if (getViewAs()) { status.classList.remove('pending'); status.textContent = VIEW_AS_TX_ERROR; return; }
     var acct = getAccount && getAccount();
     if (!acct) { connect().then(onChainChange).catch(function () {}); return; }
     if (!state.contextAccount || state.contextAccount.toLowerCase() !== acct.toLowerCase()) {
@@ -20840,7 +20851,7 @@ function buildLoanModal(project, requestClose) {
       var acct = state.acct;
       var isNative = !state.acctLoading && acct && String(acct.address || NATIVE_TOKEN).toLowerCase() === NATIVE_TOKEN.toLowerCase();
       if (isNative) {
-        var who = (getAccount && getAccount()) || undefined;
+        var who = getEffectiveAccount() || undefined;
         var cid = state.chainId;
         // Resolve the token amount each fee mints, then label the row. `id` may be a promise (REV id).
         function fillTok(row, feeAmt, idP, symP, label, onAmount) {
@@ -20970,7 +20981,7 @@ function buildLoanModal(project, requestClose) {
     var cid = state.chainId;
     var pid = pidOn(project, cid);
     var terminal = getAddress('JBMultiTerminal', cid);
-    var quoteAccount = (getAccount && getAccount()) || '0x0000000000000000000000000000000000000001';
+    var quoteAccount = getEffectiveAccount() || '0x0000000000000000000000000000000000000001';
     var reclaimToken = state.acct.address || NATIVE_TOKEN;
     state.borrowableLoading = true; state.cashOutNet = null; state.cashOutLoading = !!terminal; updateDecision();
     Promise.all([
@@ -21022,6 +21033,7 @@ function buildLoanModal(project, requestClose) {
   onWalletChange(function () { if (wrap.isConnected) onChainChange(); });
 
   btn.addEventListener('click', function () {
+    if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; return; }
     var acct = getAccount && getAccount();
     if (!acct) { connect().then(onChainChange).catch(function () {}); return; }
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
@@ -21211,6 +21223,7 @@ function buildRepayModal(project, loanRow, requestClose) {
 
   btn.addEventListener('click', function () {
     if (st.done) { if (requestClose) requestClose(); return; }
+    if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; return; }
     var acct = getAccount && getAccount();
     if (!acct) { connect(); return; }
     if (st.principal == null) return;
@@ -21812,7 +21825,7 @@ function fetchProjectSuckerMap(project) {
 // address. `verified` distinguishes a confirmed missing ERC-20 from an RPC/deployment read failure; those must
 // never share a UI state because only the former can safely tell a user to claim tokens first.
 function readBridgeableBalance(project, chainId) {
-  var acct = getAccount && getAccount();
+  var acct = getEffectiveAccount();
   var tokens = getAddress('JBTokens', chainId);
   if (!acct || !tokens) return Promise.resolve({ verified: false, token: null, balance: null });
   var client = clientFor(chainId);
@@ -22019,7 +22032,7 @@ function buildMoveModal(project) {
     readBridgeableBalance(project, from).then(function (r) {
       if (seq !== moveBalanceSeq || state.from !== from) return;
       state.balance = r.balance; state.balanceVerified = !!r.verified; state.token = r.token;
-      if (!(getAccount && getAccount())) { bal.textContent = 'Connect a wallet to see your balance.'; updateMoveBtn(); return; }
+      if (!getEffectiveAccount()) { bal.textContent = 'Connect a wallet to see your balance.'; updateMoveBtn(); return; }
       if (!r.verified) { bal.textContent = 'Could not verify your bridgeable balance on ' + moveChainName(from) + '. Try again shortly.'; updateMoveBtn(); return; }
       if (!r.token) { bal.textContent = 'No ERC-20 ' + sym + ' on ' + moveChainName(from) + ' — claim your tokens there first to bridge.'; updateMoveBtn(); return; }
       bal.textContent = 'Your ' + sym + ' available on ' + moveChainName(from) + ': ' + formatTokens(r.balance) + ' ' + sym;
@@ -22030,7 +22043,7 @@ function buildMoveModal(project) {
   // but the click silently no-ops (the #1 "I clicked and nothing happened" confusion). Suckers bridge the
   // ERC-20, so credits-only / zero-balance / same-chain all block it.
   function moveBlockReason() {
-    if (!(getAccount && getAccount())) return ''; // allow click → connect()
+    if (!getEffectiveAccount()) return ''; // allow click → connect()
     if (state.from === state.to) return 'Pick two different chains to bridge between.';
     if (state.pairs == null) return 'Finding a verified bridge route…';
     if (!state.sucker) return 'No verified bridge route connects these chains.';
@@ -22194,6 +22207,7 @@ function buildMoveModal(project) {
   }).catch(function () {});
 
   btn.addEventListener('click', function () {
+    if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; return; }
     var acct = getAccount && getAccount();
     if (!acct) { connect().then(refreshBalance).catch(function () {}); return; }
     if (state.from === state.to) { status.textContent = 'Pick two different chains.'; return; }
@@ -22550,6 +22564,7 @@ async function readPoolState(project, chainId, opts) {
 
 // Send one tx from the connected wallet and wait for its receipt. Returns the hash.
 async function lpSendTx(chainId, p) {
+  if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet');
   var acct = getAccount();
@@ -23453,7 +23468,7 @@ function prepareRemoveLiquidity(chainId, pos, acct) {
 // The position table can remain open while the market moves or the NFT transfers; stale values must not become the
 // user's expected/minimum-return preview.
 async function refreshLpPositionForRemoval(chainId, pos, expectedAccount) {
-  var currentAccount = getAccount && getAccount();
+  var currentAccount = getEffectiveAccount();
   if (!currentAccount || currentAccount.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Reload your LP positions.');
   }
@@ -23495,7 +23510,7 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
   wrap.appendChild(intro);
   var list = el('div'); list.appendChild(skel('100%', '50px')); wrap.appendChild(list);
   openModal('Remove liquidity', wrap);
-  var acct = getAccount && getAccount();
+  var acct = getEffectiveAccount();
   if (!acct) { list.innerHTML = ''; var w0 = el('div', 'modal-status'); w0.textContent = 'Connect a wallet to see your positions.'; list.appendChild(w0); return; }
   readUserLpPositions(project, chainId, acct).then(function (positions) {
     list.innerHTML = '';
@@ -23784,13 +23799,13 @@ function buildAddLiquidityModal(project) {
   function refreshBalances() {
     if (!state.pair) return;
     var cid = state.chainId, pair = state.pair, seq = ++lpBalanceSeq;
-    var acct = getAccount && getAccount();
+    var acct = getEffectiveAccount();
     updateDlAuto();
     if (!acct) { balLine.textContent = ''; state.revBal = null; state.ethBal = null; return; }
     balLine.textContent = 'Your ' + pairSym() + ': …';
     var pairTokenAddr = pair.isNative ? NATIVE_TOKEN : pair.addr;
     Promise.all([readUserBalance(project, cid), readWalletTokenBalance(cid, pairTokenAddr, acct)]).then(function (r) {
-      if (seq !== lpBalanceSeq || state.chainId !== cid || state.pair !== pair || !getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) return;
+      if (seq !== lpBalanceSeq || state.chainId !== cid || state.pair !== pair || !getEffectiveAccount() || getEffectiveAccount().toLowerCase() !== acct.toLowerCase()) return;
       state.revBal = r[0]; state.ethBal = r[1];
       balLine.textContent = 'Your ' + pair.symbol + ': ' + (r[1] != null ? formatBalance(r[1], pair.decimals, pair.symbol) : '—');
     });
@@ -23827,6 +23842,7 @@ function buildAddLiquidityModal(project) {
   refreshPair();
 
   btn.addEventListener('click', function () {
+    if (getViewAs()) { status.className = 'modal-status error'; status.textContent = VIEW_AS_TX_ERROR; return; }
     if (!(getAccount && getAccount())) { connect(); return; }
     if (!state.pair) { status.className = 'modal-status error'; status.textContent = 'Could not verify the project’s accounting token.'; return; }
     var cid = state.chainId;

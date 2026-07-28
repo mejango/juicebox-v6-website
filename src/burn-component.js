@@ -5,7 +5,7 @@
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, discoverChains, selectChain, firstChainForNetwork,
-  executeTransaction, executeRead, renderError, getAddress, getAccount,
+  executeTransaction, executeRead, renderError, getAddress, getAccount, getEffectiveAccount,
   getChainTokens, parseAmount, formatAmount, parseHashDefaults,
 } from './component-base.js';
 
@@ -166,7 +166,7 @@ export function renderBurnComponent() {
   }
 
   function loadBalance() {
-    var account = getAccount();
+    var account = getEffectiveAccount();
     if (!account || !state.selectedChain || !state.projectId) return;
     var tokensAddr = getAddress('JBTokens', state.selectedChain);
     if (!tokensAddr) return;

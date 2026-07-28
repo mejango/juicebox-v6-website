@@ -11,7 +11,7 @@
 // the "Open in Safe app" deep link.
 
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData } from 'viem';
-import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO } from './component-base.js';
+import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR } from './component-base.js';
 import { CHAINS } from './chain.js';
 
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
@@ -113,6 +113,7 @@ function safeTxHashOf(chainId, safe, fields) {
 // Sign the SafeTx with the connected wallet. MetaMask/Ledger require the active chain to equal the EIP-712
 // domain chainId, so switch first.
 async function signSafeTx(chainId, safe, fields, signer) {
+  if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
   try {
@@ -321,6 +322,7 @@ async function feeOverrides(chainId) {
 // Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an onchain revert surfaces as
 // an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
 async function sendAndConfirm(wallet, chainId, params, label) {
+  if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var account = getAccount();
   if (!account) throw new Error('Connect a wallet first');
   var active = await wallet.getChainId().catch(function () { return null; });

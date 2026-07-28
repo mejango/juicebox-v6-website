@@ -5,7 +5,7 @@
 // operates via granted permissions. "View as" is inherent: any address or ENS name in the
 // hash renders that account; action CTAs only appear for the connected account.
 
-import { el, truncAddr, getAccount, isAddr } from './component-base.js';
+import { el, truncAddr, getAccount, isAddr, getViewAs, setViewAs, clearViewAs } from './component-base.js';
 import { bendystrawQuery } from './bendystraw-client.js';
 import {
   ensAddressOf, addressNode, identGradient, activityRowFromEvent, renderActivityRow,
@@ -212,6 +212,22 @@ function renderAccount(container, address, live) {
   head.appendChild(avatar);
   head.appendChild(addressNode(address, homeChain && homeChain.id));
   if (isOwn) { var you = el('span', 'account-you'); you.textContent = 'Connected'; head.appendChild(you); }
+  // Site-wide "View as": browse the WHOLE site as this account (the input below only navigates
+  // between account pages). The button flips to an exit while impersonating this address.
+  var viewingThis = !!(getViewAs() && getViewAs().toLowerCase() === address.toLowerCase());
+  if (!isOwn || viewingThis) {
+    var siteAs = el('button', 'account-viewas-go account-siteas');
+    siteAs.type = 'button';
+    siteAs.textContent = viewingThis ? 'Exit View as' : 'View site as this account';
+    siteAs.title = viewingThis
+      ? 'Stop viewing the site as this account'
+      : 'Browse the whole site as this account (read-only)';
+    siteAs.addEventListener('click', function () {
+      if (viewingThis) clearViewAs();
+      else setViewAs(address);
+    });
+    head.appendChild(siteAs);
+  }
   head.appendChild(viewAsForm(''));
   container.appendChild(head);
 

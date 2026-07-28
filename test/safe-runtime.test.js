@@ -10,6 +10,8 @@ const safeState = vi.hoisted(() => ({
 vi.mock('../src/component-base.js', () => ({
   getWalletClient: () => safeState.wallet,
   getAccount: () => safeState.account,
+  getViewAs: () => null,
+  VIEW_AS_TX_ERROR: "You're viewing the site as another account — exit View as to transact.",
   switchChain: safeState.switchChain,
   createPublicClientForChain: () => safeState.publicClient,
   ZERO_ADDRESS: '0x0000000000000000000000000000000000000000',
