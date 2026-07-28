@@ -50,6 +50,47 @@ export function renderDataTab() {
   }
 }
 
+// RFC-4180-style CSV of the current result rows: q.columns order, labels as the header row, raw item
+// values as cells (objects serialize as JSON). Pure — the download button wraps it in a Blob.
+export function dataRowsToCsv(columns, items) {
+  function cell(value) {
+    if (value == null) value = '';
+    value = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    return /[",\n\r]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
+  }
+  const lines = [(columns || []).map(col => cell(col.label)).join(',')];
+  for (const item of (items || [])) {
+    lines.push((columns || []).map(col => cell(item ? item[col.key] : '')).join(','));
+  }
+  return lines.join('\r\n');
+}
+
+function csvDownloadButton(q, getRows) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-transact data-csv-btn';
+  btn.textContent = 'DOWNLOAD CSV';
+  btn.title = 'Save the rows currently shown as a .csv file';
+  btn.addEventListener('click', () => {
+    const blob = new Blob([dataRowsToCsv(q.columns, getRows())], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = String(q.id || q.title || 'results').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    // Keep the anchor + object URL alive long enough for the browser to begin the download (Safari).
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 2000);
+  });
+  return btn;
+}
+
+// The tab renders once at init, so follow the shared network toggle wherever it's flipped (the Discover
+// header, this tab's own strip) — otherwise the endpoint note and chain pills keep the stale network.
+if (typeof document !== 'undefined') {
+  document.addEventListener('jb:network-changed', function () { renderDataTab(); });
+}
+
 function renderQueryRow(q) {
   const row = document.createElement('div');
   row.className = 'fn-row data-row';
@@ -329,6 +370,7 @@ function buildContent(q) {
       if (q.kind === 'single') {
         renderSingle(node);
         status.textContent = node ? 'ok' : 'not found';
+        if (node) resultPanel.appendChild(csvDownloadButton(q, () => [node]));
       } else {
         const items = (node && node.items) || [];
         const total = node && node.totalCount != null ? node.totalCount : null;
@@ -340,6 +382,9 @@ function buildContent(q) {
 
         const existingMore = resultPanel.querySelector('.data-load-more');
         if (existingMore) existingMore.remove();
+        const existingCsv = resultPanel.querySelector('.data-csv-btn');
+        if (existingCsv) existingCsv.remove();
+        if (state.items.length) resultPanel.appendChild(csvDownloadButton(q, () => state.items));
         const summary = `${state.items.length} shown${total != null ? ' / ' + total.toLocaleString() + ' total' : ''}`;
         status.textContent = summary;
         const limitField = fields.limit && fields.limit.input;

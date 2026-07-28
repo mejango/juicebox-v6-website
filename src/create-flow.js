@@ -576,6 +576,25 @@ function mergeDraft(obj) {
   if (['wait', 'terminal', 'cycle'].indexOf(s.afterMode) === -1) s.afterMode = 'wait';
   if (!s.perChain || typeof s.perChain !== 'object' || Array.isArray(s.perChain)) s.perChain = {};
   Object.keys(s).forEach(function (k) { if (k.charAt(0) === '_') delete s[k]; });
+  // Re-derive the issuance denomination when the imported accounting selection contradicts the accepts
+  // set, mirroring what applyAccountingDefaults enforces: e.g. accepts ['usdc'] with baseCurrency ETH(1)
+  // deploys a config where every payment reverts PriceFeedNotFound (there is no USDC→ETH default feed).
+  // ETH-only drafts keep a user-chosen USD base — ETH→USD has a default feed.
+  var expectedCur = null;
+  if (s.accepts[0] === 'custom') expectedCur = customCurrencyId(s) || null; // null until the token resolves — re-checked at deploy
+  else if (s.accepts.indexOf('usdc') !== -1) expectedCur = 2;
+  if (expectedCur != null) {
+    var inconsistent = Number(s.storePricingCurrency) !== expectedCur || (s.projectType === 'revnet'
+      ? Number(s.revBaseCurrency) !== expectedCur
+      : (s.stages || []).some(function (st) {
+          return Number(st.baseCurrency) !== expectedCur || Number(st.payoutCurrency) !== expectedCur
+            || Number(st.surplusAllowanceCurrency) !== expectedCur;
+        }));
+    if (inconsistent) {
+      applyAccountingDefaults(s);
+      s._importNotice = 'Adjusted the issuance denomination to match the accepted asset — the imported draft priced issuance in a currency the accepted token can’t convert to.';
+    }
+  }
   s.deploying = false; s.statusLines = []; s.done = false; delete s.deployed; s.quoteChoice = null;
   if (s.details) s.details.logoUploading = false;
   s.step = Math.max(0, Math.min(Number(s.step) || 0, stepsFor(s).length - 1));
@@ -701,6 +720,8 @@ export function openCreateFlow() {
     sheet.appendChild(renderHeader(state, close, onImport, onExport));
     sheet.appendChild(renderStepper(state, render));
     var body = el('div', 'create-step');
+    // Import-time corrections (e.g. re-derived issuance denomination) stay visible for the session.
+    if (state._importNotice) body.appendChild(pinkNote(state._importNotice));
     body.appendChild(renderStep(state, render));
     sheet.appendChild(body);
     sheet.appendChild(renderFooter(state, render, close));
@@ -1740,7 +1761,7 @@ function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
   var to = el('span', 'create-split-to'); to.textContent = 'to';
   var toField = el('div', 'create-split-tofield'); toField.appendChild(to);
   var key = 'ai:' + stageIdx + ':' + idx;
-  if (!(state && perChainOpen(state, key))) {
+  if (!(state && perChainOpen(state, key, [aiMintChain(state, ai)]))) {
     var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or name.eth';
     recip.value = ai.address || '';
     var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; }, { chainId: (state.chainIds || [])[0] });
@@ -1765,7 +1786,21 @@ function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
   rm.addEventListener('click', function () { var i = stage.autoIssuances.indexOf(ai); if (i >= 0) stage.autoIssuances.splice(i, 1); render(); });
   row.appendChild(rm);
   wrap.appendChild(row);
-  if (state) wrap.appendChild(perChainAddrControl(state, render, key, pickResolved(ai.address, ai)));
+  // A row whose stored mint chain was deselected falls back to the first selected chain — say so
+  // inline instead of silently reassigning (the chain select above already shows the fallback).
+  if (state && ai.chainId != null) {
+    var selIds = state.chainIds || [];
+    var stillSelected = selIds.some(function (cid) { return canonChainId(cid) === canonChainId(Number(ai.chainId)); });
+    if (!stillSelected && selIds.length) {
+      var chainWarn = el('div', 'create-hint create-ai-chain-warn');
+      chainWarn.textContent = 'Was set to mint on ' + chainName(ai.chainId) + ', which is no longer selected — now minting on '
+        + chainName(aiMintChain(state, ai)) + '.';
+      wrap.appendChild(chainWarn);
+    }
+  }
+  // The per-chain override only matters on the ONE chain this row mints on — fields for other
+  // chains would be dead inputs the encoder never reads.
+  if (state) wrap.appendChild(perChainAddrControl(state, render, key, pickResolved(ai.address, ai), [aiMintChain(state, ai)]));
   return wrap;
 }
 
@@ -2287,10 +2322,11 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
   toFieldNode.appendChild(col);
 }
 // Whether the per-chain control for `key` is expanded (explicitly opened, or has any stored override).
-function perChainOpen(state, key) {
+function perChainOpen(state, key, chains) {
   if ((state.chainIds || []).length < 2) return false;
   if (state._pcOpen && state._pcOpen[key]) return true;
-  return (state.chainIds || []).some(function (cid) { var pc = perChainPeek(state, cid); return pc && pc.addr && pc.addr[key]; });
+  var ids = (chains && chains.length ? chains : state.chainIds) || [];
+  return ids.some(function (cid) { var pc = perChainPeek(state, cid); return pc && pc.addr && pc.addr[key]; });
 }
 
 function reservedSplitRow(t, rec, idx, render, onTotal, state, stageIdx) {
@@ -3088,6 +3124,8 @@ function renderDeploy(state, render) {
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
   var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
+  var deadlineBad = deadlinePresetIssue(state); // preset approval hook (JBDeadline) unmanifested on a selected chain
+  var lpBad = lpHookIssue(state); // Fund market split with the LP fee hook unmanifested on a selected chain
   var mediaBad = shopMediaUploadIssue(state); // never launch while an item attachment is pending/failed
   var exportRow = el('div', 'create-predeploy-export-row');
   var exportBeforeDeploy = el('button', 'create-io-btn create-predeploy-export');
@@ -3099,7 +3137,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!mediaBad || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3114,6 +3152,8 @@ function renderDeploy(state, render) {
   if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying — otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
   if (approvalBad) wrap.appendChild(warnNote(approvalBad + ' Without it the approval condition silently becomes “none” (no review window for edits).'));
+  if (deadlineBad) wrap.appendChild(warnNote(deadlineBad));
+  if (lpBad) wrap.appendChild(warnNote(lpBad));
   if (mediaBad) wrap.appendChild(warnNote(mediaBad));
   if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
@@ -3133,6 +3173,44 @@ function approvalIssue(state) {
   var bad = (state.chainIds || []).filter(function (cid) { return !isAddr(chainAddr(state, cid, 'approval', def)); });
   if (!bad.length) return null;
   return 'The custom ruleset approval condition needs a valid contract address on ' + bad.map(function (c) { return chainName(c); }).join(', ') + '.';
+}
+
+// The Fund market ("Buyback liquidity") split routes reserved tokens through the shared
+// JBP6FeeLPSplitHook. On a chain where that hook has no deployment the encoder cannot build the split,
+// and a silent fallback would pay the LP share to a wallet on an immutable deploy — so it's a hard
+// deploy gate naming the offending chains.
+function lpHookIssue(state) {
+  function hasLp(recips) {
+    return (recips || []).some(function (r) { return r && r.type === 'lphook' && ((Number(r.percent) || 0) > 0 || (Number(r.amountEth) || 0) > 0); });
+  }
+  var uses = (state.stages || []).some(function (st) {
+    if (hasLp(st.reservedRecipients) || hasLp(st.payoutRecipients)) return true;
+    var byKind = st.payoutByKind || {};
+    return Object.keys(byKind).some(function (k) { return byKind[k] && hasLp(byKind[k].recipients); });
+  });
+  if (!uses) return null;
+  var bad = (state.chainIds || []).filter(function (cid) { return !getAddress('JBP6FeeLPSplitHook', cid); });
+  if (!bad.length) return null;
+  return 'The Fund market (LP fee) hook isn’t deployed on ' + bad.map(chainName).join(', ')
+    + ' — remove the buyback-liquidity split or deselect the chain.';
+}
+
+// A preset approval condition ("1-day deadline" etc.) encodes a shared JBDeadline contract address.
+// Where that deployment is missing the encoder would silently fall back to approvalHook = address(0) —
+// no review window for owner edits — so, like a bad custom address (approvalIssue), it's a hard gate.
+// Revnets configure no approval hook, and "none"/"custom" are covered elsewhere.
+function deadlinePresetIssue(state) {
+  if (state.projectType === 'revnet' || !deadlineApplies(state)) return null;
+  for (var si = 0; si < (state.stages || []).length; si++) {
+    var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === state.stages[si].deadline; });
+    if (!dl || !dl.contract) continue; // 'none' has no contract; 'custom' isn't a preset
+    var bad = (state.chainIds || []).filter(function (cid) { return !getAddress(dl.contract, cid); });
+    if (bad.length) {
+      return 'The ' + dl.label + ' approval hook isn’t deployed on ' + bad.map(chainName).join(', ')
+        + ' — pick a different approval condition or deselect the chain.';
+    }
+  }
+  return null;
 }
 
 // Repopulate the volatile _ensCache for a custom approval-hook ENS name after a reload/import, so the
@@ -3198,7 +3276,18 @@ function recipientIssue(state) {
     for (var c = 0; c < checks.length; c++) if (checks[c]) return pre + checks[c];
     for (var a = 0; a < (st.autoIssuances || []).length; a++) {
       var ai = st.autoIssuances[a];
-      if ((Number(ai.count) || 0) > 0 && !isAddr(resolvedStr(pickResolved(ai.address, ai)))) return pre + 'an auto-issuance has no valid recipient address.';
+      if (!((Number(ai.count) || 0) > 0)) continue;
+      // Validate the address the ENCODER will resolve: the per-chain override for the row's mint
+      // chain (where the tokens land) when set, else the default. Checking only the default let a
+      // bad override slip through validation and get silently dropped at encode time.
+      var mintChain = aiMintChain(state, ai);
+      var aiAddr = mintChain != null
+        ? chainAddr(state, mintChain, 'ai:' + si + ':' + a, pickResolved(ai.address, ai))
+        : resolvedStr(pickResolved(ai.address, ai));
+      if (!isAddr(aiAddr)) {
+        return pre + 'auto-issuance #' + (a + 1) + ' has no valid recipient address'
+          + (mintChain != null && (state.chainIds || []).length > 1 ? ' on ' + chainName(mintChain) + ' (its mint chain)' : '') + '.';
+      }
     }
   }
   return null;
@@ -3290,8 +3379,8 @@ function pcSupplyField(state, chainId, key, defStr) {
 // address defaults to the same on every chain; clicking the indicator reveals a per-chain input for each
 // chain (since an account may not exist at the same address on all chains). Overrides are stored under
 // `key` in state.perChain[cid].addr and consumed by the deploy build via chainAddr(state, cid, key, def).
-function perChainAddrControl(state, render, key, defStr) {
-  return perChainControl(state, render, key, defStr, pcAddrField);
+function perChainAddrControl(state, render, key, defStr, chains) {
+  return perChainControl(state, render, key, defStr, pcAddrField, null, chains);
 }
 // Same control, numeric per-chain field — for project IDs (which differ per chain for the same project).
 function perChainNumControl(state, render, key, defStr) {
@@ -3345,22 +3434,26 @@ function perChainPayoutRowControl(state, render, rec, keys, defaults) {
   foot.appendChild(collapse); wrap.appendChild(foot);
   return wrap;
 }
-function perChainControl(state, render, key, defStr, fieldFn, linkLabel) {
+// `chains` (optional) scopes the control to a subset of the selected chains — e.g. an auto-issuance
+// row's ONE mint chain, where fields for the other chains would be dead inputs the encoder ignores.
+function perChainControl(state, render, key, defStr, fieldFn, linkLabel, chains) {
   var wrap = el('div', 'create-pcaddr');
   if ((state.chainIds || []).length < 2) return wrap; // single chain — nothing to differ
+  var ids = (chains && chains.length ? chains : state.chainIds) || [];
   if (!state._pcOpen) state._pcOpen = {};
-  var hasOverrides = state.chainIds.some(function (cid) { var pc = perChainPeek(state, cid); return pc && pc.addr && pc.addr[key]; });
+  var hasOverrides = ids.some(function (cid) { var pc = perChainPeek(state, cid); return pc && pc.addr && pc.addr[key]; });
   var open = !!state._pcOpen[key] || hasOverrides;
   if (!open) {
     wrap.classList.add('create-pcaddr-collapsed'); // right-align the link under the field
-    var link = el('a', 'create-pcaddr-toggle'); link.href = '#'; link.textContent = linkLabel || 'Set per chain';
-    link.title = 'Set a different value on each chain';
+    var link = el('a', 'create-pcaddr-toggle'); link.href = '#';
+    link.textContent = linkLabel || (ids.length === 1 ? 'Set address on ' + chainName(ids[0]) : 'Set per chain');
+    link.title = ids.length === 1 ? 'Set a different value on ' + chainName(ids[0]) : 'Set a different value on each chain';
     link.addEventListener('click', function (e) { e.preventDefault(); state._pcOpen[key] = true; render(); });
     wrap.appendChild(link);
     return wrap;
   }
   // Per-chain rows first, so the top row lines up with the field/dropdown row it replaces…
-  state.chainIds.forEach(function (cid) {
+  ids.forEach(function (cid) {
     var rowc = el('div', 'create-pcaddr-row');
     var nm = el('span', 'create-pcaddr-chain'); nm.appendChild(chainIcon(cid, chainName(cid))); rowc.appendChild(nm);
     rowc.appendChild(fieldFn(state, cid, key, defStr));
@@ -3368,10 +3461,11 @@ function perChainControl(state, render, key, defStr, fieldFn, linkLabel) {
   });
   // …then the "use same on all chains" collapse link beneath them (right-aligned, like "Set per chain").
   var foot = el('div', 'create-pcaddr-foot');
-  var collapse = el('a', 'create-pcaddr-toggle'); collapse.href = '#'; collapse.textContent = 'Use same on all chains';
+  var collapse = el('a', 'create-pcaddr-toggle'); collapse.href = '#';
+  collapse.textContent = ids.length === 1 ? 'Use the default address' : 'Use same on all chains';
   collapse.addEventListener('click', function (e) {
     e.preventDefault();
-    state.chainIds.forEach(function (cid) { var pc = perChainPeek(state, cid); if (pc && pc.addr) delete pc.addr[key]; });
+    ids.forEach(function (cid) { var pc = perChainPeek(state, cid); if (pc && pc.addr) delete pc.addr[key]; });
     state._pcOpen[key] = false; render();
   });
   foot.appendChild(collapse);
@@ -3469,14 +3563,17 @@ function itemSplits(d, state, chainId, itemIdx) {
   var rsList = d.splitRecipients.map(function (r, i) { return { r: r, i: i }; }).filter(function (e) { return Number(e.r.pct) > 0 && (e.r.recip || '').trim(); });
   var tot = rsList.reduce(function (s, e) { return s + Number(e.r.pct); }, 0);
   if (!tot) return { splitPercent: 0, splits: [] };
-  var splits = rsList.map(function (e) {
+  // Per-row rounding can drift the group a few atoms above 1e9, which reverts the deploy AFTER the IPFS
+  // pin — correct through fillSplits like every other split builder.
+  var shares = fillSplits(rsList.map(function (e) { return Math.round(Number(e.r.pct) / tot * SPLITS_TOTAL); }));
+  var splits = rsList.map(function (e, k) {
     var r = e.r;
     var v = (r.recip || '').trim();
     var isProj = /^[0-9]+$/.test(v) && Number(v) > 0;
     // Per-chain wallet beneficiary override → default (ENS-resolved).
     var benef = state ? chainAddr(state, chainId, 'is:' + itemIdx + ':' + e.i, pickResolved(v, r)) : pickResolved(v, r);
     return {
-      percent: Math.round(Number(r.pct) / tot * 1e9),
+      percent: shares[k],
       projectId: isProj ? BigInt(v) : 0n,
       beneficiary: isProj ? ((resolvedStr(r.benef) && isAddr(resolvedStr(r.benef))) ? resolvedStr(r.benef) : ZERO) : (addrOrZero(benef)),
       preferAddToBalance: false, lockedUntil: 0, hook: ZERO,
@@ -4227,7 +4324,18 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     rs.approvalHook = addrOrZero(chainAddr(state, chainId, 'approval', pickResolved(state.approvalAddress, { resolvedAddress: state.approvalAddressResolved, resolvedFor: state.approvalAddressResolvedFor })));
   } else {
     var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === stage.deadline; });
-    rs.approvalHook = (dl && dl.contract && getAddress(dl.contract, chainId)) || ZERO;
+    if (dl && dl.contract) {
+      var dlAddr = getAddress(dl.contract, chainId);
+      // Fail CLOSED: a missing preset deployment must never silently encode approvalHook = address(0)
+      // (no review window) on an immutable deploy. deadlinePresetIssue gates the button with the same text.
+      if (!dlAddr) {
+        throw new Error('The ' + dl.label + ' approval hook isn’t deployed on ' + chainName(chainId)
+          + ' — pick a different approval condition or deselect the chain.');
+      }
+      rs.approvalHook = dlAddr;
+    } else {
+      rs.approvalHook = ZERO;
+    }
   }
 
   rs.pausePay = stage.pausePay; rs.holdFees = stage.holdFees;
@@ -4380,11 +4488,16 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   // chain). The hook keys off the distributing project, so projectId/beneficiary are pass-through.
   if (rec.type === 'lphook' && chainId != null) {
     var hookAddr = getAddress('JBP6FeeLPSplitHook', chainId);
-    if (hookAddr) {
-      var b = getAccount && getAccount();
-      return { preferAddToBalance: false, percent: rawPercent, projectId: 0,
-        beneficiary: addrOrZero(b), lockedUntil: lockTs, hook: hookAddr };
+    // Fail CLOSED where the hook has no deployment: falling through would encode a plain wallet split
+    // (hook 0), silently paying the LP share to a wallet on an immutable deploy. lpHookIssue gates the
+    // deploy button with the same message; this throw is the encoder backstop.
+    if (!hookAddr) {
+      throw new Error('The Fund market (LP fee) hook isn’t deployed on ' + chainName(chainId)
+        + ' — remove the buyback-liquidity split or deselect the chain.');
     }
+    var b = getAccount && getAccount();
+    return { preferAddToBalance: false, percent: rawPercent, projectId: 0,
+      beneficiary: addrOrZero(b), lockedUntil: lockTs, hook: hookAddr };
   }
   // The address-bearing field is the wallet recipient OR the project / custom-hook token beneficiary.
   var addr = (beneficiaryOverride != null) ? beneficiaryOverride : pickResolved(rec.address, rec); // resolve ENS → 0x
@@ -4708,6 +4821,7 @@ export const __test = {
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
+  lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft, renderRevnetStages,
   // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.
   revDeployAbi, revDeploy721Abi, deployer721Abi, omnichainAbi, omnichain721Abi,

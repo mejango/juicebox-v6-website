@@ -169,6 +169,7 @@ export function renderMintComponent() {
     try { tokenCount = parseAmount(state.amount, 18); } catch (_) {
       state.error = 'Invalid token count'; updateUI(); return;
     }
+    if (tokenCount <= 0n) { state.error = 'Enter a token count above zero'; updateUI(); return; }
 
     var beneficiary = getBeneficiaryAddress(state);
     if (!beneficiary) {

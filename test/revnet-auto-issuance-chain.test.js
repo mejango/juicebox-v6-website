@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { encodeAbiParameters } from 'viem';
 import { __test, createDraftObject, parseCreateDraftJson } from '../src/create-flow.js';
 
-const { initState, buildRevnetArgs, pcAddrSet, revDeployAbi, renderRevnetStages } = __test;
+const { initState, buildRevnetArgs, pcAddrSet, revDeployAbi, renderRevnetStages, recipientIssue } = __test;
 
 const ALICE = '0x1111111111111111111111111111111111111111';
 const BOB = '0x2222222222222222222222222222222222222222';
@@ -176,5 +176,83 @@ describe('revnet stage editor — auto-issuance chain selector UI', () => {
     const hints = Array.from(editorFor(s).querySelectorAll('.create-hint')).map((h) => h.textContent);
     const total = hints.find((t) => t.indexOf('Total auto issuance') !== -1);
     expect(total).toBe('Total auto issuance of 600 $TST.');
+  });
+});
+
+describe('auto-issuance validation — the ENCODED (per-chain resolved) address, not just the default', () => {
+  it('a bad per-chain override on the mint chain fails validation even though the default looks valid', () => {
+    const s = revState([1, 8453]);
+    s.stages[0].autoIssuances = [{ count: '100', address: ALICE, chainId: 8453 }];
+    pcAddrSet(s, 8453, 'ai:0:0', 'not-an-address');
+    const issue = recipientIssue(s);
+    expect(issue).toMatch(/auto-issuance/);
+    expect(issue).toContain('Base'); // names the row's mint chain
+    // The encoder would have silently dropped the row — this is exactly what validation now stops.
+    expect(configFor(s, 1).stageConfigurations[0].autoIssuances).toHaveLength(0);
+  });
+
+  it('a valid per-chain override on the mint chain passes even when the default is blank', () => {
+    const s = revState([1, 8453]);
+    s.stages[0].autoIssuances = [{ count: '100', address: '', chainId: 8453 }];
+    pcAddrSet(s, 8453, 'ai:0:0', BOB);
+    expect(recipientIssue(s)).toBeNull();
+    const autos = configFor(s, 8453).stageConfigurations[0].autoIssuances;
+    expect(autos).toHaveLength(1);
+    expect(autos[0].beneficiary).toBe(BOB);
+  });
+
+  it('an override on a NON-mint chain is dead weight — validation still requires the mint chain address', () => {
+    const s = revState([1, 8453]);
+    s.stages[0].autoIssuances = [{ count: '100', address: '', chainId: 8453 }];
+    pcAddrSet(s, 1, 'ai:0:0', BOB); // wrong chain: the encoder never reads this
+    expect(recipientIssue(s)).toMatch(/auto-issuance/);
+  });
+
+  it('single-chain default-address validation is unchanged', () => {
+    const s = revState([1]);
+    s.stages[0].autoIssuances = [{ count: '100', address: '', chainId: null }];
+    expect(recipientIssue(s)).toMatch(/auto-issuance/);
+    s.stages[0].autoIssuances[0].address = ALICE;
+    expect(recipientIssue(s)).toBeNull();
+  });
+
+  it('empty rows (no count) are still ignored', () => {
+    const s = revState([1, 8453]);
+    s.stages[0].autoIssuances = [{ count: '', address: '', chainId: 8453 }];
+    expect(recipientIssue(s)).toBeNull();
+  });
+});
+
+describe('auto-issuance chain-deselect warning + mint-chain-scoped per-chain control', () => {
+  function editorFor(s) {
+    s.stages[0].expanded = true;
+    return renderRevnetStages(s, function () {});
+  }
+
+  it('a row whose stored chain was deselected shows an inline warning naming old and new chains', () => {
+    const s = revState([1, 10]);
+    s.stages[0].autoIssuances = [{ count: '100', address: ALICE, chainId: 8453 }]; // Base deselected
+    const warn = editorFor(s).querySelector('.create-ai-chain-warn');
+    expect(warn).not.toBeNull();
+    expect(warn.textContent).toContain('Base');
+    expect(warn.textContent).toContain('Ethereum');
+  });
+
+  it('no warning when the stored chain is still selected (or was never chosen)', () => {
+    const s = revState([1, 10]);
+    s.stages[0].autoIssuances = [
+      { count: '100', address: ALICE, chainId: 10 },
+      { count: '50', address: BOB, chainId: null },
+    ];
+    expect(editorFor(s).querySelector('.create-ai-chain-warn')).toBeNull();
+  });
+
+  it('"Set per chain" on an automint row reveals ONLY the mint chain\'s field (no dead inputs)', () => {
+    const s = revState([1, 10, 8453]);
+    s.stages[0].autoIssuances = [{ count: '100', address: ALICE, chainId: 8453 }];
+    s._pcOpen = { 'ai:0:0': true };
+    const rows = editorFor(s).querySelectorAll('.create-split-wrap .create-pcaddr-row');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].querySelector('.chain-logo').title).toBe('Base'); // the one field is the mint chain's
   });
 });

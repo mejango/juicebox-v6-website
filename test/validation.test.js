@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { __test } from '../src/create-flow.js';
 
-const { initState, recipientIssue, splitTotalIssue, applyAccountingDefaults, currentPayoutKinds, surplusTokenLabel, buildMetadata } = __test;
+const { initState, recipientIssue, splitTotalIssue, applyAccountingDefaults, currentPayoutKinds, surplusTokenLabel, buildMetadata, lpHookIssue, deadlinePresetIssue, splitState, itemSplits } = __test;
 const BOB = '0x2222222222222222222222222222222222222222';
 const DAI = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
 
@@ -151,5 +151,91 @@ describe('multi-token review labels', () => {
     const s = custom();
     s.accepts = ['eth', 'usdc'];
     expect(surplusTokenLabel(s)).toBe('ETH and USDC');
+  });
+});
+
+// -- Immutable-deploy fail-closed gates: unmanifested hook deployments must BLOCK the deploy with a
+// -- chain-naming validation error instead of silently encoding hook/approvalHook = address(0).
+
+describe('lpHookIssue — Fund market split requires JBP6FeeLPSplitHook on every selected chain', () => {
+  it('passes when no stage uses a Fund market split', () => {
+    const s = custom();
+    s.chainIds = [11155420]; // OP Sepolia — the known chain without the LP hook
+    expect(lpHookIssue(s)).toBeNull();
+  });
+  it('passes when the hook exists on every selected chain', () => {
+    const s = custom();
+    s.chainIds = [1, 8453];
+    s.stages[0].reservedRecipients = [{ type: 'lphook', percent: 10 }];
+    expect(lpHookIssue(s)).toBeNull();
+  });
+  it('fails CLOSED, naming the chain, when the hook is unmanifested there', () => {
+    const s = custom();
+    s.network = 'testnet';
+    s.chainIds = [11155111, 11155420];
+    s.stages[0].reservedRecipients = [{ type: 'lphook', percent: 10 }];
+    const issue = lpHookIssue(s);
+    expect(issue).toMatch(/isn.t deployed on/i);
+    expect(issue).toMatch(/OP Sepolia|11155420/);
+    expect(issue).toMatch(/remove|deselect/i);
+  });
+});
+
+describe('splitState — lphook encoder backstop', () => {
+  it('throws (never falls through to a msg.sender-payable wallet split) when the hook is missing', () => {
+    expect(() => splitState({ type: 'lphook' }, 100000000, null, 11155420)).toThrow(/isn.t deployed on/i);
+  });
+  it('still encodes the shared hook where it exists', () => {
+    const sp = splitState({ type: 'lphook' }, 100000000, null, 1);
+    expect(BigInt(sp.hook)).not.toBe(0n);
+  });
+});
+
+describe('deadlinePresetIssue — preset approval hooks must exist on every selected chain', () => {
+  it('passes when every selected chain has the preset deployment', () => {
+    const s = custom();
+    s.chainIds = [1, 8453];
+    expect(deadlinePresetIssue(s)).toBeNull(); // default '1day' preset
+  });
+  it('fails CLOSED, naming the chain, when a preset deployment is missing', () => {
+    const s = custom();
+    s.chainIds = [1, 999999];
+    const issue = deadlinePresetIssue(s);
+    expect(issue).toMatch(/approval/i);
+    expect(issue).toMatch(/999999/);
+    expect(issue).toMatch(/different|deselect/i);
+  });
+  it('does not apply to "no deadline", custom addresses (approvalIssue covers those), or revnets', () => {
+    const s = custom();
+    s.chainIds = [1, 999999];
+    s.stages[0].deadline = 'none';
+    expect(deadlinePresetIssue(s)).toBeNull();
+    s.stages[0].deadline = 'custom';
+    expect(deadlinePresetIssue(s)).toBeNull();
+    s.stages[0].deadline = '1day';
+    s.projectType = 'revnet';
+    expect(deadlinePresetIssue(s)).toBeNull();
+  });
+});
+
+describe('itemSplits — per-row rounding must never sum above 1e9', () => {
+  it('routes shares through fillSplits so three 1/3 rows sum to exactly 1e9', () => {
+    const d = { splitOn: true, splitRecipients: [
+      { pct: 1, recip: '0x2222222222222222222222222222222222222222' },
+      { pct: 1, recip: '0x3333333333333333333333333333333333333333' },
+      { pct: 1, recip: '0x4444444444444444444444444444444444444444' },
+    ] };
+    const sp = itemSplits(d, null, 1, 0);
+    const sum = sp.splits.reduce((acc, x) => acc + x.percent, 0);
+    expect(sum).toBe(1000000000);
+  });
+  it('keeps the untroubled two-row case intact', () => {
+    const d = { splitOn: true, splitRecipients: [
+      { pct: 60, recip: '0x2222222222222222222222222222222222222222' },
+      { pct: 40, recip: '0x3333333333333333333333333333333333333333' },
+    ] };
+    const sp = itemSplits(d, null, 1, 0);
+    expect(sp.splits.map(x => x.percent)).toEqual([600000000, 400000000]);
+    expect(sp.splitPercent).toBe(1000000000);
   });
 });

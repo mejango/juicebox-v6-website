@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   parseAccountRoute, distinctProjectRefs, projectStubsFromRows, dedupeOwnedProjects,
   groupOperatedProjects, dedupeTokenHoldings, groupNftHoldings, renderAccountView, ACCOUNT_TABS,
+  holdingSplitLabel, capNote, ACCOUNT_TOKEN_HOLDINGS_QUERY, ACCOUNT_NFT_HOLDINGS_QUERY,
 } from '../src/account-view.js';
 import { listRelayrPendingScopes, loadRelayrPendingSession } from '../src/relayr.js';
 import { safesForOwner } from '../src/safe.js';
@@ -42,42 +43,98 @@ describe('parseAccountRoute', () => {
   });
 });
 
+describe('holdings queries — V6-only, capped surfaces', () => {
+  it('both holdings queries pin version (juicescan is V6-only; V4/V5 rows must never appear)', () => {
+    expect(ACCOUNT_TOKEN_HOLDINGS_QUERY).toContain('version: $version');
+    expect(ACCOUNT_NFT_HOLDINGS_QUERY).toContain('version: $version');
+  });
+  it('both holdings queries select totalCount so truncation can be surfaced honestly', () => {
+    expect(ACCOUNT_TOKEN_HOLDINGS_QUERY).toContain('totalCount');
+    expect(ACCOUNT_NFT_HOLDINGS_QUERY).toContain('totalCount');
+  });
+  it('the nft query selects hook — the collection component of bendystraw\'s (chainId, hook, tokenId, version) key', () => {
+    expect(ACCOUNT_NFT_HOLDINGS_QUERY).toContain('hook');
+  });
+  it('the token query selects the credit/ERC-20 split', () => {
+    expect(ACCOUNT_TOKEN_HOLDINGS_QUERY).toContain('creditBalance');
+    expect(ACCOUNT_TOKEN_HOLDINGS_QUERY).toContain('erc20Balance');
+  });
+});
+
 describe('dedupeTokenHoldings', () => {
-  it('keeps the highest-version row per (chainId, projectId), preserving first-seen order', () => {
+  it('keeps one row per (chainId, projectId) in first-seen order, carrying the split fields through', () => {
     const items = [
-      { chainId: 1, projectId: 3, version: 5, balance: '900' },
-      { chainId: 1, projectId: 3, version: 6, balance: '900' }, // same holding, higher version wins
-      { chainId: 8453, projectId: 3, version: 4, balance: '500' },
-      { chainId: 1, projectId: 3, version: 4, balance: '900' }, // lower version, dropped
+      { chainId: 1, projectId: 3, version: 6, balance: '900', creditBalance: '100', erc20Balance: '800' },
+      { chainId: 1, projectId: 3, version: 6, balance: '900', creditBalance: '100', erc20Balance: '800' }, // duplicate row
+      { chainId: 8453, projectId: 3, version: 6, balance: '500', creditBalance: '500', erc20Balance: '0' },
       { chainId: 1, projectId: 0, version: 6, balance: '1' }, // no project
       null,
     ];
     const rows = dedupeTokenHoldings(items);
     expect(rows).toEqual([
-      { chainId: 1, projectId: 3, version: 6, balance: '900' },
-      { chainId: 8453, projectId: 3, version: 4, balance: '500' },
+      { chainId: 1, projectId: 3, version: 6, balance: '900', creditBalance: '100', erc20Balance: '800' },
+      { chainId: 8453, projectId: 3, version: 6, balance: '500', creditBalance: '500', erc20Balance: '0' },
     ]);
     expect(dedupeTokenHoldings(null)).toEqual([]);
   });
 });
 
 describe('groupNftHoldings', () => {
-  it('dedupes by (chainId, tokenId) then groups per project with tier quantities', () => {
+  it('keys tokens by (chainId, hook, tokenId): same-chain tokenId collisions across collections both count', () => {
+    const HOOK_A = '0xAaaa000000000000000000000000000000000001';
+    const HOOK_B = '0xBbbb000000000000000000000000000000000002';
     const items = [
-      { chainId: 1, projectId: 3, tokenId: '3000000001', tierId: 3 },
-      { chainId: 1, projectId: 3, tokenId: '3000000001', tierId: 3 }, // same token, other version row
-      { chainId: 1, projectId: 3, tokenId: '3000000002', tierId: 3 },
-      { chainId: 1, projectId: 3, tokenId: '5000000001', tierId: 5 },
-      { chainId: 8453, projectId: 3, tokenId: '3000000001', tierId: 3 }, // same tokenId, other chain
-      { chainId: 1, projectId: 0, tokenId: '1', tierId: 1 }, // no project
+      // Two different projects' collections on the SAME chain minting the SAME JB721 tokenId
+      // (tierId*1e9+serial collides across every collection) — both must survive.
+      { chainId: 1, projectId: 3, hook: HOOK_A, tokenId: '3000000001', tierId: 3 },
+      { chainId: 1, projectId: 7, hook: HOOK_B, tokenId: '3000000001', tierId: 3 },
+      { chainId: 1, projectId: 3, hook: HOOK_A.toLowerCase(), tokenId: '3000000001', tierId: 3 }, // duplicate row (case-insensitive hook)
+      { chainId: 1, projectId: 3, hook: HOOK_A, tokenId: '3000000002', tierId: 3 },
+      { chainId: 1, projectId: 3, hook: HOOK_A, tokenId: '5000000001', tierId: 5 },
+      { chainId: 8453, projectId: 3, hook: HOOK_A, tokenId: '3000000001', tierId: 3 }, // same tokenId, other chain
+      { chainId: 1, projectId: 0, hook: HOOK_A, tokenId: '1', tierId: 1 }, // no project
       null,
     ];
     const groups = groupNftHoldings(items);
     expect(groups).toEqual([
       { chainId: 1, projectId: 3, tiers: [{ tierId: 3, count: 2 }, { tierId: 5, count: 1 }] },
+      { chainId: 1, projectId: 7, tiers: [{ tierId: 3, count: 1 }] },
       { chainId: 8453, projectId: 3, tiers: [{ tierId: 3, count: 1 }] },
     ]);
     expect(groupNftHoldings(null)).toEqual([]);
+  });
+});
+
+describe('holdingSplitLabel', () => {
+  const E18 = 10n ** 18n;
+  it('shows both sides when the balance mixes claimed ERC-20 and unclaimed credits', () => {
+    const label = holdingSplitLabel({ creditBalance: String(100n * E18), erc20Balance: String(800n * E18) });
+    expect(label).toContain('ERC-20');
+    expect(label).toContain('credits');
+    expect(label).toContain('800');
+    expect(label).toContain('100');
+  });
+  it('marks an all-credits balance', () => {
+    expect(holdingSplitLabel({ creditBalance: String(5n * E18), erc20Balance: '0' })).toBe('credits (unclaimed)');
+  });
+  it('stays quiet for all-ERC-20, missing split data, and garbage', () => {
+    expect(holdingSplitLabel({ creditBalance: '0', erc20Balance: String(10n ** 18n) })).toBeNull();
+    expect(holdingSplitLabel({})).toBeNull();
+    expect(holdingSplitLabel(null)).toBeNull();
+    expect(holdingSplitLabel({ creditBalance: 'garbage', erc20Balance: '1' })).toBeNull();
+  });
+});
+
+describe('capNote', () => {
+  it('surfaces truncation when the indexer holds more rows than the single page fetched', () => {
+    expect(capNote(500, 1234, 'token balances')).toBe('Showing the first 500 of 1234 token balances.');
+    expect(capNote(1000, 1001, 'items')).toBe('Showing the first 1000 of 1001 items.');
+  });
+  it('stays quiet when everything fit (or totalCount is unavailable)', () => {
+    expect(capNote(12, 12, 'items')).toBeNull();
+    expect(capNote(12, 5, 'items')).toBeNull(); // total <= fetched → nothing was cut off
+    expect(capNote(12, null, 'items')).toBeNull();
+    expect(capNote(12, undefined, 'items')).toBeNull();
   });
 });
 
@@ -167,14 +224,16 @@ describe('safesForOwner', () => {
 });
 
 describe('listRelayrPendingScopes', () => {
-  it('enumerates only jb-relayr-pending-v1: keys, returning the feature scope', () => {
+  // Receipts are wallet-scoped (see relayr-scope.test.js for the connected-wallet contract): with no
+  // wallet connected there is no identity to scope by, so the account view lists nothing — but a
+  // feature that knows its own scope can still restore a legacy unkeyed receipt for read-only recovery.
+  it('lists nothing while no wallet is connected, without breaking direct scope recovery', () => {
     localStorage.clear();
     localStorage.setItem('jb-relayr-pending-v1:create:draft1', JSON.stringify({ bundleUuid: 'b-1', records: [], chains: [] }));
     localStorage.setItem('jb-relayr-pending-v1:shop:1:5', JSON.stringify({ bundleUuid: 'b-2', records: [], chains: [] }));
     localStorage.setItem('jb-network', 'mainnet');
-    const scopes = listRelayrPendingScopes().sort();
-    expect(scopes).toEqual(['create:draft1', 'shop:1:5']);
-    expect(loadRelayrPendingSession(scopes[0]).bundleUuid).toBe('b-1');
+    expect(listRelayrPendingScopes()).toEqual([]);
+    expect(loadRelayrPendingSession('create:draft1').bundleUuid).toBe('b-1');
     localStorage.clear();
   });
 });
@@ -200,6 +259,20 @@ describe('renderAccountView', () => {
     await vi.waitFor(() => {
       expect(tab.textContent).toMatch(/Could not load activity from Bendystraw/);
     });
+  });
+  it('shows a back-to-Discover affordance so #account routes (no active nav tab) are not a dead end', () => {
+    document.body.innerHTML = '<section id="tab-account" class="tab-content"></section>';
+    renderAccountView(ADDR);
+    const tab = document.getElementById('tab-account');
+    const back = tab.querySelector('.account-back');
+    expect(back).not.toBeNull();
+    expect(back.title).toMatch(/projects/i);
+    location.hash = '#account/' + ADDR;
+    back.click();
+    expect(['', '#']).toContain(location.hash);
+    // The affordance survives the invalid-route card too.
+    renderAccountView('not-an-address');
+    expect(document.querySelector('#tab-account .account-back')).not.toBeNull();
   });
   it('opens the routed tab and switches panes on tab clicks', async () => {
     document.body.innerHTML = '<section id="tab-account" class="tab-content"></section>';

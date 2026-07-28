@@ -83,6 +83,9 @@ export function setDiscoverNetwork(mode) {
   // Only discard a project route from the other network. Top-level routes such as #data must stay put.
   if (networkModeFromHash()) location.hash = '';
   if (_container) renderDiscoverTab();
+  // Other network-scoped views (the DATA tab's endpoint note + chain pills) subscribe to this instead of
+  // rendering once at init and going stale when the Discover toggle flips.
+  if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:network-changed', { detail: { mode: mode } }));
 }
 
 // Live view of the active network's chain set (reassigned by setDiscoverNetwork) for modules that
@@ -215,6 +218,26 @@ export function ambientNetCashOut(gross, taxRate, feeFreeSurplus) {
   if (gross == null) return gross;
   var value = toBigInt(gross);
   return value - cashOutProtocolFee(value, taxRate, false, feeFreeSurplus);
+}
+
+// Like ambientNetCashOut, but honest about a FAILED fee-free read: on a zero-tax project the fee
+// depends on feeFreeSurplusOf, so when that read failed (null) the net is unknowable — return the
+// gross flagged `beforeFees` so the UI can append the existing "before fees" qualifier instead of
+// presenting gross as net. A verified 0n fee-free surplus is a real answer (no fee) and stays unflagged.
+export function ambientCashOutDisplay(gross, taxRate, feeFreeSurplus) {
+  if (gross == null) return { value: null, beforeFees: false };
+  var value = toBigInt(gross);
+  if (!taxRate && feeFreeSurplus == null) return { value: value, beforeFees: value > 0n };
+  return { value: ambientNetCashOut(value, taxRate, feeFreeSurplus), beforeFees: false };
+}
+
+// The cash out tax rate from a decoded currentRulesetOf result ([ruleset, metadata] array or
+// { ruleset, metadata } object), falling back when the read failed or carried no metadata. Lets
+// per-chain surfaces use each chain's OWN ruleset tax instead of assuming the home chain's.
+export function taxRateFromRulesetResult(result, fallback) {
+  var md = result == null ? null : (Array.isArray(result) ? result[1] : result.metadata);
+  var v = md == null ? null : md.cashOutTaxRate;
+  return v == null ? Number(fallback || 0) : Number(v);
 }
 
 // Pick the pay token after the onchain accounting-context refine resolves the real token list. Preserve the
@@ -2475,9 +2498,11 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   setStatus('Reading metadata…', 'pending');
   var controllers = await controllerMapFor(chains, project);
   var pc = (chains[0] && chains[0].id) || project.chainId;
-  var curUri = await clientFor(pc).readContract({ address: controllers[pc], abi: uriOfAbi, functionName: 'uriOf', args: [pidOn(project, pc)] }).catch(function () { return null; });
-  var meta = curUri ? (await fetchMetadata(curUri)) : null;
-  meta = meta ? Object.assign({}, meta) : {};
+  // Fail closed like the project editor: rebuilding projectUri without its live JSON would erase every
+  // field this flow doesn't manage.
+  var loaded = await loadLiveProjectMetadata(pc, controllers[pc], pidOn(project, pc));
+  if (loaded.error) { setStatus(loaded.error, 'error'); return null; }
+  var meta = Object.assign({}, loaded.meta);
   var cats = (meta.storeCategories && typeof meta.storeCategories === 'object') ? Object.assign({}, meta.storeCategories) : {};
   var nextId = 1; Object.keys(cats).map(Number).forEach(function (n) { if (n >= nextId) nextId = n + 1; });
   var newIds = [];
@@ -3025,6 +3050,11 @@ var cashOutTokensAbi = [{
   ],
   outputs: [{ name: 'reclaimAmount', type: 'uint256' }],
 }];
+// REVLoan struct (borrowFrom output, loanOf / determineSourceFeeAmount input) + repay.
+var REVLOAN_COMPONENTS = [
+  { name: 'amount', type: 'uint112' }, { name: 'collateral', type: 'uint112' }, { name: 'createdAt', type: 'uint48' },
+  { name: 'prepaidFeePercent', type: 'uint16' }, { name: 'prepaidDuration', type: 'uint32' }, { name: 'sourceToken', type: 'address' },
+];
 var borrowFromAbi = [{
   type: 'function', name: 'borrowFrom', stateMutability: 'nonpayable',
   inputs: [
@@ -3036,15 +3066,10 @@ var borrowFromAbi = [{
     { name: 'prepaidFeePercent', type: 'uint256' },
     { name: 'holder', type: 'address' },
   ],
-  outputs: [{ name: 'loanId', type: 'uint256' }, { name: 'loan', type: 'tuple', components: [{ name: 'amount', type: 'uint256' }] }],
+  outputs: [{ name: 'loanId', type: 'uint256' }, { name: 'loan', type: 'tuple', components: REVLOAN_COMPONENTS }],
 }];
 // REVLoans.REV_ID — the $REV revnet that receives the 1% loan fee. REVLoans.REV_PREPAID_FEE_PERCENT = 10 (1%).
 var revLoanIdAbi = [{ type: 'function', name: 'REV_ID', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }];
-// REVLoan struct (loanOf / determineSourceFeeAmount input) + repay.
-var REVLOAN_COMPONENTS = [
-  { name: 'amount', type: 'uint112' }, { name: 'collateral', type: 'uint112' }, { name: 'createdAt', type: 'uint48' },
-  { name: 'prepaidFeePercent', type: 'uint16' }, { name: 'prepaidDuration', type: 'uint32' }, { name: 'sourceToken', type: 'address' },
-];
 var loanOfAbi = [{ type: 'function', name: 'loanOf', stateMutability: 'view', inputs: [{ name: 'loanId', type: 'uint256' }], outputs: [{ name: 'loan', type: 'tuple', components: REVLOAN_COMPONENTS }] }];
 var determineSourceFeeAbi = [{ type: 'function', name: 'determineSourceFeeAmount', stateMutability: 'view', inputs: [{ name: 'loan', type: 'tuple', components: REVLOAN_COMPONENTS }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
 var repayLoanAbi = [{
@@ -4146,6 +4171,10 @@ export var currentRulesetAbi = [{
 }];
 
 var RESERVED_TOKEN_SPLIT_GROUP = 1n; // JBSplitGroupIds.RESERVED_TOKENS
+// JBSplits.FALLBACK_RULESET_ID. `splitsOf(projectId, rulesetId, groupId)` serves the splits stored
+// under this ruleset id whenever the requested ruleset's group is EMPTY (JBSplits.sol:154-159), so
+// emptying a group only routes value to the project owner when the fallback group is empty too.
+var FALLBACK_RULESET_ID = 0n;
 
 // Queue rulesets. The JBRulesetConfig[] tuple is identical to launchProjectFor's — reuse that component
 // (named to match buildRulesetConfigs' output so viem encodes by key) for both the controller and the
@@ -5053,15 +5082,85 @@ function percentFromRuleset(value) {
   if (value === null || value === undefined) return '—';
   return (Number(value) / 100).toFixed(Number(value) % 100 === 0 ? 0 : 2) + '%';
 }
-// The split-limit (as % of issuance) that an edit-splits group's percentages must sum to: the reserved
-// group is capped at the ruleset's reserved rate (reservedPercent is out of 10000 → /100 = % of issuance);
-// every other group (e.g. payouts) uses the full 100%.
-function splitLimitPctFor(project, groupId) {
-  if (groupId === RESERVED_TOKEN_SPLIT_GROUP && project.metadata && project.metadata.reservedPercent != null) {
-    var rp = Number(project.metadata.reservedPercent);
-    if (rp > 0) return rp / 100;
+// The reserved rate (% of issuance) a project's ruleset metadata encodes, or null when unknown.
+// reservedPercent is out of 10,000, so /100 is the percent. A rate of 0 is a real answer — never a
+// reason to fall back to 100.
+function reservedRatePctFor(project) {
+  var rp = project && project.metadata && project.metadata.reservedPercent;
+  return rp == null ? null : Number(rp) / 100;
+}
+
+function fmtPctText(value) { return (Math.round(Number(value) * 100) / 100) + '%'; }
+
+// A split's stored percent is a share of SPLITS_TOTAL (1e9) of its GROUP. Two numbers describe it:
+// its share of the group, and — for the reserved group, whose group is only `limitPct` of issuance —
+// what that works out to as a share of issuance. Payout groups are the whole distributable amount
+// (limit 100), where the two numbers coincide and only one is worth showing.
+export function splitShareDisplay(percentRaw, limitPct) {
+  var frac = Number(percentRaw) / 1e9;
+  var lim = Number(limitPct);
+  if (!isFinite(lim)) lim = 100;
+  var groupPct = frac * 100;
+  var issuancePct = frac * lim;
+  return {
+    groupPct: groupPct,
+    issuancePct: issuancePct,
+    showCompanion: Math.abs(lim - 100) > 0.0001,
+    primaryText: fmtPctText(issuancePct),
+    companionText: fmtPctText(groupPct) + ' of limit',
+  };
+}
+
+function zeroReservedRateNote() {
+  var note = el('div', 'splits-empty-note');
+  note.textContent = 'This ruleset reserves 0% of issuance — these recipients receive nothing until a ruleset reserves tokens.';
+  return note;
+}
+
+// Render a split group into `box`. An EMPTY group has no recipients at all: it renders as prose naming
+// the owner, never as a synthesized "owner at 100%" row — an unconfigured group must not be
+// indistinguishable from a group with one deliberate recipient. A leftover row appears only when
+// configured recipients leave part of the group unallocated, and it keeps the owner LABEL beside the
+// address rather than replacing it.
+export function renderSplitsInto(box, splits, opts) {
+  opts = opts || {};
+  var project = opts.project || {};
+  var chainId = opts.chainId;
+  var kind = opts.kind || 'reserved';
+  var isReserved = kind === 'reserved';
+  var limitPct = opts.limitPct == null ? 100 : Number(opts.limitPct);
+  var zeroRate = isReserved && !(limitPct > 0);
+  var list = splits || [];
+  box.innerHTML = '';
+
+  if (!list.length) {
+    var prose = el('div', 'splits-empty-note');
+    prose.appendChild(document.createTextNode(isReserved
+      ? 'No reserved recipients — reserved tokens go to the project owner '
+      : 'No payout recipients — payouts go to the project owner '));
+    if (project.owner) prose.appendChild(addressNode(project.owner, chainId));
+    else prose.appendChild(document.createTextNode('(not verified).'));
+    box.appendChild(prose);
+    if (zeroRate) box.appendChild(zeroReservedRateNote());
+    return box;
   }
-  return 100;
+
+  var groupSum = 0;
+  list.forEach(function (sp) {
+    var d = splitShareDisplay(sp.percent, limitPct);
+    groupSum += d.groupPct;
+    box.appendChild(splitConfigRow(splitAccountNode(sp, project, chainId, { kind: kind }), d.issuancePct, d.showCompanion ? d.companionText : ''));
+  });
+  var leftoverGroupPct = 100 - groupSum;
+  if (leftoverGroupPct > 0.0001) {
+    var owner = el('span');
+    owner.appendChild(document.createTextNode(projectOwnerRecipientLabel(project)));
+    if (project.owner) { owner.appendChild(document.createTextNode(' ')); owner.appendChild(addressNode(project.owner, chainId)); }
+    var ld = splitShareDisplay(leftoverGroupPct / 100 * 1e9, limitPct);
+    box.appendChild(splitConfigRow(owner, ld.issuancePct, ld.showCompanion ? ld.companionText : ''));
+  }
+  if (zeroRate) box.appendChild(zeroReservedRateNote());
+  return box;
 }
 
 function formatDuration(secs) {
@@ -8205,6 +8304,11 @@ function openEditProjectModal(project) {
 
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to edit the project.'));
 
+  // Only fields the operator actually touches are written back to the metadata — everything else in the
+  // live projectUri JSON (custom fields, tags, …) rides through the save untouched.
+  var dirty = {};
+  function markDirtyOnInput(key, node) { node.addEventListener('input', function () { dirty[key] = true; }); return node; }
+
   function field(label, placeholder, value, topGap) {
     var l = el('div', 'operator-edit-label'); l.style.marginTop = (topGap == null ? 10 : topGap) + 'px'; l.textContent = label; content.appendChild(l);
     var i = el('input', 'operator-edit-jwt'); i.type = 'text'; i.placeholder = placeholder || ''; i.value = value || '';
@@ -8212,8 +8316,8 @@ function openEditProjectModal(project) {
     return i;
   }
 
-  var nameInput = field('Name', 'Project name', project.name || '', 0);
-  var taglineInput = field('Tagline', 'One-line summary', project.tagline || '');
+  var nameInput = markDirtyOnInput('name', field('Name', 'Project name', project.name || '', 0));
+  var taglineInput = markDirtyOnInput('tagline', field('Tagline', 'One-line summary', project.tagline || ''));
 
   // Logo — current preview + replace-with-file. Pinned on submit only if a new file is chosen.
   var logoLbl = el('div', 'operator-edit-label'); logoLbl.style.marginTop = '10px'; logoLbl.textContent = 'Logo'; content.appendChild(logoLbl);
@@ -8231,11 +8335,21 @@ function openEditProjectModal(project) {
 
   var dlbl = el('div', 'operator-edit-label'); dlbl.style.marginTop = '10px'; dlbl.textContent = 'Description'; content.appendChild(dlbl);
   var ta = el('textarea', 'operator-edit-textarea'); ta.rows = 6; ta.value = project.description || ''; content.appendChild(ta);
+  markDirtyOnInput('description', ta);
 
-  var websiteInput = field('Website', 'https://…', project.infoUri || '');
-  var twitterInput = field('X / Twitter', 'handle (without @)', '');
-  var discordInput = field('Discord', 'invite or handle', '');
-  var telegramInput = field('Telegram', 'handle or link', '');
+  // Payment notice — the create flow's payDisclosure field, editable here too. Untouched keeps the live
+  // value; clearing the text is an explicit removal.
+  var pdlbl = el('div', 'operator-edit-label'); pdlbl.style.marginTop = '10px';
+  pdlbl.innerHTML = 'Payment notice <span class="operator-edit-hint">— shown to payers before they pay.</span>';
+  content.appendChild(pdlbl);
+  var payNoticeTa = el('textarea', 'operator-edit-textarea'); payNoticeTa.rows = 3; payNoticeTa.value = project.payDisclosure || '';
+  content.appendChild(payNoticeTa);
+  markDirtyOnInput('payDisclosure', payNoticeTa);
+
+  var websiteInput = markDirtyOnInput('website', field('Website', 'https://…', project.infoUri || ''));
+  var twitterInput = markDirtyOnInput('twitter', field('X / Twitter', 'handle (without @)', ''));
+  var discordInput = markDirtyOnInput('discord', field('Discord', 'invite or handle', ''));
+  var telegramInput = markDirtyOnInput('telegram', field('Telegram', 'handle or link', ''));
 
   // Store categories — names for the 721 store's category numbers (category 0 is always "Default").
   // Each row keeps a stable id so existing tier→category links don't shift when rows are added/removed.
@@ -8251,30 +8365,65 @@ function openEditProjectModal(project) {
     var nameIn = el('input', 'splits-edit-addr'); nameIn.type = 'text'; nameIn.placeholder = 'category name'; nameIn.value = name || '';
     var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
     var rec = { id: id, name: nameIn };
-    rm.addEventListener('click', function (e) { e.preventDefault(); catRows = catRows.filter(function (x) { return x !== rec; }); row.remove(); });
+    nameIn.addEventListener('input', function () { dirty.storeCategories = true; });
+    rm.addEventListener('click', function (e) { e.preventDefault(); dirty.storeCategories = true; catRows = catRows.filter(function (x) { return x !== rec; }); row.remove(); });
     row.appendChild(nameIn); row.appendChild(rm);
     catRowsBox.appendChild(row); catRows.push(rec);
   }
   Object.keys(project.storeCategories || {}).map(Number).filter(function (n) { return n > 0; }).sort(function (a, b) { return a - b; })
     .forEach(function (n) { addCatRow(n, project.storeCategories[n]); });
   var addCat = el('a', 'operator-cta splits-edit-add'); addCat.href = '#'; addCat.textContent = '+ Add category';
-  addCat.addEventListener('click', function (e) { e.preventDefault(); addCatRow(nextCatId(), ''); }); content.appendChild(addCat);
+  addCat.addEventListener('click', function (e) { e.preventDefault(); dirty.storeCategories = true; addCatRow(nextCatId(), ''); }); content.appendChild(addCat);
 
-  // Backfill socials/tagline from the live metadata (project.* doesn't carry them) so we don't wipe values.
+  // Advanced — every live-metadata key this form doesn't manage, as an open-ended JSON editor. Operators
+  // with custom fields (external ids, tags, …) can edit, add, or delete them here; whatever they leave
+  // replaces the custom set on save. Collapsed by default, matching the app's expandable idiom.
+  var ADVANCED_CUSTOM_LABEL = 'Advanced — custom properties (JSON)';
+  var advanced = document.createElement('details'); advanced.className = 'extras-more';
+  var advancedSummary = document.createElement('summary'); advancedSummary.textContent = ADVANCED_CUSTOM_LABEL + ' ▸';
+  advanced.appendChild(advancedSummary);
+  advanced.addEventListener('toggle', function () {
+    advancedSummary.textContent = ADVANCED_CUSTOM_LABEL + (advanced.open ? ' ▾' : ' ▸');
+  });
+  var customHint = el('div', 'operator-edit-hint extras-payer-sub');
+  customHint.textContent = 'Fields the form above doesn’t manage. Edit, add, or remove them — what’s left here replaces the custom set when you save. The fields above always win.';
+  advanced.appendChild(customHint);
+  var customTa = el('textarea', 'operator-edit-textarea operator-edit-json');
+  customTa.rows = 8; customTa.spellcheck = false; customTa.disabled = true;
+  customTa.placeholder = 'Loading current metadata…';
+  advanced.appendChild(customTa);
+  var customErr = el('div', 'operator-edit-status'); advanced.appendChild(customErr);
+  markDirtyOnInput('customProperties', customTa);
+  content.appendChild(advanced);
+
+  // Backfill socials/tagline from the live metadata (project.* doesn't carry them) so we don't wipe values,
+  // and prefill the custom-properties editor. Fails CLOSED: until the live JSON resolves the editor stays
+  // disabled and the save is blocked, because saving without the base would erase unmanaged fields.
   var loadedMeta = null;
+  var metaLoadError = null;
   (function () {
     var pc = (chains[0] && chains[0].id) || project.chainId;
-    controllerAddressFor(pc, pidOn(project, pc)).then(function (controller) {
-      return clientFor(pc).readContract({ address: controller, abi: uriOfAbi, functionName: 'uriOf', args: [pidOn(project, pc)] });
-    })
-      .then(function (uri) { return uri ? fetchMetadata(uri) : null; })
-      .then(function (m) {
-        if (!m) return; loadedMeta = m;
+    controllerAddressFor(pc, pidOn(project, pc))
+      .then(function (controller) { return loadLiveProjectMetadata(pc, controller, pidOn(project, pc)); })
+      .catch(function () { return { error: 'Could not read the current project metadata URI. Nothing was saved — try again.' }; })
+      .then(function (loaded) {
+        if (!content.isConnected) return;
+        if (loaded.error) {
+          metaLoadError = loaded.error;
+          customTa.placeholder = 'Unavailable — close and reopen this window to try again.';
+          return;
+        }
+        var m = loaded.meta; loadedMeta = m;
         if (!twitterInput.value) twitterInput.value = m.twitter || '';
         if (!discordInput.value) discordInput.value = m.discord || '';
         if (!telegramInput.value) telegramInput.value = m.telegram || '';
         if (!taglineInput.value) taglineInput.value = m.projectTagline || m.tagline || '';
-      }).catch(function () {});
+        if (!payNoticeTa.value) payNoticeTa.value = m.payDisclosure || '';
+        customTa.value = projectCustomPropertiesText(m);
+        customTa.placeholder = '{\n  "leagueID": "FEPL-2026"\n}';
+        customTa.disabled = false;
+        dirty.customProperties = false;
+      });
   })();
 
   var across = el('div', 'operator-edit-across'); across.style.marginTop = '12px';
@@ -8305,12 +8454,31 @@ function openEditProjectModal(project) {
   submit.addEventListener('click', function (e) {
     e.preventDefault();
     if (busy) return;
+    // Fail closed: without the live JSON as the merge base, saving would erase every unmanaged field.
+    if (!loadedMeta) {
+      setStatus(metaLoadError || 'Still loading the current project metadata — one moment.', metaLoadError ? 'error' : 'pending');
+      return;
+    }
+    var parsedCustom = parseProjectCustomProperties(customTa.value);
+    if (parsedCustom.error) {
+      advanced.open = true;
+      customErr.className = 'operator-edit-status error'; customErr.textContent = parsedCustom.error;
+      setStatus('Fix the custom properties before saving.', 'error');
+      return;
+    }
+    customErr.className = 'operator-edit-status';
+    customErr.textContent = parsedCustom.stripped.length
+      ? ('Ignored ' + parsedCustom.stripped.join(', ') + ' — managed by the fields above.')
+      : '';
     if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
     var form = {
       name: nameInput.value, tagline: taglineInput.value, description: ta.value, website: websiteInput.value,
       twitter: twitterInput.value, discord: discordInput.value, telegram: telegramInput.value,
+      payDisclosure: payNoticeTa.value,
       storeCategories: (function () { var m = {}; catRows.forEach(function (r) { var n = (r.name.value || '').trim(); if (n) m[r.id] = n; }); return m; })(),
       logoFile: (logoFile.files && logoFile.files[0]) || null, preloadedMeta: loadedMeta,
+      customProperties: { value: parsedCustom.value, dirty: !!dirty.customProperties },
+      dirty: dirty,
     };
     submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal).catch(function (err) {
       busy = false;
@@ -8689,40 +8857,139 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
   return session;
 }
 
+// The metadata-edit form's managed keys. Everything else in the live projectUri JSON (custom fields
+// like an external league id, tags, coverImageUri, version, …) rides through saves untouched.
+var PROJECT_METADATA_FORM_KEYS = ['name', 'projectTagline', 'description', 'infoUri', 'logoUri',
+  'twitter', 'discord', 'telegram', 'payDisclosure', 'storeCategories'];
+
+// Keys present in the live projectUri JSON that the edit form does NOT manage — the set the modal's
+// "Advanced — custom properties (JSON)" editor owns, so operators can trust the round-trip.
+export function unmanagedProjectMetadataKeys(meta) {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return [];
+  return Object.keys(meta).filter(function (key) { return PROJECT_METADATA_FORM_KEYS.indexOf(key) === -1; }).sort();
+}
+
+// Prefill for the custom-properties textarea: the live JSON's unmanaged keys, pretty-printed. Blank when
+// the project has none, so an empty box reads as "no custom properties" rather than "{}".
+export function projectCustomPropertiesText(meta) {
+  var keys = unmanagedProjectMetadataKeys(meta);
+  if (!keys.length) return '';
+  var out = {};
+  keys.forEach(function (key) { out[key] = meta[key]; });
+  return JSON.stringify(out, null, 2);
+}
+
+// Parse the custom-properties textarea. Returns { value, stripped } or { error } — an error BLOCKS the
+// save rather than silently dropping the operator's custom fields. Managed form fields win on collision,
+// so any managed key typed into the JSON is stripped and reported.
+export function parseProjectCustomProperties(text) {
+  var raw = String(text == null ? '' : text).trim();
+  if (!raw) return { value: {}, stripped: [] };
+  var parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return { error: 'Custom properties aren’t valid JSON: ' + ((err && err.message) || 'parse failed') + '.' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { error: 'Custom properties must be a JSON object — e.g. {"leagueID": "FEPL-2026"}.' };
+  }
+  var value = {};
+  var stripped = [];
+  Object.keys(parsed).forEach(function (key) {
+    if (PROJECT_METADATA_FORM_KEYS.indexOf(key) !== -1) { stripped.push(key); return; }
+    value[key] = parsed[key];
+  });
+  return { value: value, stripped: stripped };
+}
+
+// Merge the operator's form edits over the live projectUri JSON. Every key starts from the live JSON;
+// only fields the operator actually touched are overwritten, and a touched-but-emptied field is an
+// explicit clear (the key is removed). Untouched fields keep the live value byte-for-key — including
+// custom fields the form knows nothing about.
+//
+// `customProperties` ({ value, dirty }) is the Advanced JSON editor's parsed object. When dirty it
+// REPLACES the whole unmanaged-key set (so deleting a key from the JSON deletes it from the metadata);
+// when absent or clean the unmanaged keys ride through untouched — which is how the second setUriOf
+// writer (addStoreCategories, which renders no editor) keeps round-tripping them.
+export function mergeProjectMetadataEdit(currentMeta, edits, customProperties) {
+  var meta = currentMeta ? Object.assign({}, currentMeta) : {};
+  if (customProperties && customProperties.dirty) {
+    var custom = customProperties.value;
+    if (!custom || typeof custom !== 'object' || Array.isArray(custom)) custom = {};
+    unmanagedProjectMetadataKeys(meta).forEach(function (key) { delete meta[key]; });
+    Object.keys(custom).forEach(function (key) {
+      if (PROJECT_METADATA_FORM_KEYS.indexOf(key) !== -1) return; // managed form fields win on collision
+      meta[key] = custom[key];
+    });
+  }
+  (edits || []).forEach(function (edit) {
+    if (!edit || !edit.dirty) return;
+    var value = edit.value;
+    var empty = value == null || value === ''
+      || (typeof value === 'object' && !Object.keys(value).length);
+    if (empty) delete meta[edit.key];
+    else meta[edit.key] = value;
+  });
+  return meta;
+}
+
+// Read the live projectUri JSON for the merge base, failing CLOSED: if the project has a metadata URI
+// but its JSON can't be fetched right now, saving would rebuild the metadata from the form alone and
+// silently erase every field the form doesn't edit. Returns { meta } ({} when the project genuinely has
+// no metadata) or { error } when the base is unavailable.
+async function loadLiveProjectMetadata(chainId, controller, projectId) {
+  var curUri;
+  try {
+    curUri = await clientFor(chainId).readContract({
+      address: controller, abi: uriOfAbi, functionName: 'uriOf', args: [projectId],
+    });
+  } catch (_) {
+    return { error: 'Could not read the current project metadata URI. Nothing was saved — try again.' };
+  }
+  if (!curUri) return { meta: {} };
+  var meta = await fetchMetadata(curUri).catch(function () { return null; });
+  if (!meta) return { error: 'Could not load the current project metadata from IPFS. Nothing was saved — saving without it would erase fields this form doesn’t edit. Try again.' };
+  return { meta: meta };
+}
+
 async function submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal) {
   var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
   if (!account) return;
   if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin the updated metadata.', 'error'); return; }
 
-  // Start from the live metadata so every field we don't edit (tags, payDisclosure, version, …) is preserved.
+  // Start from the live metadata so every field the operator didn't touch (custom fields, tags,
+  // version, …) is preserved.
   var primaryChain = (chains[0] && chains[0].id) || project.chainId;
   var controllers = await controllerMapFor(chains, project);
   var meta = form.preloadedMeta;
   if (!meta) {
     setStatus('Reading current metadata…', 'pending');
-    var curUri = await clientFor(primaryChain).readContract({
-      address: controllers[primaryChain], abi: uriOfAbi, functionName: 'uriOf', args: [pidOn(project, primaryChain)],
-    }).catch(function () { return null; });
-    meta = curUri ? (await fetchMetadata(curUri)) : null;
+    var loaded = await loadLiveProjectMetadata(primaryChain, controllers[primaryChain], pidOn(project, primaryChain));
+    if (loaded.error) { setStatus(loaded.error, 'error'); return; }
+    meta = loaded.meta;
   }
-  meta = meta ? Object.assign({}, meta) : {};
 
   // New logo (if chosen) is pinned first, then referenced by the metadata JSON.
   var newLogoUri = null;
   if (form.logoFile) {
     setStatus('Pinning logo…', 'pending');
     newLogoUri = await pinFile(form.logoFile, (form.name || project.name || 'logo'));
-    meta.logoUri = newLogoUri;
   }
   var trim = function (s) { return (s || '').trim(); };
-  meta.name = trim(form.name);
-  meta.projectTagline = trim(form.tagline);
-  meta.description = descriptionTextToHtml(form.description);
-  meta.infoUri = trim(form.website);
-  meta.twitter = trim(form.twitter);
-  meta.discord = trim(form.discord);
-  meta.telegram = trim(form.telegram);
-  if (form.storeCategories) { if (Object.keys(form.storeCategories).length) meta.storeCategories = form.storeCategories; else delete meta.storeCategories; }
+  var dirty = form.dirty || {};
+  meta = mergeProjectMetadataEdit(meta, [
+    { key: 'name', value: trim(form.name), dirty: !!dirty.name },
+    { key: 'projectTagline', value: trim(form.tagline), dirty: !!dirty.tagline },
+    { key: 'description', value: descriptionTextToHtml(form.description), dirty: !!dirty.description },
+    { key: 'infoUri', value: trim(form.website), dirty: !!dirty.website },
+    { key: 'twitter', value: trim(form.twitter), dirty: !!dirty.twitter },
+    { key: 'discord', value: trim(form.discord), dirty: !!dirty.discord },
+    { key: 'telegram', value: trim(form.telegram), dirty: !!dirty.telegram },
+    { key: 'payDisclosure', value: trim(form.payDisclosure), dirty: !!dirty.payDisclosure },
+    { key: 'storeCategories', value: form.storeCategories || {}, dirty: !!dirty.storeCategories },
+  ], form.customProperties);
+  if (newLogoUri) meta.logoUri = newLogoUri;
 
   setStatus('Pinning updated metadata…', 'pending');
   var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
@@ -8743,6 +9010,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   project.name = meta.name; project.tagline = meta.projectTagline;
   project.descriptionHtml = meta.description || null; project.description = htmlToText(meta.description);
   project.infoUri = meta.infoUri || null;
+  project.payDisclosure = meta.payDisclosure || null;
   project.storeCategories = meta.storeCategories || {};
   if (newLogoUri) project.logoUri = ipfsToHttp(newLogoUri);
   var liveDesc = document.querySelector('.detail-about-desc');
@@ -10136,6 +10404,139 @@ function cycleRuleset(r, offset) {
   };
 }
 
+// Display rows for the past-rulesets table, newest first: [id, start, weight, duration, tax]. Accepts
+// controller allRulesetsOf entries ({ruleset, metadata}) or bare rulesets (tax shows '—'). Pure.
+export function pastRulesetRows(list) {
+  var rows = (list || []).map(function (entry) {
+    var r = entry && entry.ruleset ? entry.ruleset : entry;
+    var m = entry && entry.metadata ? entry.metadata : null;
+    return {
+      id: String(r.id),
+      cycleNumber: Number(r.cycleNumber || 0),
+      start: Number(r.start),
+      weight: Number(r.weight) / 1e18,
+      duration: Number(r.duration),
+      // cashOutTaxRate is out of 10000 → percent.
+      tax: m && m.cashOutTaxRate != null ? Number(m.cashOutTaxRate) / 100 : null,
+    };
+  });
+  rows.sort(function (a, b) { return b.start - a.start; });
+  return rows;
+}
+
+// Read-only "Past rulesets" expandable: every ruleset ever queued, straight from the controller
+// (the carousel above walks only current/upcoming + projections). Lazy — reads on first expand.
+function renderPastRulesetsCard(project) {
+  var card = el('div', 'detail-card');
+  var head = el('button', 'detail-card-title rf-past-toggle');
+  head.type = 'button';
+  head.textContent = '▸ Past rulesets';
+  card.appendChild(head);
+  var body = el('div', 'rf-past-body');
+  body.style.display = 'none';
+  card.appendChild(body);
+  var open = false, loaded = false;
+  head.addEventListener('click', function () {
+    open = !open;
+    head.textContent = (open ? '▾' : '▸') + ' Past rulesets';
+    body.style.display = open ? '' : 'none';
+    if (!open || loaded) return;
+    loaded = true;
+    body.textContent = 'Loading ruleset history…';
+    var pid = pidOn(project, project.chainId);
+    controllerRead(project.chainId, pid, allRulesetsWithMetadataAbi, 'allRulesetsOf', [pid, 0n, 100n]).then(function (list) {
+      body.innerHTML = '';
+      var rows = pastRulesetRows(list);
+      if (!rows.length) { body.textContent = 'No rulesets found onchain.'; return; }
+      var sym = project.tokenSymbol || 'tokens';
+      var table = el('table', 'data-result-table rf-past-table');
+      var thead = document.createElement('thead');
+      var headRow = document.createElement('tr');
+      ['ID', 'Start', 'Issuance (' + sym + '/' + baseUnitLabel(project) + ')', 'Duration', 'Cash out tax'].forEach(function (label) {
+        var th = document.createElement('th'); th.textContent = label; headRow.appendChild(th);
+      });
+      thead.appendChild(headRow); table.appendChild(thead);
+      var tbody = document.createElement('tbody');
+      rows.forEach(function (row) {
+        var tr = document.createElement('tr');
+        [row.id, formatDate(row.start), formatRate(row.weight), formatDuration(row.duration),
+          row.tax == null ? '—' : (Number(row.tax.toFixed(2)) + '%')].forEach(function (value) {
+          var td = document.createElement('td'); td.textContent = value; tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      body.appendChild(table);
+    }).catch(function () {
+      body.textContent = 'Could not load the ruleset history from this chain.';
+    });
+  });
+  return card;
+}
+
+function formatLimitRows(values, acct) {
+  if (!values || !values.length) return 'None';
+  return values.map(function (limit) {
+    var meta = currencyMeta(limit.currency, acct);
+    return toBigInt(limit.amount) >= (2n ** 200n) ? ('Unlimited ' + meta.symbol) : formatCurrencyAmount(limit.amount, meta);
+  }).join(' + ');
+}
+
+// Per-cycle splits + funds-access reads for the ruleset card, cached per (chain, ruleset) so stepping
+// through cycles or chains doesn't re-read. Every read takes its CHAIN as an argument: the card's chain
+// dropdown swaps in another chain's ruleset, and a ruleset id from one chain means nothing on another —
+// reading it there returns an empty group, which used to surface as a phantom recipient.
+export function createRulesetSplitsLoader(project, deps) {
+  deps = deps || {};
+  var readFn = deps.read || read;
+  var addrFn = deps.getAddress || getAddress;
+  var pidFn = deps.pidOn || pidOn;
+  var cache = {};
+  function cached(key, make) {
+    if (!cache[key]) cache[key] = make();
+    return cache[key];
+  }
+  return {
+    // Reserved-token splits are token-agnostic (group 1) — one set per ruleset.
+    reserved: function (chainId, rulesetId) {
+      return cached(chainId + ':res:' + rulesetId, function () {
+        try {
+          if (!addrFn('JBSplits', chainId)) throw new Error('Splits contract unavailable.');
+          var pid = pidFn(project, chainId);
+          return readFn(chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, BigInt(rulesetId), RESERVED_TOKEN_SPLIT_GROUP]);
+        } catch (e) { return Promise.reject(e); }
+      });
+    },
+    // Per-accounting-context funds access (payout limit + surplus allowance) + that token's payout splits.
+    fundsAccess: function (chainId, rulesetId, kind) {
+      return cached(chainId + ':' + rulesetId + ':' + kind.key, function () {
+        var terminal = addrFn('JBMultiTerminal', chainId);
+        var limits = addrFn('JBFundAccessLimits', chainId);
+        var tok = kind.addrForChain(chainId);
+        var pid;
+        try { pid = pidFn(project, chainId); } catch (e) { return Promise.resolve(null); }
+        if (!(limits && terminal) || !tok) return Promise.resolve(null);
+        var payoutGroup = BigInt(tok); // payout split group = uint256(uint160(token))
+        var acct = { address: tok, decimals: kind.decimals, symbol: kind.symbol, currency: tokenCurrencyIdForAccounting(tok) };
+        return Promise.all([
+          readFn(chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, BigInt(rulesetId), terminal, tok]),
+          readFn(chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, BigInt(rulesetId), terminal, tok]),
+          addrFn('JBSplits', chainId)
+            ? readFn(chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, BigInt(rulesetId), payoutGroup])
+            : Promise.reject(new Error('Splits contract unavailable.')),
+        ]).then(function (r) {
+          return {
+            payout: formatLimitRows(r[0], acct),
+            allowance: formatLimitRows(r[1], acct),
+            payoutSplits: r[2] || [],
+            payoutGroupId: payoutGroup,
+          };
+        });
+      });
+    },
+  };
+}
+
 // "Rulesets & Funds" tab for owned (non-revnet) projects.
 function renderRulesetsFundsSection(project) {
   var section = el('div', 'detail-section');
@@ -10143,57 +10544,13 @@ function renderRulesetsFundsSection(project) {
     section.appendChild(emptyCard('Rulesets', 'No active ruleset found onchain.'));
     return section;
   }
-  var cur = { r: project.ruleset, m: project.metadata };
+  var cur = { r: project.ruleset, m: project.metadata, chainId: project.chainId };
   var upcoming = null; // {r, m} once fetched
   var curRows = rulesetRows(cur.r, cur.m, project);
 
-  // Per-cycle funds-access limits (payout limit + surplus allowance), keyed by ruleset id and cached
-  // so stepping back and forth doesn't re-read. Config is per-ruleset, so it tracks the displayed cycle.
-  var faPid = pidOn(project, project.chainId);
-  var faTerminal = getAddress('JBMultiTerminal', project.chainId);
-  var faLimits = getAddress('JBFundAccessLimits', project.chainId);
-  var faSplits = getAddress('JBSplits', project.chainId);
   var faKindsP = acctKindsForFunds(project); // funds access + payout splits are per accounting context
-  var faHome = project.chainId;
-  var faCache = {};
-  // Reserved-token splits are token-agnostic (group 1) — one set per ruleset.
-  function loadReservedSplits(rid) {
-    var key = 'res:' + rid;
-    if (faCache[key]) return faCache[key];
-    faCache[key] = faSplits
-      ? read(faHome, 'JBSplits', splitsOfAbi, 'splitsOf', [faPid, BigInt(rid), RESERVED_TOKEN_SPLIT_GROUP])
-      : Promise.reject(new Error('Splits contract unavailable.'));
-    return faCache[key];
-  }
-  // Per-accounting-context funds access (payout limit + surplus allowance) + that token's payout splits.
-  function loadFundsAccessForKind(rid, kind) {
-    var tok = kind.addrForChain(faHome);
-    var key = rid + ':' + kind.key;
-    if (faCache[key]) return faCache[key];
-    if (!(faLimits && faTerminal) || !tok) { faCache[key] = Promise.resolve(null); return faCache[key]; }
-    var payoutGroup = BigInt(tok); // payout split group = uint256(uint160(token))
-    var acct = { address: tok, decimals: kind.decimals, symbol: kind.symbol, currency: tokenCurrencyIdForAccounting(tok) };
-    function formatLimits(values) {
-      if (!values || !values.length) return 'None';
-      return values.map(function (limit) {
-        var meta = currencyMeta(limit.currency, acct);
-        return toBigInt(limit.amount) >= (2n ** 200n) ? ('Unlimited ' + meta.symbol) : formatCurrencyAmount(limit.amount, meta);
-      }).join(' + ');
-    }
-    faCache[key] = Promise.all([
-      read(faHome, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [faPid, BigInt(rid), faTerminal, tok]),
-      read(faHome, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [faPid, BigInt(rid), faTerminal, tok]),
-      faSplits ? read(faHome, 'JBSplits', splitsOfAbi, 'splitsOf', [faPid, BigInt(rid), payoutGroup]) : Promise.reject(new Error('Splits contract unavailable.')),
-    ]).then(function (r) {
-      return {
-        payout: formatLimits(r[0]),
-        allowance: formatLimits(r[1]),
-        payoutSplits: r[2] || [],
-        payoutGroupId: payoutGroup,
-      };
-    });
-    return faCache[key];
-  }
+  var splitsLoader = createRulesetSplitsLoader(project);
+  var chainEpoch = 0; // bumped when the chain dropdown swaps the ruleset, so stale reads can't land
 
   // ---- Rulesets viewer ----
   var rulesCard = el('div', 'detail-card');
@@ -10216,6 +10573,7 @@ function renderRulesetsFundsSection(project) {
   var upcomingNotice = el('div', 'rf-upcoming-notice'); rulesCard.appendChild(upcomingNotice);
   var rulesBox = el('div', 'rf-rulesbox'); rulesCard.appendChild(rulesBox);
   section.appendChild(rulesCard);
+  section.appendChild(renderPastRulesetsCard(project));
 
   var offset = 0; // 0 = current; 1 = upcoming; ± = projected cycles
 
@@ -10233,6 +10591,8 @@ function renderRulesetsFundsSection(project) {
 
   function render() {
     var v = viewAt(offset);
+    // Every read below belongs to the chain whose ruleset is on screen — the chain dropdown swaps `cur`.
+    var viewChain = Number(cur.chainId || project.chainId);
     var now = Math.floor(Date.now() / 1000);
     var cycleCtx = offset === 0 ? 'Current' : (offset === 1 ? 'Upcoming' : (offset > 0 ? 'Projected (+' + offset + ')' : 'Projected (' + offset + ')'));
     var remaining = '—';
@@ -10333,30 +10693,19 @@ function renderRulesetsFundsSection(project) {
     var rsReserved = null;
     if (offset === 0) {
       splitEditLink(rightCol, function () {
-        openEditSplitsModal(project, { groupId: RESERVED_TOKEN_SPLIT_GROUP, title: 'Edit reserved recipients', prefill: rsReserved || undefined, gateText: 'to edit reserved recipients.', note: 'Editing reserved token recipients for this ruleset cycle.' });
+        openEditSplitsModal(project, { chainId: viewChain, groupId: RESERVED_TOKEN_SPLIT_GROUP, title: 'Edit reserved recipients', prefill: rsReserved || undefined, gateText: 'to edit reserved recipients.', note: 'Editing reserved token recipients for this ruleset cycle.', displayedRuleset: { id: String(v.r.id), cycleNumber: Number(v.r.cycleNumber || 0) } });
       });
     }
     renderGroup(rightCol, 'EXTENSION');
     // Any section rulesetRows adds in future that we didn't place explicitly → left column.
     groups.forEach(function (g) { if (!placed[g.name]) renderGroup(leftCol, g.name); });
 
-    function fillSplits(box, splits, kind) {
-      box.innerHTML = '';
-      var sum = 0;
-      (splits || []).forEach(function (sp) {
-        var pct = Number(sp.percent) / 1e9 * 100; sum += pct;
-        box.appendChild(splitConfigRow(splitAccountNode(sp, project, project.chainId, { kind: kind }), pct));
-      });
-      var leftover = 100 - sum;
-      if (!splits || !splits.length || leftover > 0.0001) {
-        var oNode = el('span'); oNode.textContent = 'Project’s owner';
-        if (project.owner) { oNode.innerHTML = ''; oNode.appendChild(addressNode(project.owner, project.chainId)); }
-        box.appendChild(splitConfigRow(oNode, (splits && splits.length) ? leftover : 100));
-      }
-    }
-
-    // Reserved-token splits (single, token-agnostic).
-    loadReservedSplits(v.r.id).then(function (splits) { rsReserved = splits; fillSplits(rsBox, splits, 'reserved'); }).catch(function () { rsBox.innerHTML = ''; rsBox.textContent = 'Could not verify reserved-token splits.'; });
+    // Reserved-token splits (single, token-agnostic). The reserved rate turns each split's group share
+    // into a share of issuance, so the card can show both without inventing a recipient.
+    var reservedRatePct = Number(v.m && v.m.reservedPercent != null ? v.m.reservedPercent : 0) / 100;
+    splitsLoader.reserved(viewChain, v.r.id)
+      .then(function (splits) { rsReserved = splits; renderSplitsInto(rsBox, splits, { project: project, chainId: viewChain, kind: 'reserved', limitPct: reservedRatePct }); })
+      .catch(function () { rsBox.innerHTML = ''; rsBox.textContent = 'Could not verify reserved-token splits.'; });
 
     // Per-accounting-context funds access + payout splits.
     faKindsP.then(function (kinds) {
@@ -10371,12 +10720,12 @@ function renderRulesetsFundsSection(project) {
         var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '6px';
         var editA = el('a', 'operator-cta'); editA.href = '#'; editA.textContent = 'Edit'; foot.appendChild(editA);
         if (offset === 0) faContainer.appendChild(foot);
-        loadFundsAccessForKind(v.r.id, kind).then(function (fa) {
+        splitsLoader.fundsAccess(viewChain, v.r.id, kind).then(function (fa) {
           if (!fa) { secHead.remove(); faPayout.remove(); faAllow.remove(); psSh.remove(); psBox.remove(); foot.remove(); return; }
           faPayout.querySelector('.detail-ruleset-val').textContent = fa.payout;
           faAllow.querySelector('.detail-ruleset-val').textContent = fa.allowance;
-          fillSplits(psBox, fa.payoutSplits, 'payout');
-          if (offset === 0) editA.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project, { groupId: fa.payoutGroupId, groupIdForChain: function (cid) { var token = kind.addrForChain(cid); return token ? BigInt(token) : null; }, title: 'Edit ' + kind.symbol + ' payout splits', prefill: fa.payoutSplits, gateText: 'to edit payout splits.', note: 'Editing ' + kind.symbol + ' payout recipients for this ruleset cycle.' }); });
+          renderSplitsInto(psBox, fa.payoutSplits, { project: project, chainId: viewChain, kind: 'payout', limitPct: 100 });
+          if (offset === 0) editA.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project, { chainId: viewChain, groupId: fa.payoutGroupId, groupIdForChain: function (cid) { var token = kind.addrForChain(cid); return token ? BigInt(token) : null; }, title: 'Edit ' + kind.symbol + ' payout splits', prefill: fa.payoutSplits, gateText: 'to edit payout splits.', note: 'Editing ' + kind.symbol + ' payout recipients for this ruleset cycle.', displayedRuleset: { id: String(v.r.id), cycleNumber: Number(v.r.cycleNumber || 0) } }); });
         }).catch(function () {
           faPayout.querySelector('.detail-ruleset-val').textContent = '—';
           faAllow.querySelector('.detail-ruleset-val').textContent = '—';
@@ -10410,13 +10759,20 @@ function renderRulesetsFundsSection(project) {
 
   function ensureUpcoming(cb) {
     if (upcoming !== null) { cb(); return; }
-    controllerRead(project.chainId, pidOn(project, project.chainId), upcomingRulesetAbi, 'upcomingRulesetOf', [pidOn(project, project.chainId)])
+    // The upcoming ruleset belongs to the chain currently on screen, and a chain swap invalidates an
+    // in-flight read (`epoch`) — otherwise the previous chain's answer lands on the new chain's card.
+    var cid = Number(cur.chainId || project.chainId);
+    var epoch = chainEpoch;
+    var localPid;
+    try { localPid = pidOn(project, cid); } catch (e) { upcoming = false; cb(); return; }
+    controllerRead(cid, localPid, upcomingRulesetAbi, 'upcomingRulesetOf', [localPid])
       .then(function (res) {
+        if (epoch !== chainEpoch) return;
         // res = [ruleset, metadata]; treat a zero-id as "no distinct upcoming".
         if (res && res[0] && Number(res[0].id) !== 0) upcoming = { r: res[0], m: res[1] };
         else upcoming = false;
         cb();
-      }).catch(function () { upcoming = false; cb(); });
+      }).catch(function () { if (epoch !== chainEpoch) return; upcoming = false; cb(); });
   }
 
   render();
@@ -10435,7 +10791,7 @@ function renderRulesetsFundsSection(project) {
       if (chainRs[c.id]) return Promise.resolve();
       var localPid = pidOn(project, c.id);
       return controllerRead(c.id, localPid, currentRulesetAbi, 'currentRulesetOf', [localPid])
-        .then(function (res) { if (res && res[0]) chainRs[c.id] = { r: res[0], m: res[1] }; }).catch(function () {});
+        .then(function (res) { if (res && res[0]) chainRs[c.id] = { r: res[0], m: res[1], chainId: c.id }; }).catch(function () {});
     })).then(function () {
       var sigs = pchains.map(function (c) { return chainRs[c.id] ? rulesetSignature(chainRs[c.id].r, chainRs[c.id].m) : null; }).filter(Boolean);
       chainCtl.innerHTML = '';
@@ -10451,7 +10807,7 @@ function renderRulesetsFundsSection(project) {
         });
         sel.addEventListener('change', function () {
           var cid = Number(sel.value);
-          if (chainRs[cid]) { cur = chainRs[cid]; curRows = rulesetRows(cur.r, cur.m, project); offset = 0; upcoming = null; render(); }
+          if (chainRs[cid]) { cur = chainRs[cid]; curRows = rulesetRows(cur.r, cur.m, project); offset = 0; upcoming = null; chainEpoch += 1; render(); ensureUpcoming(render); }
         });
         chainCtl.appendChild(sel);
       }
@@ -14334,9 +14690,12 @@ function buildFundsTokenBlock(project, kind, showHead, onBalance) {
     });
     var leftoverPct = 100 - sumPct;
     if (splits.length === 0 || leftoverPct > 0.0001) {
+      // Unlike a split group, this row is real even with no splits: the whole distributable amount is
+      // genuinely the owner's. Keep the LABEL beside the address so the row reads as the owner, not as
+      // some configured recipient who happens to be at 100%.
       var ownerPct = splits.length === 0 ? 100 : leftoverPct;
-      var ownerName = el('span'); ownerName.textContent = 'Project’s owner';
-      var setOwner = function (a) { if (a) { ownerName.innerHTML = ''; ownerName.appendChild(addressNode(a, home)); } };
+      var ownerName = el('span'); ownerName.textContent = projectOwnerRecipientLabel(project);
+      var setOwner = function (a) { if (a) { ownerName.appendChild(document.createTextNode(' ')); ownerName.appendChild(addressNode(a, home)); } };
       if (project.owner) setOwner(project.owner);
       else read(home, 'JBProjects', ownerOfAbi, 'ownerOf', [homePid]).then(function (o) { project.owner = o; setOwner(o); }).catch(function () {});
       addRow(ownerPct, ownerName, distributable - sumAmt);
@@ -14598,6 +14957,45 @@ export function ammPriceFromSqrtPriceX96(sqrtPriceX96, projectTokenIsCurrency0, 
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
+// One chart axis, one unit. The issuance ladder is denominated in the ruleset's baseCurrency (the
+// ETH=1/USD=2 convention), while AMM spot and the cash-out floor are pair/accounting-token units
+// (accounting contexts carry currency = uint32(uint160(token))). When they differ the issuance series
+// must be converted through JBPrices before sharing an axis — or dropped when no feed exists.
+export function issuancePairUnitMismatch(project) {
+  var acct = project && project.acctToken;
+  if (!acct || acct.currency == null) return false; // pair unknown — keep the legacy single-unit labeling
+  var base = Number((project.metadata && project.metadata.baseCurrency) || 1);
+  if (base === Number(acct.currency)) return false;
+  // Base ETH(1) IS the native pair token — the 1-vs-61166 gap is an id-convention difference, not a unit one.
+  if (base === 1 && acct.address && String(acct.address).toLowerCase() === NATIVE_TOKEN.toLowerCase()) return false;
+  return true;
+}
+
+// Scale a copy of the stage list so 1/weight prices land in pair-token units. `rate` = pair units per
+// one base-currency unit. Copies each stage — the input is shared with project.stages.
+export function convertIssuanceStagesToPairUnits(stages, rate) {
+  return (stages || []).map(function (stage) {
+    return Object.assign({}, stage, { weight: Number(stage.weight) / rate });
+  });
+}
+
+// Pair-token units per one baseCurrency unit via JBPrices (per-project feed → protocol default).
+// Resolves 1 when no conversion is needed, null when the units differ but no feed bridges them.
+// Same call orientation as the proven USD-per-token quote reads: (pricing = base, unit = pair), inverted.
+function readIssuancePairRate(project, chainId) {
+  if (!issuancePairUnitMismatch(project)) return Promise.resolve(1);
+  var acct = project.acctToken;
+  var base = Number((project.metadata && project.metadata.baseCurrency) || 1);
+  if (!getAddress('JBPrices', chainId)) return Promise.resolve(null);
+  return read(chainId, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [pidOn(project, chainId), BigInt(base), toBigInt(acct.currency), 18n])
+    .then(function (price) {
+      var basePerPair = Number(toBigInt(price)) / 1e18;
+      var rate = isFinite(basePerPair) && basePerPair > 0 ? 1 / basePerPair : null;
+      return rate && isFinite(rate) ? rate : null;
+    })
+    .catch(function () { return null; });
+}
+
 // "Token issuance" card: current rate, next scheduled cut + countdown, % to splits, and an SVG
 // schedule chart (stepped per cycle) with stage dividers and a "now" marker. All from ruleset data.
 // Hero price chart shown above the tabs for revnets: the Issuance Price ladder (the ceiling). AMM
@@ -14630,9 +15028,13 @@ function renderPriceChart(project, stages) {
     if (note) c.setAttribute('data-tip', note);
     return c;
   }
-  // Pair denominator follows baseCurrency: token/ETH normally, token/USD for USD-based rulesets (e.g. ART).
+  // The shared-axis denominator. Normally baseCurrency == pair token so the ruleset's own unit labels
+  // everything; when they differ (e.g. a USD-based ruleset over an ETH pool) the axis takes the PAIR
+  // token's unit and the issuance series is converted into it below — never mixed units on one axis.
   var baseLabel = baseUnitLabel(project);
-  var pairUnit = baseLabel + '/' + sym;
+  var unitMismatch = issuancePairUnitMismatch(project);
+  var acctLabel = unitMismatch ? currencyUnitLabel(project.acctToken.currency, project) : baseLabel;
+  var pairUnit = acctLabel + '/' + sym;
   function setChipVal(c, numStr, tail) {
     c._val.textContent = '';
     c._val.appendChild(document.createTextNode(numStr + ' '));
@@ -14655,12 +15057,15 @@ function renderPriceChart(project, stages) {
   top.appendChild(legend);
 
   var issNow = issuanceAtTime(sorted, now); var issPrice = issNow > 0 ? 1 / issNow : null;
-  if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—';
+  // Under a unit mismatch the chip keeps its loading ghost until the JBPrices conversion resolves.
+  if (!unitMismatch) { if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—'; }
 
   var ranges = [['1D', 1 / 365], ['7D', 7 / 365], ['30D', 30 / 365], ['3M', 0.25], ['1Y', 1], ['All', 0]];
   var rangeRow = el('div', 'issuance-ranges price-ranges');
   var chartWrap = el('div', 'issuance-chart price-chart');
-  function draw() { mountChart(chartWrap, sorted, now, curYears, sym, amm, cashout, true, cashoutHistory, ammHistory); }
+  var chartReady = !unitMismatch; // a mismatched chart waits for the conversion (or is dropped) — the axis stays single-unit
+  var issDropped = false;
+  function draw() { if (!chartReady) return; mountChart(chartWrap, sorted, now, curYears, sym, amm, cashout, true, cashoutHistory, ammHistory); }
   function selectRange(years, btn) {
     var btns = rangeRow.querySelectorAll('.issuance-range-btn');
     for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
@@ -14687,10 +15092,35 @@ function renderPriceChart(project, stages) {
     fetchPriceFloorHistory(project, sorted),
     fetchSwapHistory(project).catch(function () { return null; }),
     readLpPositions(project, project.chainId).catch(function () { return null; }),
+    readIssuancePairRate(project, project.chainId),
   ]).then(function (res) {
     var p = res[0], f = res[1], history = res[2] || [];
     var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
     var lp = res[4];
+    var pairRate = res[5];
+    if (unitMismatch) {
+      if (pairRate) {
+        // Convert the ladder (and the live issuance quote) into pair units so every series shares the axis.
+        sorted = convertIssuanceStagesToPairUnits(sorted, pairRate);
+        issPrice = issPrice != null ? issPrice * pairRate : null;
+        chartReady = true;
+        if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—';
+        issChip.setAttribute('data-tip', 'What paying the project costs per ' + sym + ' right now: 1 ÷ the ruleset’s issuance weight, converted from '
+          + baseLabel + ' into ' + acctLabel + ' at the project’s JBPrices rate so it shares the chart’s ' + acctLabel + ' axis.');
+        draw();
+      } else {
+        // No feed bridges the units — drop the issuance series (and the chart, whose axis it anchors)
+        // rather than plot mixed units on one axis. The chip still reports the base-unit quote.
+        issDropped = true;
+        issChip.classList.remove('active'); issChip.classList.add('muted');
+        issChip._val.textContent = issPrice ? (formatPrice(issPrice) + ' ' + baseLabel + '/' + sym) : '—';
+        issChip.setAttribute('data-tip', 'Issuance is denominated in ' + baseLabel + ' while the pool trades in ' + acctLabel
+          + ' — no price feed converts between them, so the issuance series isn’t plotted.');
+        rangeRow.style.display = 'none';
+        chartWrap.classList.add('price-chart-unavailable');
+        chartWrap.textContent = 'Issuance is shown in ' + baseLabel + ' — no feed to convert it to ' + acctLabel + ', so the price history can’t share one axis.';
+      }
+    }
     // The pool's pair (terminal) token — ETH or USDC — labels every pool/liquidity/volume value below.
     // Swap history carries the pair metadata from the exact current pool, so a failed LP-position read cannot
     // relabel USDC volume/liquidity as ETH.
@@ -14740,8 +15170,9 @@ function renderPriceChart(project, stages) {
     else ammChip._val.textContent = swaps.count ? '—' : 'No liquidity yet';
     if (cashout) setChipVal(cashChip, formatPrice(cashout), 'before fees'); else cashChip._val.textContent = '—';
     // The floor's asymptote lives in the hover tip and the dashed chart line — not as a legend row.
+    // A dropped (unconvertible) issuance quote is base-currency units and must not seed a pair-unit asymptote.
     var currentTax = seriesTaxAt(history, now);
-    var lastMin = issPrice && currentTax != null
+    var lastMin = !issDropped && issPrice && currentTax != null
       ? calculatePaymentFloorPrice(issPrice, currentTax)
       : 0;
     if (cashout) {
@@ -18472,6 +18903,53 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   return { executed: true };
 }
 
+// Name the ruleset the editor actually verified. The card can be showing a different one: project.ruleset
+// falls back to the UPCOMING ruleset when the first cycle hasn't started, and the card's chain dropdown
+// swaps in another chain's ruleset entirely.
+export function splitsEditorRulesetNotice(verified, displayed) {
+  var vid = verified && verified.id != null ? String(verified.id) : '';
+  var cycle = verified && Number(verified.cycleNumber) > 0 ? ' (cycle #' + Number(verified.cycleNumber) + ')' : '';
+  var base = 'Editing the current ruleset #' + vid + cycle + '.';
+  var did = displayed && displayed.id != null ? String(displayed.id) : '';
+  if (!did || did === vid) return { text: base, mismatch: false };
+  return {
+    text: base + ' The card showed ruleset #' + did + ' — that is a different ruleset than the one being edited.',
+    mismatch: true,
+  };
+}
+
+// Whether emptying a split group is allowed. JBSplits.splitsOf serves the FALLBACK_RULESET_ID group
+// whenever the requested group is empty, so "clear it and the owner gets the tokens" only holds when the
+// fallback group is empty too. An unreadable fallback fails CLOSED — never guess about money routing.
+export function splitsClearGuard(o) {
+  o = o || {};
+  if (!o.clearing) return null;
+  var where = o.chainName ? ' on ' + o.chainName : '';
+  if (o.fallbackReadFailed) {
+    return 'Could not verify this project’s default (fallback) splits' + where + '. Nothing was sent — clearing is blocked until that group can be read.';
+  }
+  var n = (o.fallbackSplits || []).length;
+  if (!n) return null;
+  return 'Clearing this group can’t route these tokens to the project owner: this project has ' + n + ' default recipient'
+    + (n === 1 ? '' : 's') + ' stored under its fallback ruleset' + where + ', which JBSplits serves whenever this group is empty.';
+}
+
+// The editor's running total. Percentages are GROUP shares (rows sum to 100% of the group, like every
+// other Juicebox client); the issuance equivalent is derived, read-only text. A reserved rate of 0 is a
+// legitimate state to edit in — it makes the issuance equivalent 0, not the editor unusable.
+export function splitsEditorTotalText(o) {
+  o = o || {};
+  var sum = Number(o.sumPct) || 0;
+  var rounded = Math.round(sum * 100) / 100;
+  if (sum > 100.005) return { text: 'Total: ' + rounded + '% — can’t exceed 100% of the group', error: true };
+  var text = 'Total: ' + rounded + '% of the group';
+  var rate = o.reservedRatePct;
+  if (o.isReserved && rate != null) text += ' = ' + fmtPctText(sum / 100 * Number(rate)) + ' of issuance';
+  var remainder = Math.round((100 - sum) * 100) / 100;
+  if (remainder > 0.005) text += ', remaining ' + remainder + '% goes to the project owner';
+  return { text: text, error: false };
+}
+
 // Operator-only: edit the current ruleset's reserved-token split recipients on the chains the operator
 // picks, via relayr. Each selected chain's CURRENT ruleset id is read fresh (it can differ per chain).
 function openEditSplitsModal(project, opts) {
@@ -18479,20 +18957,34 @@ function openEditSplitsModal(project, opts) {
   var groupId = opts.groupId != null ? opts.groupId : RESERVED_TOKEN_SPLIT_GROUP;
   var groupIdForChain = opts.groupIdForChain || function () { return groupId; };
   var modalTitle = opts.title || 'Edit splits';
-  // Never construct a replacement editor from cached/partial page data. Resolve the current home-chain ruleset,
-  // group ID, limit, and splits first, then reopen with that verified snapshot as the optimistic-concurrency base.
+  // The chain whose ruleset the card was displaying — NOT necessarily the project's home chain.
+  var editChain = Number(opts.chainId || project.chainId);
+  // Never construct a replacement editor from cached/partial page data. Resolve that chain's current
+  // ruleset, group ID, splits and fallback group first, then reopen with that verified snapshot as the
+  // optimistic-concurrency base.
   if (!opts._verifiedPrefill) {
     var loadingBody = el('div', 'modal-body'); loadingBody.textContent = 'Verifying the current splits…';
     var loadingModal = openModal(modalTitle, loadingBody);
-    var homeGroup = groupIdForChain(project.chainId);
-    if (homeGroup == null) { loadingBody.textContent = 'Could not resolve this split group on the home chain.'; return; }
-    var homePid = pidOn(project, project.chainId);
-    controllerRead(project.chainId, homePid, currentRulesetAbi, 'currentRulesetOf', [homePid]).then(function (current) {
+    var homeGroup = groupIdForChain(editChain);
+    if (homeGroup == null) { loadingBody.textContent = 'Could not resolve this split group on ' + chainNameOf(editChain) + '.'; return; }
+    var homePid;
+    try { homePid = pidOn(project, editChain); } catch (e) { loadingBody.textContent = errMessage(e, 'Could not verify this project on that chain.'); return; }
+    controllerRead(editChain, homePid, currentRulesetAbi, 'currentRulesetOf', [homePid]).then(function (current) {
       if (!current || !current[0] || !current[0].id || !current[1]) throw new Error('No current ruleset.');
-      return read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [homePid, toBigInt(current[0].id), toBigInt(homeGroup)]).then(function (liveSplits) {
-        var verifiedLimit = String(groupId) === String(RESERVED_TOKEN_SPLIT_GROUP) ? Number(current[1].reservedPercent) / 100 : 100;
+      return Promise.all([
+        read(editChain, 'JBSplits', splitsOfAbi, 'splitsOf', [homePid, toBigInt(current[0].id), toBigInt(homeGroup)]),
+        read(editChain, 'JBSplits', splitsOfAbi, 'splitsOf', [homePid, FALLBACK_RULESET_ID, toBigInt(homeGroup)])
+          .then(function (f) { return { splits: f || [] }; }, function () { return { failed: true }; }),
+      ]).then(function (r) {
         loadingModal.close();
-        openEditSplitsModal(project, Object.assign({}, opts, { _verifiedPrefill: true, prefill: liveSplits || [], verifiedLimitPct: verifiedLimit }));
+        openEditSplitsModal(project, Object.assign({}, opts, {
+          _verifiedPrefill: true,
+          chainId: editChain,
+          prefill: r[0] || [],
+          fallback: r[1],
+          reservedRatePct: String(groupId) === String(RESERVED_TOKEN_SPLIT_GROUP) ? Number(current[1].reservedPercent) / 100 : null,
+          verifiedRuleset: { id: String(current[0].id), cycleNumber: Number(current[0].cycleNumber || 0), duration: Number(current[0].duration || 0) },
+        }));
       });
     }).catch(function () { loadingBody.textContent = 'Could not verify the current ruleset and splits. Nothing can be changed from this editor.'; });
     return;
@@ -18508,31 +19000,68 @@ function openEditSplitsModal(project, opts) {
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, opts.gateText || 'to edit splits.'));
 
   var note = el('div', 'operator-edit-across');
-  if (opts.note) {
-    note.textContent = opts.note;
-  } else {
-    // "Editing splits for Stage X's Y% split limit." — X = current stage number, Y = reserved percent.
-    var splitStages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
-    var curStageId = project.ruleset ? String(project.ruleset.id) : null;
-    var stageNum = 1;
-    for (var si = 0; si < splitStages.length; si++) if (String(splitStages[si].id) === curStageId) { stageNum = si + 1; break; }
-    var reservedPct = project.metadata && project.metadata.reservedPercent != null ? percentFromRuleset(project.metadata.reservedPercent) : null;
-    note.textContent = 'Editing splits for Stage ' + stageNum + (reservedPct ? '’s ' + reservedPct + ' split limit.' : '.');
-  }
+  note.textContent = opts.note || ('Editing recipients on ' + chainNameOf(editChain) + '.');
   content.appendChild(note);
+
+  var isReservedGroup = String(groupId) === String(RESERVED_TOKEN_SPLIT_GROUP);
+  var reservedRatePct = isReservedGroup
+    ? (opts.reservedRatePct != null ? Number(opts.reservedRatePct) : reservedRatePctFor(project))
+    : null;
+  var verifiedDuration = opts.verifiedRuleset && opts.verifiedRuleset.duration != null
+    ? Number(opts.verifiedRuleset.duration)
+    : Number(project.ruleset && project.ruleset.duration) || 0;
+
+  // Which ruleset this editor verified — and a warning when that isn't the one the card displayed.
+  if (opts.verifiedRuleset) {
+    var rulesetNotice = splitsEditorRulesetNotice(opts.verifiedRuleset, opts.displayedRuleset);
+    var rn = el('div', 'splits-edit-hint splits-edit-hint--prose' + (rulesetNotice.mismatch ? ' warn' : ''));
+    rn.style.marginTop = '6px';
+    rn.textContent = rulesetNotice.text;
+    content.appendChild(rn);
+  }
+
+  if (isReservedGroup && reservedRatePct === 0) {
+    // Recipients are still editable at a 0% rate — they just receive nothing until a ruleset reserves.
+    var zeroNote = el('div', 'splits-edit-hint splits-edit-hint--prose warn'); zeroNote.style.marginTop = '6px';
+    zeroNote.appendChild(document.createTextNode('The current ruleset reserves 0% of issuance — these recipients receive nothing until a ruleset reserves tokens. '));
+    var rateLink = el('a', ''); rateLink.href = '#'; rateLink.textContent = 'Queue a ruleset with a reserved rate';
+    rateLink.addEventListener('click', function (e) { e.preventDefault(); modal.close(); openQueueRulesetModal(project); });
+    zeroNote.appendChild(rateLink);
+    zeroNote.appendChild(document.createTextNode('.'));
+    content.appendChild(zeroNote);
+  } else if (isReservedGroup) {
+    // Operators looking to STOP reserving land here first — point at the actual lever (the reserved rate
+    // lives on the ruleset, not in this split group).
+    var stopNote = el('div', 'splits-edit-hint splits-edit-hint--prose'); stopNote.style.marginTop = '6px';
+    stopNote.appendChild(document.createTextNode('These recipients only divide the tokens this ruleset already reserves. To stop reserving tokens entirely, '));
+    var queueLink = el('a', ''); queueLink.href = '#'; queueLink.textContent = 'queue a new ruleset with a 0% reserved rate';
+    queueLink.addEventListener('click', function (e) { e.preventDefault(); modal.close(); openQueueRulesetModal(project); });
+    stopNote.appendChild(queueLink);
+    stopNote.appendChild(document.createTextNode(' (remove every reserved recipient there — the rate is the sum of its rows).'));
+    content.appendChild(stopNote);
+  }
 
   // Recipients editor — prefilled from the current splits for this group.
   var rlbl = el('div', 'operator-edit-label'); rlbl.style.marginTop = '12px'; rlbl.textContent = 'Recipients'; content.appendChild(rlbl);
   var rowsBox = el('div', 'splits-edit-rows'); content.appendChild(rowsBox);
   var totalLine = el('div', 'splits-edit-total'); content.appendChild(totalLine);
+  // Deleting every row is a legal save: it submits an EMPTY group (JBSplits clears the list) — but only
+  // when the fallback ruleset's group is empty too, else splitsOf keeps serving those default splits.
+  var fallbackBlock = splitsClearGuard({
+    clearing: true,
+    fallbackSplits: opts.fallback && opts.fallback.splits,
+    fallbackReadFailed: !!(opts.fallback && opts.fallback.failed),
+    chainName: chainNameOf(editChain),
+  });
+  var emptyNote = el('div', 'splits-edit-hint splits-edit-hint--prose'); emptyNote.style.display = 'none';
+  emptyNote.textContent = fallbackBlock || (isReservedGroup
+    ? 'No reserved splits — reserved tokens will go to the project owner. To stop reserving entirely, queue a ruleset with a 0% reserved rate.'
+    : 'No recipients — saving clears this split group; undistributed amounts go to the project owner.');
+  if (fallbackBlock) emptyNote.className += ' warn';
+  content.appendChild(emptyNote);
 
   // The shared LP split hook only applies to reserved-token splits (it pools project tokens).
-  var lpHookAddr = (groupId === RESERVED_TOKEN_SPLIT_GROUP) ? getAddress('JBP6FeeLPSplitHook', project.chainId) : null;
-  // Like the create flow, percentages are entered as % OF ISSUANCE and must sum to the split limit:
-  //  - reserved group → the ruleset's reserved rate (reservedPercent, basis points /100 = % of issuance);
-  //  - any other group (payouts) → 100% (the full distributable amount).
-  // Each split's stored group share = its issuance% ÷ limit (so issuance% = groupShare × limit). See submit.
-  var limitPct = Number(opts.verifiedLimitPct != null ? opts.verifiedLimitPct : splitLimitPctFor(project, groupId));
+  var lpHookAddr = (groupId === RESERVED_TOKEN_SPLIT_GROUP) ? getAddress('JBP6FeeLPSplitHook', editChain) : null;
   var rowOpts = {
     allowLpHook: !!lpHookAddr,
     allowProjectBalanceMode: String(groupId) !== String(RESERVED_TOKEN_SPLIT_GROUP),
@@ -18548,33 +19077,32 @@ function openEditSplitsModal(project, opts) {
     },
     sym: project.tokenSymbol || 'tokens',
     projectSymbol: project.tokenSymbol || 'tokens',
-    projectId: Number(pidOn(project, project.chainId)),
-    chainId: project.chainId,
+    projectId: Number(pidOn(project, editChain)),
+    chainId: editChain,
     chains: allChains,
     // Split locks only mean something inside a fixed-duration ruleset (create-flow rule: a Flexible
-    // ruleset's owner could immediately queue new splits anyway).
-    lockAllowed: Number(project.ruleset && project.ruleset.duration) > 0,
-    lockSpanSeconds: Number(project.ruleset && project.ruleset.duration) || 0,
+    // ruleset's owner could immediately queue new splits anyway). The duration is the VERIFIED ruleset's
+    // on the edited chain — project.ruleset belongs to the home chain and can differ.
+    lockAllowed: Number(verifiedDuration) > 0,
+    lockSpanSeconds: Number(verifiedDuration) || 0,
   };
   function mkRowOpts(extra) { var o = {}; for (var k in rowOpts) o[k] = rowOpts[k]; o.onChange = onRowChange; if (extra) for (var k2 in extra) o[k2] = extra[k2]; return o; }
   var rows = [];
   function updateLeads() { for (var i = 0; i < rows.length; i++) if (rows[i].leadEl) rows[i].leadEl.textContent = i === 0 ? 'Split' : '… and'; }
   function onRowChange() { recalcTotal(); updateLeads(); rows.forEach(function (r) { if (r.syncLpChip) r.syncLpChip(); }); }
   function recalcTotal() {
+    var allEmpty = !rows.length || rows.every(function (r) { return r.isEmpty(); });
+    emptyNote.style.display = allEmpty ? '' : 'none';
+    if (allEmpty) { totalLine.textContent = ''; totalLine.className = 'splits-edit-total'; return; }
     var sum = rows.reduce(function (a, r) { return a + (parseFloat(r.pct.value) || 0); }, 0);
-    var rounded = Math.round(sum * 100) / 100;
-    var over = sum > limitPct + 0.005;
-    var remainder = Math.round((limitPct - sum) * 100) / 100;
-    var limLabel = limitPct >= 100 ? '100%' : (Math.round(limitPct * 100) / 100) + '% limit';
-    totalLine.textContent = over
-      ? 'Total: ' + rounded + '% — can’t exceed the ' + (Math.round(limitPct * 100) / 100) + '% split limit'
-      : 'Total: ' + rounded + '% of ' + limLabel + (remainder > 0.005 ? ', remaining ' + remainder + '% goes to the project owner' : '');
-    totalLine.className = 'splits-edit-total' + (over ? ' error' : '');
+    var total = splitsEditorTotalText({ sumPct: sum, reservedRatePct: reservedRatePct, isReserved: isReservedGroup });
+    totalLine.textContent = total.text;
+    totalLine.className = 'splits-edit-total' + (total.error ? ' error' : '');
   }
   prefill.forEach(function (sp) {
-    // Stored group share (sp.percent / 1e9) → displayed as % of issuance = share × limit.
-    var issPct = Math.round((Number(sp.percent) / 1e9) * limitPct * 100) / 100;
-    addSplitRecipientRow(rowsBox, rows, mkRowOpts({ prefill: { projectId: sp.projectId, beneficiary: sp.beneficiary, pct: issPct, orig: sp } }));
+    // Stored share of SPLITS_TOTAL (1e9) → the row's group percentage.
+    var groupPct = Math.round((Number(sp.percent) / 1e9) * 100 * 1e6) / 1e6;
+    addSplitRecipientRow(rowsBox, rows, mkRowOpts({ prefill: { projectId: sp.projectId, beneficiary: sp.beneficiary, pct: groupPct, orig: sp } }));
   });
   if (!rows.length) addSplitRecipientRow(rowsBox, rows, mkRowOpts());
   onRowChange();
@@ -18616,33 +19144,32 @@ function openEditSplitsModal(project, opts) {
     if (busy) return;
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
     setBusy(true);
-    submitSplitsEdit(project, selected, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, prefill, limitPct)
+    submitSplitsEdit(project, selected, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, prefill)
       .then(function (sent) { if (sent !== true && content.isConnected) setBusy(false); })
       .catch(function (err) { if (content.isConnected) setBusy(false); setStatus(errMessage(err, 'Could not save the changes.'), 'error'); });
   });
 }
 
-async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, expectedPrefill, expectedLimitPct) {
-  var splitGroupId = groupId != null ? groupId : RESERVED_TOKEN_SPLIT_GROUP;
-  groupIdForChain = groupIdForChain || function () { return splitGroupId; };
-  if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
-  // Percentages are entered as % OF ISSUANCE and must sum to the split limit (reserved rate for the
-  // reserved group, else 100%). The onchain JBSplit.percent is a share of SPLITS_TOTAL (1e9) of the
-  // group total, so groupShare = issuance% ÷ limit. Clamp the running total so rounding can't exceed 1e9.
-  var limitPct = Number(expectedLimitPct != null ? expectedLimitPct : splitLimitPctFor(project, splitGroupId));
+// Build the setSplitGroupsOf splits array from the editor rows. Percentages are GROUP shares — rows sum
+// to 100% of the group, exactly as onchain JBSplit.percent does (a share of SPLITS_TOTAL, 1e9) and as
+// every other Juicebox client presents them. What a group is worth (the reserved rate for the reserved
+// group) is a property of the RULESET, not of these rows, so a 0% reserved rate no longer collapses the
+// editor's limit to zero. The running total is clamped so rounding can't exceed 1e9. An EMPTY result is
+// VALID: JBSplits accepts an empty group — it clears the list. Returns { splits, sumPct } or { error }.
+export function buildSplitsEditPayload(rows) {
   var splits = [];
   var sumPct = 0;
   var accShare = 0; // accumulated group share (out of 1e9)
   for (var i = 0; i < rows.length; i++) {
     if (rows[i].isEmpty()) continue;
     var pct = parseFloat(rows[i].pct.value);
-    if (!(pct > 0)) { setStatus('Row ' + (i + 1) + ': enter a percentage above 0', 'error'); return; }
+    if (!(pct > 0)) return { error: 'Row ' + (i + 1) + ': enter a percentage above 0, or remove the row' };
     var parsed;
-    try { parsed = rows[i].parse(); } catch (e) { setStatus('Row ' + (i + 1) + ': ' + e.message, 'error'); return; }
+    try { parsed = rows[i].parse(); } catch (e) { return { error: 'Row ' + (i + 1) + ': ' + e.message }; }
     sumPct += pct;
     // An actively locked split must keep its exact stored group share — recomputing from the displayed
-    // (rounded) issuance % could drift by a unit and fail the contract's identical-split check.
-    var share = rows[i].fixedShare != null ? rows[i].fixedShare : Math.round(pct / limitPct * 1e9);
+    // (rounded) percentage could drift by a unit and fail the contract's identical-split check.
+    var share = rows[i].fixedShare != null ? rows[i].fixedShare : Math.round(pct / 100 * 1e9);
     if (accShare + share > 1e9) share = 1e9 - accShare;
     if (share < 0) share = 0;
     accShare += share;
@@ -18660,8 +19187,17 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
       hook: (rows[i].hookAddr ? rows[i].hookAddr() : ((orig && orig.hook && orig.hook !== ZERO_ADDRESS) ? orig.hook : ZERO_ADDRESS)),
     });
   }
-  if (!splits.length) { setStatus('Add at least one recipient', 'error'); return; }
-  if (sumPct > limitPct + 0.0001) { setStatus('Splits add up to ' + (Math.round(sumPct * 100) / 100) + '% — can’t exceed the ' + (Math.round(limitPct * 100) / 100) + '% split limit', 'error'); return; }
+  if (sumPct > 100.0001) return { error: 'Splits add up to ' + (Math.round(sumPct * 100) / 100) + '% — a group can’t exceed 100%' };
+  return { splits: splits, sumPct: sumPct };
+}
+
+async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, expectedPrefill) {
+  var splitGroupId = groupId != null ? groupId : RESERVED_TOKEN_SPLIT_GROUP;
+  groupIdForChain = groupIdForChain || function () { return splitGroupId; };
+  if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
+  var payload = buildSplitsEditPayload(rows);
+  if (payload.error) { setStatus(payload.error, 'error'); return; }
+  var splits = payload.splits;
 
   var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
   if (!account) return;
@@ -18685,12 +19221,17 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     var liveController = await controllerAddressFor(cid, Number(localPid));
     var rs = await clientFor(cid).readContract({ address: liveController, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [localPid] });
     if (!rs || !rs[0] || !rs[0].id || !rs[1]) throw new Error('No current ruleset on ' + (selectedChains[j].name || cid) + '.');
-    if (String(splitGroupId) === String(RESERVED_TOKEN_SPLIT_GROUP)) {
-      var liveLimitPct = Number(rs[1].reservedPercent) / 100;
-      if (Math.abs(liveLimitPct - limitPct) > 0.000001) throw new Error('The reserved split limit changed while this editor was open. Close it, review the new ruleset, and try again.');
-    }
     var liveSplits = await read(cid, 'JBSplits', splitsOfAbi, 'splitsOf', [localPid, toBigInt(rs[0].id), toBigInt(localGroup)]);
     if (splitFingerprint(liveSplits) !== expectedFingerprint) throw new Error('The current splits on ' + (selectedChains[j].name || cid) + ' differ from the verified prefill. Nothing was sent; reopen the editor before replacing them.');
+    // Emptying a group only routes value to the owner when JBSplits has no fallback group to fall back
+    // to. Read that group per chain (it is per-chain state) and fail closed if it can't be read.
+    if (!splits.length && liveSplits && liveSplits.length) {
+      var fallbackSplits = null, fallbackFailed = false;
+      try { fallbackSplits = await read(cid, 'JBSplits', splitsOfAbi, 'splitsOf', [localPid, FALLBACK_RULESET_ID, toBigInt(localGroup)]); }
+      catch (e) { fallbackFailed = true; }
+      var block = splitsClearGuard({ clearing: true, fallbackSplits: fallbackSplits, fallbackReadFailed: fallbackFailed, chainName: selectedChains[j].name || String(cid) });
+      if (block) throw new Error(block);
+    }
     ridMap[cid] = rs[0].id;
     groupMap[cid] = toBigInt(localGroup);
     controllerMap[cid] = liveController;
@@ -18709,7 +19250,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [pidOn(project, cid), BigInt(ridMap[cid]), groups] }) };
   }, 600000n, setStatus, { label: 'Edit splits', title: 'Confirm edit splits', pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)) });
 
-  setStatus(relaySession && relaySession.resumed ? relayrRecoveredMessage(relaySession) : ('Splits updated on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '.'), 'success');
+  setStatus(relaySession && relaySession.resumed ? relayrRecoveredMessage(relaySession) : ('Splits ' + (splits.length ? 'updated' : 'cleared') + ' on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '.'), 'success');
   setTimeout(function () { modal.close(); }, 1400);
   return true;
 }
@@ -18848,7 +19389,10 @@ function renderAcrossChainsBody(project) {
         r.name,
         r.supply == null ? '—' : { main: formatTokens(r.supply), sub: supplyComplete ? pctOf(r.supply, totSupply) : null },
         (r.tokens && r.tokens.length) ? balCell(r.tokens, acct, r.id) : (r.balance == null || !acct ? '—' : formatBalance(r.balance, acct.decimals, acct.symbol)),
-        r.unitValue == null || !acct ? '—' : formatBalance(r.unitValue, acct.decimals, acct.symbol),
+        r.unitValue == null || !acct ? '—'
+          : (r.unitValueBeforeFees
+            ? { main: formatBalance(r.unitValue, acct.decimals, acct.symbol), sub: 'before fees' }
+            : formatBalance(r.unitValue, acct.decimals, acct.symbol)),
         false, false, r.id));
     });
     var totKeys = Object.keys(totByTok);
@@ -18976,7 +19520,9 @@ function renderOpsActions(project) {
 // loan (borrowable ETH against that balance via REVLoans). Null fields where unavailable on a chain.
 function fetchYouPosition(project) {
   var acct = getEffectiveAccount();
-  var taxRate = Number(project.metadata && project.metadata.cashOutTaxRate || 0);
+  // Home-chain tax is only the FALLBACK — each chain's own current ruleset is read below, since
+  // rulesets can diverge across chains (approval hooks, drift, per-chain queues).
+  var homeTaxRate = Number(project.metadata && project.metadata.cashOutTaxRate || 0);
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   return Promise.all(chains.map(function (chain) {
     var cid = chain.id;
@@ -18992,8 +19538,12 @@ function fetchYouPosition(project) {
       terminal ? resolveAcctToken(cid, pid).catch(function () { return null; }) : Promise.resolve(null),
       // Unclaimed credits — the rest of the balance is claimed ERC-20. Drives the "Credits"/"ERC-20s" subtext.
       read(cid, 'JBTokens', creditBalanceOfAbi, 'creditBalanceOf', [acct, pid]).then(toBigInt).catch(function () { return null; }),
+      // THIS chain's ruleset tax rate (falls back to the home chain's on read failure).
+      controllerRead(cid, pid, currentRulesetAbi, 'currentRulesetOf', [pid])
+        .then(function (r) { return taxRateFromRulesetResult(r, homeTaxRate); })
+        .catch(function () { return homeTaxRate; }),
     ]).then(function (res) {
-      var bal = res[0], supply = res[1] != null ? toBigInt(res[1]) : null, acct = res[2], credit = res[3];
+      var bal = res[0], supply = res[1] != null ? toBigInt(res[1]) : null, acct = res[2], credit = res[3], taxRate = res[4];
       var hasBal = bal != null && bal > 0n;
       var surplusJob = terminal && acct
         // Actual reclaimable surplus (balance − remaining payout limit), in the accounting token's units — not
@@ -19011,14 +19561,17 @@ function fetchYouPosition(project) {
           ? read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, bal, BigInt(acct.decimals == null ? 18 : acct.decimals), borrowCurrencyForAccountContext(acct)]).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; })
           : Promise.resolve(revLoans ? (hasBal ? null : 0n) : null);
         // The zero-tax protocol fee applies only up to the fee-free surplus, so that read is needed to net
-        // the cash out value; a non-zero tax fees the full reclaim and needs no extra read.
+        // the cash out value; a non-zero tax fees the full reclaim and needs no extra read. A FAILED read
+        // resolves null (unknowable fee) — never a fake 0n that would present gross as net.
         var feeFreeJob = (!taxRate && hasBal && terminal && acct)
-          ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return 0n; })
+          ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return null; })
           : Promise.resolve(0n);
         return Promise.all([cashJob, loanJob, feeFreeJob]).then(function (out) {
           // Show the net cash out value — what the wallet would actually receive after the 2.5% protocol
-          // fee — matching the cash-out modal's quote.
-          return { id: cid, name: chain.name, balance: bal, credit: credit, cashout: ambientNetCashOut(out[0], taxRate, out[2]), maxLoan: out[1], acct: acct };
+          // fee — matching the cash-out modal's quote. When the fee can't be computed (fee-free read
+          // failed), show the gross flagged so the row carries the "before fees" qualifier.
+          var disp = ambientCashOutDisplay(out[0], taxRate, out[2]);
+          return { id: cid, name: chain.name, balance: bal, credit: credit, cashout: disp.value, cashoutBeforeFees: disp.beforeFees, maxLoan: out[1], acct: acct };
         });
       });
     });
@@ -19149,7 +19702,10 @@ function renderYouCard(project, opts) {
       function fmtLoan(r, v) { var a = r.acct || { decimals: 18, symbol: 'ETH' }; return formatBalance(v, a.decimals, a.symbol); }
       function cashCell(r) {
         if (r.cashout == null) return '—';
-        return locked ? { main: fmtCash(r, r.cashout), sub: 'locked' } : fmtCash(r, r.cashout);
+        var subs = [];
+        if (locked) subs.push('locked');
+        if (r.cashoutBeforeFees) subs.push('before fees'); // fee-free read failed → value is gross
+        return subs.length ? { main: fmtCash(r, r.cashout), sub: subs.join(', ') } : fmtCash(r, r.cashout);
       }
       // While locked, borrowableAmountFrom returns 0, but the contract's borrowable capacity IS the
       // bonding-curve reclaim — i.e. ≈ the cash out value. Show that as the would-be loan, marked locked.
@@ -19239,7 +19795,12 @@ function renderYouCard(project, opts) {
       }
       var cashComplete = completeHomogeneous('cashout');
       var loanComplete = completeHomogeneous('maxLoan');
-      var totCashCell = !cashComplete ? '—' : (locked ? { main: fmtCash(held[0], totCash), sub: 'locked' } : fmtCash(held[0], totCash));
+      // A total that includes any gross (before-fees) row inherits the qualifier.
+      var anyBeforeFees = held.some(function (r) { return r.cashoutBeforeFees; });
+      var totCashSubs = [];
+      if (locked) totCashSubs.push('locked');
+      if (anyBeforeFees) totCashSubs.push('before fees');
+      var totCashCell = !cashComplete ? '—' : (totCashSubs.length ? { main: fmtCash(held[0], totCash), sub: totCashSubs.join(', ') } : fmtCash(held[0], totCash));
       // Locked total loan ≈ total cash out value (same bonding-curve reclaim, in the accounting token).
       var totLoanCell = locked
         ? (cashComplete && totCash > 0n ? { main: fmtCash(held[0], totCash), sub: 'locked' } : (cashComplete ? 'Locked' : '—'))
@@ -23646,11 +24207,24 @@ function buildAddLiquidityModal(project) {
   if (!lpChains.length) {
     var n = el('div', 'modal-status'); n.textContent = 'No Uniswap V4 position manager on this project’s chains.'; wrap.appendChild(n); return wrap;
   }
-  // Issuance ceiling = base token per project token at the current issuance weight (the top of the AMM band).
+  // Issuance ceiling = base-currency units per project token at the current issuance weight (the top of
+  // the AMM band). Pool price and the cash-out floor are PAIR-token units — when the ruleset's base
+  // currency differs, the ceiling converts through JBPrices before seeding the default range; with no
+  // feed it's dropped (0) so lpDefaultRange widens around the pool price instead of consuming a
+  // wrong-unit bound.
   var weight = project.ruleset ? Number(project.ruleset.weight) : 0;
-  var ceiling = weight > 0 ? 1e18 / weight : 0;
+  var ceilingBase = weight > 0 ? 1e18 / weight : 0;
+  var ceiling = issuancePairUnitMismatch(project) ? 0 : ceilingBase;
   // ethBal holds the PAIR-token balance (native ETH or USDC); pair is the resolved accounting/pair token.
   var state = { chainId: lpChains[0].id, poolP: 0, floor: 0, ceiling: ceiling, revBal: null, ethBal: null, driver: null, pair: null };
+  if (ceilingBase > 0 && ceiling === 0) {
+    readIssuancePairRate(project, state.chainId).then(function (rate) {
+      if (!rate) return; // no feed — keep the widened default range
+      ceiling = ceilingBase * rate;
+      state.ceiling = ceiling;
+      if (state.pair) refreshPrice(); // re-seed the defaults now the economic corridor is known
+    });
+  }
   function pairSym() { return state.pair ? state.pair.symbol : 'accounting token'; }
   function pairDec() { return state.pair ? state.pair.decimals : 18; }
 
@@ -24117,14 +24691,19 @@ function fetchOps(project) {
         // supply. No currency conversion → no price-feed revert.
         if (supply && supply >= ONE_TOKEN && balance != null) {
           // Zero-tax fee applies only up to the fee-free surplus; non-zero tax fees the full reclaim.
+          // A FAILED fee-free read resolves null → the unit value degrades to gross MARKED beforeFees.
           var feeFreeP = (!taxRate && terminal && acct)
-            ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return 0n; })
+            ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return null; })
             : Promise.resolve(0n);
           return Promise.all([
             read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, balance]),
             feeFreeP,
-          ]).then(function (uv) { base.unitValue = ambientNetCashOut(uv[0], taxRate, uv[1]); return base; })
-            .catch(function () { return base; });
+          ]).then(function (uv) {
+            var disp = ambientCashOutDisplay(uv[0], taxRate, uv[1]);
+            base.unitValue = disp.value;
+            base.unitValueBeforeFees = disp.beforeFees;
+            return base;
+          }).catch(function () { return base; });
         }
         return base;
       });
@@ -24155,10 +24734,14 @@ function kvRow(key, value) {
   return row;
 }
 
-// A ruleset-detail row whose key is a node (a split recipient) and value is a percentage.
-function splitConfigRow(recipientNode, pct) {
+// A ruleset-detail row whose key is a node (a split recipient) and value is a percentage. `companion`
+// is the muted secondary reading — "50% of limit" beside a primary issuance share.
+function splitConfigRow(recipientNode, pct, companion) {
   var row = el('div', 'detail-ruleset-row');
   var k = el('span', 'detail-ruleset-key'); k.appendChild(recipientNode); row.appendChild(k);
-  var v = el('span', 'detail-ruleset-val'); v.textContent = (Math.round(pct * 100) / 100) + '%'; row.appendChild(v);
+  var v = el('span', 'detail-ruleset-val');
+  var strong = el('strong'); strong.textContent = fmtPctText(pct); v.appendChild(strong);
+  if (companion) { var muted = el('span', 'splits-muted'); muted.textContent = ' (' + companion + ')'; v.appendChild(muted); }
+  row.appendChild(v);
   return row;
 }

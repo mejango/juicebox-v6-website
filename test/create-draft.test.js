@@ -100,3 +100,61 @@ describe('.jb draft interchange', () => {
     expect(revoke).toHaveBeenCalledWith('blob:project-draft');
   });
 });
+
+describe('.jb import — accounting/baseCurrency consistency (PriceFeedNotFound guard)', () => {
+  function usdcDraft(extra) {
+    const state = newCreateDraftState();
+    state.projectType = 'custom';
+    state.network = 'mainnet';
+    state.chainIds = [1];
+    state.details.name = 'Imported';
+    state.accepts = ['usdc'];
+    Object.assign(state, extra || {});
+    return createDraftObject(state);
+  }
+
+  it('re-derives ETH-denominated issuance for a USDC-only draft and surfaces a notice', () => {
+    const draft = usdcDraft();
+    // Simulate a hand-edited/stale export: USDC accepted but issuance still denominated in ETH(1).
+    draft.stages[0].baseCurrency = 1;
+    draft.stages[0].payoutCurrency = 1;
+    const imported = parseCreateDraftJson(JSON.stringify(draft));
+    expect(imported.stages[0].baseCurrency).toBe(2);
+    expect(imported.stages[0].payoutCurrency).toBe(2);
+    expect(imported.storePricingCurrency).toBe(2);
+    expect(imported._importNotice).toMatch(/adjusted/i);
+  });
+
+  it('re-derives a revnet base currency the same way', () => {
+    const draft = usdcDraft({ projectType: 'revnet', revBaseCurrency: 1 });
+    draft.revBaseCurrency = 1;
+    const imported = parseCreateDraftJson(JSON.stringify(draft));
+    expect(imported.revBaseCurrency).toBe(2);
+    expect(imported._importNotice).toMatch(/adjusted/i);
+  });
+
+  it('leaves a consistent USDC draft alone (no notice)', () => {
+    const state = newCreateDraftState();
+    state.projectType = 'custom';
+    state.chainIds = [1];
+    state.accepts = ['usdc'];
+    state.storePricingCurrency = 2;
+    state.stages[0].baseCurrency = 2;
+    state.stages[0].payoutCurrency = 2;
+    state.stages[0].surplusAllowanceCurrency = 2;
+    const imported = parseCreateDraftJson(JSON.stringify(createDraftObject(state)));
+    expect(imported.stages[0].baseCurrency).toBe(2);
+    expect(imported._importNotice).toBeUndefined();
+  });
+
+  it('keeps the user choice of USD issuance on an ETH-only draft (ETH→USD has a default feed)', () => {
+    const state = newCreateDraftState();
+    state.projectType = 'custom';
+    state.chainIds = [1];
+    state.accepts = ['eth'];
+    state.stages[0].baseCurrency = 2;
+    const imported = parseCreateDraftJson(JSON.stringify(createDraftObject(state)));
+    expect(imported.stages[0].baseCurrency).toBe(2);
+    expect(imported._importNotice).toBeUndefined();
+  });
+});

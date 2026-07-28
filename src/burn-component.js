@@ -5,7 +5,7 @@
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, discoverChains, selectChain, firstChainForNetwork,
-  executeTransaction, executeRead, renderError, getAddress, getAccount, getEffectiveAccount,
+  executeTransaction, executeRead, renderError, getAddress, getAccount, getViewAs,
   getChainTokens, parseAmount, formatAmount, parseHashDefaults,
 } from './component-base.js';
 
@@ -83,7 +83,8 @@ export function renderBurnComponent() {
     }));
 
 
-    // Balance display
+    // Balance display — always the CONNECTED wallet's balance: the burn spends from the real signer,
+    // so showing a View-as account's balance here would misstate what this form can actually burn.
     if (state.balance !== null) {
       var balBox = el('div', 'pay-preview');
       var row = el('div', 'preview-row');
@@ -94,6 +95,11 @@ export function renderBurnComponent() {
       val.textContent = formatAmount(state.balance, 18);
       row.appendChild(val);
       balBox.appendChild(row);
+      if (getViewAs()) {
+        var note = el('div', 'preview-note');
+        note.textContent = 'View as is active — this is your connected wallet’s balance, the account a burn would spend from.';
+        balBox.appendChild(note);
+      }
       body.appendChild(balBox);
     }
 
@@ -166,7 +172,8 @@ export function renderBurnComponent() {
   }
 
   function loadBalance() {
-    var account = getEffectiveAccount();
+    // The REAL signer, not the View-as effective account — burnTokensOf burns from the connected wallet.
+    var account = getAccount();
     if (!account || !state.selectedChain || !state.projectId) return;
     var tokensAddr = getAddress('JBTokens', state.selectedChain);
     if (!tokensAddr) return;
@@ -195,6 +202,10 @@ export function renderBurnComponent() {
     var tokenCount;
     try { tokenCount = parseAmount(state.amount, 18); } catch (_) {
       state.error = 'Invalid token count'; updateUI(); return;
+    }
+    if (tokenCount <= 0n) { state.error = 'Enter a token count above zero'; updateUI(); return; }
+    if (state.balance !== null && tokenCount > state.balance) {
+      state.error = 'That’s more than your balance of ' + formatAmount(state.balance, 18) + ' tokens.'; updateUI(); return;
     }
 
     var holder = getAccount();

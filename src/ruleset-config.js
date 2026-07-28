@@ -16,12 +16,14 @@ export var DURATION_PRESETS = [
   { label: 'Custom', seconds: -1 },
 ];
 
-// Blank = inherit the previous ruleset's (cut) weight, which JBRulesets encodes as the RAW sentinel
-// weight 1 (for a project's first ruleset there is nothing to inherit, so the sentinel resolves to 0
-// on-chain). Any typed number is 18-dec fixed-point tokens per base unit — "1" means 1e18, "0" means
-// no issuance. Garbage/negative input degrades to 0n (never throws).
-export function parseRulesetWeight(value) {
-  if (value == null || String(value).trim() === '') return 1n;
+// Blank in the default (queue) mode = inherit the previous ruleset's (cut) weight, which JBRulesets
+// encodes as the RAW sentinel weight 1. That sentinel only inherits when a PREVIOUS ruleset exists —
+// at launch JBRulesets stores the 1 as-is (≈1 wei-token per base unit, effectively dust issuance),
+// so the launch widget passes mode 'launch' where blank encodes an explicit 0n (no issuance). Any
+// typed number is 18-dec fixed-point tokens per base unit — "1" means 1e18, "0" means no issuance.
+// Garbage/negative input degrades to 0n (never throws).
+export function parseRulesetWeight(value, mode) {
+  if (value == null || String(value).trim() === '') return mode === 'launch' ? 0n : 1n;
   var weight;
   try {
     weight = parseEther(String(value).trim());
@@ -134,7 +136,7 @@ export function buildRulesetConfigs(rulesets, opts) {
     configs.push({
       mustStartAtOrAfter: BigInt(rs.mustStartAtOrAfter || 0),
       duration: getDurationSeconds(rs),
-      weight: parseRulesetWeight(rs.weight),
+      weight: parseRulesetWeight(rs.weight, opts.weightMode),
       weightCutPercent: Math.round(rs.weightCutPercent * 10000000),
       approvalHook: addrOrZero(rs.approvalHook),
       metadata: meta,

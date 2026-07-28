@@ -87,11 +87,15 @@ export function contractNameByAddress(address) {
   return _addrToName[a] || null;
 }
 
+// Storage access throws outright in blocked-storage contexts (Safari private windows, sandboxed
+// Safe-App iframes) — degrade to "no override" like every other guarded storage site in the app.
 export function getCustomRpc(chainId) {
-  return localStorage.getItem('jb-rpc-' + chainId) || '';
+  try { return localStorage.getItem('jb-rpc-' + chainId) || ''; } catch (_) { return ''; }
 }
 
 export function setCustomRpc(chainId, url) {
-  if (url) localStorage.setItem('jb-rpc-' + chainId, url);
-  else localStorage.removeItem('jb-rpc-' + chainId);
+  try {
+    if (url) localStorage.setItem('jb-rpc-' + chainId, url);
+    else localStorage.removeItem('jb-rpc-' + chainId);
+  } catch (_) {}
 }

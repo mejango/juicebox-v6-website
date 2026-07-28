@@ -1,27 +1,45 @@
 // The Safe App provider is a money path: writes must PROPOSE to the Safe (sendTransactions), never send a
-// bare tx, and reads must proxy through the Safe. This locks the postMessage protocol + request mapping.
+// bare tx, and reads must proxy through the Safe. This locks the postMessage protocol + request mapping,
+// AND the bridge's trust boundary: responses are accepted only from window.parent AND an allowlisted Safe
+// web-app origin, and requests are only ever posted to allowlisted origins (never '*').
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { detectSafeApp, makeSafeProvider, proposeSafeTransactions } from '../src/safe-app.js';
+import { detectSafeApp, makeSafeProvider, proposeSafeTransactions, SAFE_APP_ALLOWED_ORIGINS } from '../src/safe-app.js';
 
 const SAFE = '0x1111111111111111111111111111111111111111';
+const SAFE_ORIGIN = 'https://app.safe.global';
+
+// Dispatch a message event with an explicit source/origin (jsdom's MessageEvent constructor cannot
+// carry an arbitrary source object, so build a plain event and assign the fields).
+function dispatchMessage(data, { origin = SAFE_ORIGIN, source } = {}) {
+  const ev = new Event('message');
+  ev.data = data;
+  ev.origin = origin;
+  ev.source = source === undefined ? window.parent : source;
+  window.dispatchEvent(ev);
+}
 
 // Minimal Safe parent stub: answer postMessages by method, echoing the id back on the window.
-function installSafeParent(answers, delayMs) {
+// `replyOrigin`/`replySource` simulate where the response claims to come from.
+function installSafeParent(answers, delayMs, opts = {}) {
   const calls = [];
+  const targetOrigins = [];
   const parent = {
-    postMessage(msg) {
+    postMessage(msg, targetOrigin) {
       calls.push(msg);
+      targetOrigins.push(targetOrigin);
       const data = answers[msg.method];
       const reply = () => {
-        window.dispatchEvent(new MessageEvent('message', {
-          data: { id: msg.id, success: data !== undefined, data, version: '9.1.0' },
-        }));
+        dispatchMessage(
+          { id: msg.id, success: data !== undefined, data, version: '9.1.0' },
+          { origin: opts.replyOrigin || SAFE_ORIGIN, source: 'replySource' in opts ? opts.replySource : window.parent },
+        );
       };
       if (delayMs) setTimeout(reply, delayMs);
       else queueMicrotask(reply);
     },
   };
   Object.defineProperty(window, 'parent', { configurable: true, value: parent });
+  calls.targetOrigins = targetOrigins;
   return calls;
 }
 
@@ -77,6 +95,34 @@ describe('Safe App provider', () => {
     ];
     expect(await proposeSafeTransactions(txs)).toBe('0xbatch');
     expect(calls.find((c) => c.method === 'sendTransactions').params.txs).toEqual(txs);
+  });
+
+  it('never posts requests with a \'*\' target — only allowlisted Safe web-app origins', async () => {
+    const calls = installSafeParent({ getSafeInfo: { safeAddress: SAFE, chainId: 8453, owners: [SAFE], threshold: 1 } });
+    await detectSafeApp(200);
+    expect(calls.targetOrigins.length).toBeGreaterThan(0);
+    for (const origin of calls.targetOrigins) {
+      expect(origin).not.toBe('*');
+      expect(SAFE_APP_ALLOWED_ORIGINS).toContain(origin);
+    }
+  });
+
+  it('ignores responses from a non-allowlisted origin (times out instead of trusting them)', async () => {
+    installSafeParent(
+      { getSafeInfo: { safeAddress: SAFE, chainId: 8453, owners: [SAFE], threshold: 1 } },
+      0,
+      { replyOrigin: 'https://evil.example' },
+    );
+    expect(await detectSafeApp(150)).toBeNull();
+  });
+
+  it('ignores responses whose source is not window.parent even when the origin looks right', async () => {
+    installSafeParent(
+      { getSafeInfo: { safeAddress: SAFE, chainId: 8453, owners: [SAFE], threshold: 1 } },
+      0,
+      { replySource: null }, // e.g. a hostile sibling iframe relaying through the top window
+    );
+    expect(await detectSafeApp(150)).toBeNull();
   });
 
   it('rejects switching to a chain other than the Safe’s', async () => {

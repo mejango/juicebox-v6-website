@@ -8,9 +8,14 @@
 // Reads are proxied to the Safe interface's node via rpcCall; writes go through sendTransactions.
 
 var SDK_VERSION = '9.1.0';
+// The trust boundary of the bridge: messages are accepted ONLY when they come from window.parent AND
+// an origin the Safe web app actually serves from, and requests are only posted to these origins
+// (never '*'). app.safe.global is the production Safe{Wallet}; app.5afe.dev is Safe's staging build.
+export var SAFE_APP_ALLOWED_ORIGINS = ['https://app.safe.global', 'https://app.5afe.dev'];
 var _pending = {};
 var _idCounter = 0;
 var _listening = false;
+var _parentOrigin = null; // captured from the first valid response; all later requests target it exactly
 
 // Cross-origin parent access throws — that itself means we're framed (a top window can read window.parent).
 function inIframe() {
@@ -22,7 +27,13 @@ function ensureListener() {
   if (_listening || typeof window === 'undefined') return;
   _listening = true;
   window.addEventListener('message', function (event) {
-    var msg = event && event.data;
+    // Only the embedding Safe web app may answer: the event must come from our direct parent window
+    // AND from an allowlisted Safe origin. Anything else (sibling iframes, injected scripts posting
+    // through the top window, other origins) is ignored.
+    if (!event || event.source !== window.parent) return;
+    if (SAFE_APP_ALLOWED_ORIGINS.indexOf(event.origin) === -1) return;
+    _parentOrigin = event.origin;
+    var msg = event.data;
     if (!msg || !msg.id || !_pending[msg.id]) return;
     var p = _pending[msg.id]; delete _pending[msg.id];
     if (msg.success === false || msg.error) p.reject(new Error(typeof msg.error === 'string' ? msg.error : 'Safe request failed'));
@@ -37,8 +48,12 @@ function safeRpc(method, params) {
   var message = { id: id, method: method, params: params || {}, env: { sdkVersion: SDK_VERSION } };
   return new Promise(function (resolve, reject) {
     _pending[id] = { resolve: resolve, reject: reject };
-    try { window.parent.postMessage(message, '*'); }
-    catch (e) { delete _pending[id]; reject(e); }
+    try {
+      // Never '*': before the parent's origin is known, post once per allowlisted origin (the browser
+      // delivers only to the matching one); afterwards, target the captured origin exactly.
+      var targets = _parentOrigin ? [_parentOrigin] : SAFE_APP_ALLOWED_ORIGINS;
+      targets.forEach(function (origin) { window.parent.postMessage(message, origin); });
+    } catch (e) { delete _pending[id]; reject(e); }
   });
 }
 

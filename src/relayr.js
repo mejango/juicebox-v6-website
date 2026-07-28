@@ -219,7 +219,19 @@ export function relayrErrorIsUncertain(error) {
 // Persist only the small, non-sensitive receipt needed to resume status checks. In particular, never put
 // signed forward requests or calldata in localStorage. `scope` is supplied by the feature (for example a
 // project-specific "add shop items" key).
-function relayrPendingStorageKey(scope) { return RELAYR_PENDING_PREFIX + String(scope || ''); }
+//
+// Receipts are device-local AND wallet-local: the storage key carries the connected account, so a second
+// wallet on the same browser never sees (or resumes) the first wallet's bundles. With no wallet connected
+// there is nothing to key by, so storage falls back to the unkeyed (legacy) key; the first wallet that
+// reads such an entry adopts it into its own namespace (best-effort migration).
+function relayrAccountPart() {
+  try { var account = getAccount && getAccount(); return account ? String(account).toLowerCase() + ':' : ''; } catch (_) { return ''; }
+}
+// Feature scopes never start with a bare address ('create-project', 'action:…', 'bundle:…', 'shop-…'),
+// so an account prefix is unambiguous in stored keys.
+var RELAYR_ACCOUNT_KEYED = /^0x[0-9a-f]{40}:/;
+function relayrPendingStorageKey(scope) { return RELAYR_PENDING_PREFIX + relayrAccountPart() + String(scope || ''); }
+function relayrLegacyStorageKey(scope) { return RELAYR_PENDING_PREFIX + String(scope || ''); }
 
 // Status polling persists after every tick; skip the synchronous localStorage write when nothing changed.
 var RELAYR_LAST_SAVED = {};
@@ -259,6 +271,17 @@ export function loadRelayrPendingSession(scope) {
   if (!scope) return null;
   try {
     var raw = localStorage.getItem(relayrPendingStorageKey(scope));
+    // Adopt a pre-account-keyed receipt into the connected wallet's namespace on first read.
+    if (!raw && relayrAccountPart()) {
+      var legacy = localStorage.getItem(relayrLegacyStorageKey(scope));
+      if (legacy) {
+        raw = legacy;
+        try {
+          localStorage.setItem(relayrPendingStorageKey(scope), legacy);
+          localStorage.removeItem(relayrLegacyStorageKey(scope));
+        } catch (_) {}
+      }
+    }
     if (!raw) return null;
     var session = JSON.parse(raw);
     if (!session || typeof session.bundleUuid !== 'string' || !session.bundleUuid) throw new Error('Invalid Relayr session');
@@ -272,22 +295,40 @@ export function loadRelayrPendingSession(scope) {
   }
 }
 
-// Every scope with a persisted pending session (the part of the storage key after the shared prefix).
-// Lets the account view surface all in-flight Relayr work without knowing each feature's scope scheme.
+// Every scope with a persisted pending session for the CONNECTED wallet (the part of the storage key
+// after the shared prefix and account). Lets the account view surface all in-flight Relayr work without
+// knowing each feature's scope scheme. Other wallets' receipts are never listed; legacy unkeyed entries
+// surface only once a wallet is connected (and are adopted by it on first load). With no wallet there is
+// no identity to scope by, so nothing is listed.
 export function listRelayrPendingScopes() {
   var scopes = [];
+  var accountPart = relayrAccountPart();
+  if (!accountPart) return scopes;
+  var seen = {};
   try {
     for (var i = 0; i < localStorage.length; i++) {
       var key = localStorage.key(i);
-      if (key && key.indexOf(RELAYR_PENDING_PREFIX) === 0) scopes.push(key.slice(RELAYR_PENDING_PREFIX.length));
+      if (!key || key.indexOf(RELAYR_PENDING_PREFIX) !== 0) continue;
+      var rest = key.slice(RELAYR_PENDING_PREFIX.length);
+      var scope = null;
+      if (RELAYR_ACCOUNT_KEYED.test(rest)) {
+        if (rest.indexOf(accountPart) === 0) scope = rest.slice(accountPart.length);
+      } else {
+        scope = rest; // legacy unkeyed — adopted on first load
+      }
+      if (scope && !seen[scope]) { seen[scope] = true; scopes.push(scope); }
     }
   } catch (_) {}
   return scopes;
 }
 
 export function clearRelayrPendingSession(scope) {
-  delete RELAYR_LAST_SAVED[relayrPendingStorageKey(scope)];
-  try { localStorage.removeItem(relayrPendingStorageKey(scope)); } catch (_) {}
+  // Remove the connected wallet's copy AND any legacy unkeyed copy, so a cleared receipt can't be
+  // re-adopted from the pre-migration key later.
+  [relayrPendingStorageKey(scope), relayrLegacyStorageKey(scope)].forEach(function (key) {
+    delete RELAYR_LAST_SAVED[key];
+    try { localStorage.removeItem(key); } catch (_) {}
+  });
 }
 
 // Poll GET /v1/bundle/{uuid} every `intervalMs` until every transaction reports Success/Completed.

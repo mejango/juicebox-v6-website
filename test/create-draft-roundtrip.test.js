@@ -30,16 +30,21 @@ function maximalState() {
     owner: ALICE,
   });
   s.customToken = Object.assign(s.customToken, { address: TOKEN, symbol: 'MAX', decimals: 18, status: 'ok' });
-  s.storePricingCurrency = Number(BigInt(TOKEN) & 0xffffffffn);
+  const customCur = Number(BigInt(TOKEN) & 0xffffffffn);
+  s.storePricingCurrency = customCur;
 
   const stage = createStage();
   stage.durationSeconds = 2592000;
   stage.weight = '5000'; stage.reservedPercent = 25; stage.cashOutEnabled = true; stage.cashOutTaxRate = 40;
-  stage.payoutMode = 'limited'; stage.payoutCurrency = 2;
+  // Currencies must be consistent with the custom accounting token (what the live UI enforces via
+  // applyAccountingDefaults) — an inconsistent draft is deliberately CORRECTED on import, not preserved.
+  // The custom currency id is still a non-default value, so whitelist drops still fail this test.
+  stage.payoutMode = 'limited'; stage.baseCurrency = customCur; stage.payoutCurrency = customCur;
+  stage.allowAddPriceFeed = true;
   stage.payoutRecipients = [{ type: 'wallet', address: ALICE, projectId: 0, percent: 0, amountEth: '1.5', lockedUntil: 1893456000 }];
   stage.reservedRecipients = [{ type: 'project', projectId: 7, address: BOB, percent: 100, preferAddToBalance: true, lockedUntil: 0 }];
   stage.payoutByKind = { usdc: { mode: 'limited', recipients: [{ type: 'wallet', address: BOB, projectId: 0, percent: 0, amountEth: '9' }] } };
-  stage.surplusAllowanceOn = true; stage.surplusAllowanceAmount = '3'; stage.surplusAllowanceCurrency = 2;
+  stage.surplusAllowanceOn = true; stage.surplusAllowanceAmount = '3'; stage.surplusAllowanceCurrency = customCur;
   s.stages = [stage];
 
   const item = itemDraft();

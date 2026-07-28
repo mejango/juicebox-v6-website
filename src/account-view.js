@@ -43,16 +43,19 @@ var ACCOUNT_SAFE_OWNED_QUERY = 'query($owners: [String!], $chainId: Int!, $versi
 var ACCOUNT_OPERATED_QUERY = 'query($operator: String!, $version: Int!) { '
   + 'permissionHolders(where: { operator: $operator, version: $version }, limit: 200) { '
   + 'items { chainId projectId account operator permissions isRevnetOperator } } }';
-// Holdings: per-project token balances. Bendystraw indexes the same participant once per version
-// tag it recognizes the project under, so rows are deduped to the highest version per project.
-var ACCOUNT_TOKEN_HOLDINGS_QUERY = 'query($account: String!) { '
-  + 'participants(where: { address: $account, balance_gt: "0" }, '
+// Holdings: per-project token balances. Version-pinned like every other account query — this whole
+// site is V6-only, so V4/V5 participant rows must never appear. creditBalance/erc20Balance carry the
+// unclaimed-credits vs claimed-ERC-20 split; totalCount makes single-page truncation honest.
+export var ACCOUNT_TOKEN_HOLDINGS_QUERY = 'query($account: String!, $version: Int!) { '
+  + 'participants(where: { address: $account, version: $version, balance_gt: "0" }, '
   + 'orderBy: "balance", orderDirection: "desc", limit: 500) { '
-  + 'items { chainId projectId version balance } } }';
-// Holdings: store items (721s) currently owned. Deduped by (chainId, tokenId) for the same reason.
-var ACCOUNT_NFT_HOLDINGS_QUERY = 'query($owner: String!) { '
-  + 'nfts(where: { owner: $owner }, limit: 1000) { '
-  + 'items { chainId projectId tokenId tierId } } }';
+  + 'totalCount items { chainId projectId version balance creditBalance erc20Balance } } }';
+// Holdings: store items (721s) currently owned, version-pinned for the same reason. `hook` is part of
+// bendystraw's nft primary key (chainId, hook, tokenId, version) — JB721 tokenIds (tierId*1e9+serial)
+// collide across every collection on a chain, so identity must include the collection.
+export var ACCOUNT_NFT_HOLDINGS_QUERY = 'query($owner: String!, $version: Int!) { '
+  + 'nfts(where: { owner: $owner, version: $version }, limit: 1000) { '
+  + 'totalCount items { chainId projectId hook tokenId tierId } } }';
 
 // -- Pure helpers (unit-tested) --
 
@@ -74,8 +77,8 @@ export function parseAccountRoute(rest) {
   return null;
 }
 
-// participants rows arrive balance-desc but duplicated per indexed version; keep the
-// highest-version row per (chainId, projectId), preserving first-seen (balance) order.
+// participants rows arrive balance-desc, version-pinned to 6 (one row per project by the indexer's
+// primary key); keep one row per (chainId, projectId) defensively, preserving first-seen order.
 export function dedupeTokenHoldings(items) {
   var byKey = {}, order = [];
   (items || []).forEach(function (it) {
@@ -83,22 +86,43 @@ export function dedupeTokenHoldings(items) {
     var chainId = Number(it.chainId), projectId = Number(it.projectId);
     if (!Number.isFinite(chainId) || !Number.isFinite(projectId) || projectId <= 0) return;
     var key = chainId + ':' + projectId;
-    var prev = byKey[key];
-    if (!prev) { byKey[key] = it; order.push(key); }
-    else if (Number(it.version) > Number(prev.version)) byKey[key] = it;
+    if (!byKey[key]) { byKey[key] = it; order.push(key); }
   });
   return order.map(function (key) { return byKey[key]; });
 }
 
-// nft rows → dedupe by (chainId, tokenId) (rows repeat per indexed version), then group by
-// (chainId, projectId) with per-tier quantities: { chainId, projectId, tiers: [{tierId, count}] }.
+// The credit/ERC-20 composition of a participant row's combined balance, or null when it's all
+// claimed ERC-20 (the default assumption) or the split fields are absent/garbage.
+export function holdingSplitLabel(row) {
+  if (!row) return null;
+  var credit, erc20;
+  try {
+    credit = BigInt(row.creditBalance == null ? 0 : row.creditBalance);
+    erc20 = BigInt(row.erc20Balance == null ? 0 : row.erc20Balance);
+  } catch (_) { return null; }
+  if (credit > 0n && erc20 > 0n) return formatTokenCount(erc20) + ' ERC-20 + ' + formatTokenCount(credit) + ' credits';
+  if (credit > 0n) return 'credits (unclaimed)';
+  return null;
+}
+
+// "Showing the first N of M <noun>." when the indexer holds more rows than the single page the view
+// fetches; null when everything fit (or totalCount was unavailable).
+export function capNote(shownCount, totalCount, noun) {
+  var total = Number(totalCount);
+  if (!Number.isFinite(total) || total <= shownCount) return null;
+  return 'Showing the first ' + shownCount + ' of ' + total + ' ' + noun + '.';
+}
+
+// nft rows → dedupe by (chainId, hook, tokenId) — the collection-scoped identity; bare tokenIds
+// collide across collections on a chain — then group by (chainId, projectId) with per-tier
+// quantities: { chainId, projectId, tiers: [{tierId, count}] }.
 export function groupNftHoldings(items) {
   var seenToken = {}, byProj = {}, order = [];
   (items || []).forEach(function (it) {
     if (!it) return;
     var chainId = Number(it.chainId), projectId = Number(it.projectId), tierId = Number(it.tierId);
     if (!Number.isFinite(chainId) || !Number.isFinite(projectId) || projectId <= 0) return;
-    var tokenKey = chainId + ':' + String(it.tokenId);
+    var tokenKey = chainId + ':' + String(it.hook == null ? '' : it.hook).toLowerCase() + ':' + String(it.tokenId);
     if (seenToken[tokenKey]) return;
     seenToken[tokenKey] = true;
     var projKey = chainId + ':' + projectId;
@@ -264,25 +288,35 @@ export function renderAccountView(rest) {
   var container = document.getElementById('tab-account');
   if (!container) return;
   container.innerHTML = '';
+  // #account routes have no nav-tab of their own (nothing in the header highlights), so give the view
+  // the project-detail back affordance — the user always has a visible way home to the Discover grid.
+  var back = el('button', 'detail-back account-back');
+  back.type = 'button';
+  back.textContent = '←';
+  back.title = 'Back to projects';
+  back.addEventListener('click', function () { location.hash = ''; });
+  container.appendChild(back);
+  var body = el('div');
+  container.appendChild(body);
   var token = {};
   container._accountToken = token;
   function live() { return container._accountToken === token; }
 
   var parsed = parseAccountRoute(rest);
-  if (!parsed) { container.appendChild(invalidCard(String(rest || '').trim())); return; }
+  if (!parsed) { body.appendChild(invalidCard(String(rest || '').trim())); return; }
   if (parsed.ens) {
     var note = el('div', 'detail-card-body');
     note.textContent = 'Resolving ' + parsed.ens + '…';
-    container.appendChild(note);
+    body.appendChild(note);
     ensAddressOf(parsed.ens).then(function (addr) {
       if (!live()) return;
-      container.innerHTML = '';
-      if (!addr) { container.appendChild(invalidCard(parsed.ens)); return; }
-      renderAccount(container, addr, parsed.ens, parsed.tab, live);
+      body.innerHTML = '';
+      if (!addr) { body.appendChild(invalidCard(parsed.ens)); return; }
+      renderAccount(body, addr, parsed.ens, parsed.tab, live);
     });
     return;
   }
-  renderAccount(container, parsed.address, parsed.address, parsed.tab, live);
+  renderAccount(body, parsed.address, parsed.address, parsed.tab, live);
 }
 
 // ident is the identity as routed (ENS name or address) so tab clicks keep the hash the user chose.
@@ -497,8 +531,10 @@ function renderTokenHoldingsCard(address, live) {
   body.textContent = 'Loading…';
   card.appendChild(body);
 
-  bendystrawQuery(ACCOUNT_TOKEN_HOLDINGS_QUERY, { account: address.toLowerCase() }).then(function (data) {
-    var rows = dedupeTokenHoldings(data && data.participants && data.participants.items);
+  bendystrawQuery(ACCOUNT_TOKEN_HOLDINGS_QUERY, { account: address.toLowerCase(), version: VERSION }).then(function (data) {
+    var res = data && data.participants;
+    var items = (res && res.items) || [];
+    var rows = dedupeTokenHoldings(items);
     return fetchProjectStubs(rows).then(function (stubMap) {
       if (!live() || !body.isConnected) return;
       body.innerHTML = '';
@@ -513,8 +549,17 @@ function renderTokenHoldingsCard(address, live) {
         // accounting token); symbol comes from the deployed ERC-20, else the "tokens" fallback.
         bal.textContent = formatTokenCount(row.balance) + ' ' + ((stub && stub.tokenSymbol) || 'tokens');
         line.appendChild(bal);
+        // Unclaimed credits vs claimed ERC-20 — moving between chains needs the ERC-20 side.
+        var split = holdingSplitLabel(row);
+        if (split) {
+          var splitEl = el('span', 'account-holding-split');
+          splitEl.textContent = split;
+          line.appendChild(splitEl);
+        }
         body.appendChild(line);
       });
+      var note = capNote(items.length, res && res.totalCount, 'token balances');
+      if (note) { var capEl = el('div', 'account-holdings-cap'); capEl.textContent = note; body.appendChild(capEl); }
     });
   }).catch(function () {
     if (!live() || !body.isConnected) return;
@@ -530,8 +575,10 @@ function renderNftHoldingsCard(address, live) {
   body.textContent = 'Loading…';
   card.appendChild(body);
 
-  bendystrawQuery(ACCOUNT_NFT_HOLDINGS_QUERY, { owner: address.toLowerCase() }).then(function (data) {
-    var groups = groupNftHoldings(data && data.nfts && data.nfts.items);
+  bendystrawQuery(ACCOUNT_NFT_HOLDINGS_QUERY, { owner: address.toLowerCase(), version: VERSION }).then(function (data) {
+    var res = data && data.nfts;
+    var items = (res && res.items) || [];
+    var groups = groupNftHoldings(items);
     return fetchProjectStubs(groups).then(function (stubMap) {
       if (!live() || !body.isConnected) return;
       body.innerHTML = '';
@@ -548,6 +595,8 @@ function renderNftHoldingsCard(address, live) {
         });
         body.appendChild(line);
       });
+      var note = capNote(items.length, res && res.totalCount, 'store items');
+      if (note) { var capEl = el('div', 'account-holdings-cap'); capEl.textContent = note; body.appendChild(capEl); }
     });
   }).catch(function () {
     if (!live() || !body.isConnected) return;

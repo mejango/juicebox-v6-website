@@ -136,7 +136,11 @@ export function renderLaunchComponent() {
 
     // Rulesets
     for (var ri = 0; ri < state.rulesets.length; ri++) {
-      body.appendChild(renderRulesetFieldset(state.rulesets[ri], ri, state, updateUI));
+      var rs = state.rulesets[ri];
+      body.appendChild(renderRulesetFieldset(rs, ri, state, updateUI, {
+        // Launch has no previous ruleset to inherit from — blank encodes an explicit 0 (no issuance).
+        weightHint: 'tokens per ' + (Number(rs.baseCurrency) === 2 ? 'USD' : 'ETH') + ', blank or 0 = no issuance',
+      }));
     }
 
     // Add ruleset button — queue another ruleset after this one.
@@ -162,7 +166,7 @@ export function renderLaunchComponent() {
     memoSection.appendChild(memoInput);
     body.appendChild(memoSection);
 
-    // Chains — multi-select, mainnets and testnets mutually exclusive.
+    // Chain — single-select; this widget launches on ONE chain (the create wizard owns omnichain).
     body.appendChild(renderChainPicker(state, updateUI));
 
     if (state.error) body.appendChild(renderError(state.error));
@@ -197,7 +201,7 @@ export function renderLaunchComponent() {
 
     var terminalAddr = getAddress('JBMultiTerminal', state.chainIds[0]);
 
-    var rulesetConfigs = buildRulesetConfigs(state.rulesets);
+    var rulesetConfigs = buildRulesetConfigs(state.rulesets, { weightMode: 'launch' });
 
     // Default terminal config: accept native ETH
     var terminalConfigs = [];
@@ -230,14 +234,15 @@ export function renderLaunchComponent() {
   return wrapper;
 }
 
-// Multi-chain picker — choose one or more chains to deploy on. Mirrors the
-// look of `createProjectAndChainInput`: a small mainnet/testnet `<select>`
-// inline with chain pills. Switching the network resets the chain selection
-// to a sensible default on the new side.
+// Single-chain picker — the widget executes ONE launchProjectFor on ONE chain, so the pills have
+// radio semantics (picking a chain replaces the selection). Mirrors the look of
+// `createProjectAndChainInput`: a small mainnet/testnet `<select>` inline with chain pills.
+// Switching the network resets the chain selection to a sensible default on the new side.
+// Omnichain launches belong to the create wizard, not this widget.
 function renderChainPicker(state, updateUI) {
   var section = el('div', 'component-section chain-multi-section');
   var label = el('label', 'input-label');
-  label.innerHTML = 'chains <span class="type-hint">pick one or more</span>';
+  label.innerHTML = 'chain <span class="type-hint">pick a chain</span>';
   section.appendChild(label);
 
   function networkOf(id) {
@@ -273,14 +278,7 @@ function renderChainPicker(state, updateUI) {
     pill.type = 'button';
     pill.textContent = c.name;
     pill.addEventListener('click', function() {
-      var existing = state.chainIds.slice();
-      if (existing.indexOf(c.id) !== -1) {
-        existing = existing.filter(function(id) { return id !== c.id; });
-        state.chainIds = existing.length ? existing : [c.id]; // require at least one
-      } else {
-        existing.push(c.id);
-        state.chainIds = existing;
-      }
+      state.chainIds = [c.id]; // radio semantics: exactly one chain — the one the launch executes on
       updateUI();
     });
     row.appendChild(pill);

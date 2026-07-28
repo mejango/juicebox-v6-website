@@ -18,6 +18,15 @@ describe('parseRulesetWeight — inherit sentinel vs fixed-point', () => {
     expect(parseRulesetWeight(undefined)).toBe(1n);
   });
 
+  it('launch mode: blank encodes an explicit 0n — a project\'s FIRST ruleset has nothing to inherit, and JBRulesets stores the sentinel 1 AS-IS (≈1 wei-token per unit), not 0', () => {
+    expect(parseRulesetWeight('', 'launch')).toBe(0n);
+    expect(parseRulesetWeight(null, 'launch')).toBe(0n);
+    expect(parseRulesetWeight(undefined, 'launch')).toBe(0n);
+    // Typed values are identical in both modes.
+    expect(parseRulesetWeight('100', 'launch')).toBe(100n * E18);
+    expect(parseRulesetWeight('0', 'launch')).toBe(0n);
+  });
+
   it('explicit numbers are 18-dec fixed point: "100" => 100e18, "1" => 1e18, "0" => 0n', () => {
     expect(parseRulesetWeight('100')).toBe(100n * E18);
     expect(parseRulesetWeight('1')).toBe(E18);
@@ -40,6 +49,32 @@ describe('queue ruleset config — default weight is inherit', () => {
   it('typed "100" encodes 100e18', () => {
     const rs = createDefaultRuleset({ mustStartAtOrAfter: '0', weight: '100' });
     expect(buildRulesetConfigs([rs])[0].weight).toBe(100n * E18);
+  });
+});
+
+describe('launch ruleset config — blank weight is an explicit 0, never the raw sentinel', () => {
+  it('a launch-mode blank weight encodes 0n (no issuance) while queue mode keeps the sentinel', () => {
+    const rs = createDefaultRuleset({ mustStartAtOrAfter: '0', weight: '' });
+    expect(buildRulesetConfigs([rs], { weightMode: 'launch' })[0].weight).toBe(0n);
+    expect(buildRulesetConfigs([rs])[0].weight).toBe(1n);
+  });
+
+  it('typed weights encode identically in both modes', () => {
+    const rs = createDefaultRuleset({ mustStartAtOrAfter: '0', weight: '100' });
+    expect(buildRulesetConfigs([rs], { weightMode: 'launch' })[0].weight).toBe(100n * E18);
+    expect(buildRulesetConfigs([rs])[0].weight).toBe(100n * E18);
+  });
+});
+
+describe('launch component source — launch semantics wired in and hinted in the UI', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/launch-component.js'), 'utf8');
+
+  it('builds ruleset configs in launch weight mode', () => {
+    expect(src).toMatch(/buildRulesetConfigs\(state\.rulesets,\s*\{\s*weightMode:\s*'launch'\s*\}\)/);
+  });
+
+  it('hints that blank means no issuance (mirroring the queue widget\'s blank hint)', () => {
+    expect(src).toMatch(/blank or 0 = no issuance/);
   });
 });
 
