@@ -2,6 +2,7 @@
 // Shared building blocks for all component widgets
 
 import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected, proposeSafeTransactions, waitForSafeInitialization } from './wallet.js';
+import { getViewAs, VIEW_AS_TX_ERROR } from './view-as.js';
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
@@ -49,6 +50,15 @@ export function abiSignature(abi, functionName) {
 
 export { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected };
 export { initSafeApp, getSafeInfo } from './wallet.js';
+export { getViewAs, setViewAs, clearViewAs, onViewAsChange, VIEW_AS_TX_ERROR } from './view-as.js';
+
+// The account the SITE renders for: the "View as" address when impersonation is active, else the
+// connected wallet. Display/data reads ("your balance", owned items, defaults on account pages) use
+// this; anything that builds or sends a transaction keeps getAccount() (the real connected wallet)
+// and is refused while view-as is active.
+export function getEffectiveAccount() {
+  return getViewAs() || getAccount();
+}
 export { CHAINS, getManifestChains, getChainTokens };
 export { parseAmount, formatAmount };
 export { renderError };
@@ -1062,6 +1072,30 @@ export function renderConfirmBody(content, payload, opts) {
 
 export function confirmTransactionModal(payload, opts) {
   opts = opts || {};
+  // View-as is browse-only: every confirm funnel refuses here with a clear notice instead of a review.
+  if (getViewAs()) {
+    return new Promise(function (resolve) {
+      var overlay = el('div', 'modal-overlay');
+      var dialog = el('div', 'modal-dialog');
+      var head = el('div', 'modal-head');
+      var h = el('div', 'modal-title'); h.textContent = 'Viewing as another account'; head.appendChild(h);
+      var x = document.createElement('button'); x.className = 'modal-close'; x.textContent = '✕'; head.appendChild(x);
+      dialog.appendChild(head);
+      var content = el('div', 'pay-confirm');
+      var note = el('div', 'tx-confirm-note viewas-blocked'); note.textContent = VIEW_AS_TX_ERROR; content.appendChild(note);
+      var foot = el('div', 'create-modal-foot');
+      var closeBtn = el('button', 'create-btn ghost'); closeBtn.textContent = 'Close'; foot.appendChild(closeBtn);
+      content.appendChild(foot); dialog.appendChild(content); overlay.appendChild(dialog);
+      var cancelResult = opts.keepOpenForProgress ? { ok: false } : false;
+      function close() { if (overlay.parentNode) overlay.remove(); document.removeEventListener('keydown', onKey); resolve(cancelResult); }
+      function onKey(e) { if (e.key === 'Escape') close(); }
+      x.addEventListener('click', close);
+      closeBtn.addEventListener('click', close);
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(overlay);
+    });
+  }
   return new Promise(function (resolve) {
     var overlay = el('div', 'modal-overlay');
     var dialog = el('div', 'modal-dialog');
@@ -1122,6 +1156,7 @@ export function confirmTransactionModal(payload, opts) {
 
 export function executeTransaction(opts) {
   // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, onStatus, onSuccess, onError, skipConfirm, label }
+  if (getViewAs()) { (opts.onError || function () {})(VIEW_AS_TX_ERROR); return; }
   var wallet = getWalletClient();
   if (!wallet) { opts.onError('Connect wallet to transact'); return; }
   var account = getAccount();

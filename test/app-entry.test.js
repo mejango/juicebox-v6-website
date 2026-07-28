@@ -90,6 +90,11 @@ vi.mock('../src/discover.js', () => ({
   renderDiscoverTab: entry.renderDiscoverTab,
   applyDiscoverRoute: entry.applyDiscoverRoute,
   renderAdminTab: entry.renderAdminTab,
+  classifyAccountQuery: query => /^0x[0-9a-fA-F]{40}$/.test(String(query || '').trim())
+    ? { kind: 'address', address: String(query).trim() }
+    : { kind: 'text' },
+  ensAddressOf: vi.fn().mockResolvedValue(null),
+  identGradient: () => 'linear-gradient(135deg, #000, #fff)',
 }));
 vi.mock('../src/data-tab.js', () => ({ renderDataTab: entry.renderDataTab }));
 vi.mock('../src/account-view.js', () => ({ renderAccountView: entry.renderAccountView }));
@@ -217,5 +222,38 @@ describe('production app entry point', () => {
     document.getElementById('connect-btn').click();
     await vi.waitFor(() => expect(document.querySelector('.wallet-menu-error')?.textContent).toMatch(/No wallet detected/));
     expect(entry.applyDiscoverRoute).not.toHaveBeenCalledWith(expect.any(String));
+
+    // --- View as (impersonation) mode ---
+    const viewed = '0x2222222222222222222222222222222222222222';
+    const viewAsLink = document.getElementById('viewas-link');
+    expect(viewAsLink).not.toBeNull();
+    viewAsLink.click(); // closes the wallet notice, opens the standalone prompt
+    const prompt = document.querySelector('.wallet-menu .viewas-prompt');
+    expect(prompt).not.toBeNull();
+    const promptInput = prompt.querySelector('.viewas-input');
+    promptInput.value = 'not an account';
+    prompt.querySelector('.viewas-go').click();
+    expect(prompt.querySelector('.viewas-err').textContent).toMatch(/0x address or an ENS name/);
+    expect(document.getElementById('viewas-banner')).toBeNull();
+    promptInput.value = viewed;
+    prompt.querySelector('.viewas-go').click();
+    const banner = document.getElementById('viewas-banner');
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toContain('Viewing as ' + viewed);
+    expect(document.querySelector('.wallet-menu')).toBeNull(); // prompt closed on activation
+
+    // Connected wallet menu: the Account item targets the IMPERSONATED address while active.
+    entry.account = '0x9999999999999999999999999999999999999999';
+    document.getElementById('connect-btn').click();
+    const menu = document.querySelector('.wallet-menu');
+    const items = [...menu.querySelectorAll('.wallet-menu-item')].map(node => node.textContent);
+    expect(items).toContain('View as…');
+    expect(items).toContain('Exit View as');
+    [...menu.querySelectorAll('.wallet-menu-item')].find(node => node.textContent === 'Account').click();
+    expect(location.hash).toBe('#account/' + viewed);
+
+    banner.querySelector('.viewas-exit').click();
+    expect(document.getElementById('viewas-banner')).toBeNull();
+    entry.account = null;
   });
 });

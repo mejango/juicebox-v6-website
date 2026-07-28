@@ -8,7 +8,8 @@ import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
 import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
-import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab } from './discover.js';
+import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, identGradient } from './discover.js';
+import { getViewAs, setViewAs, clearViewAs, onViewAsChange } from './view-as.js';
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links.js';
@@ -71,6 +72,39 @@ var PRETTY_COMPONENTS = {
   'JBPermissions.setPermissionsFor': renderPermissionsComponent,
 };
 
+// --- View as (impersonation) banner ---
+
+// Slim persistent banner at the top of the page while "View as" is active: identicon dot +
+// "Viewing as <addr/ENS>" + Exit. Re-rendered on every view-as change.
+function renderViewAsBanner() {
+  var existing = document.getElementById('viewas-banner');
+  if (existing) existing.remove();
+  var addr = getViewAs();
+  if (!addr) return;
+  var banner = document.createElement('div');
+  banner.id = 'viewas-banner';
+  var dot = document.createElement('span');
+  dot.className = 'viewas-dot';
+  dot.style.background = identGradient(addr.toLowerCase());
+  banner.appendChild(dot);
+  var label = document.createElement('span');
+  label.className = 'viewas-label';
+  label.textContent = 'Viewing as ' + truncAddr(addr);
+  label.title = addr;
+  banner.appendChild(label);
+  reverseEns(addr).then(function (name) {
+    if (name && getViewAs() === addr) label.textContent = 'Viewing as ' + name;
+  });
+  var exit = document.createElement('button');
+  exit.type = 'button';
+  exit.className = 'viewas-exit';
+  exit.textContent = 'Exit';
+  exit.title = 'Stop viewing the site as this account';
+  exit.addEventListener('click', function () { clearViewAs(); });
+  banner.appendChild(exit);
+  document.body.insertBefore(banner, document.body.firstChild);
+}
+
 // --- Tab switching ---
 
 // URL nav-name <-> data-tab id mapping (the hash uses friendly names).
@@ -115,10 +149,11 @@ function initTabs() {
 
     // When connected, clicking opens a small menu with Copy address / Disconnect; otherwise it connects.
     var walletMenu = null;
+    var viewAsLink = null; // header "View as" entry point — usable connected or not
     function closeWalletMenu() { if (walletMenu) { walletMenu.remove(); walletMenu = null; document.removeEventListener('click', onDocClick, true); } }
-    function onDocClick(e) { if (walletMenu && e.target !== connectBtn && !walletMenu.contains(e.target)) closeWalletMenu(); }
-    function positionWalletMenu() {
-      var r = connectBtn.getBoundingClientRect();
+    function onDocClick(e) { if (walletMenu && e.target !== connectBtn && e.target !== viewAsLink && !walletMenu.contains(e.target)) closeWalletMenu(); }
+    function positionWalletMenu(anchor) {
+      var r = (anchor || connectBtn).getBoundingClientRect();
       walletMenu.style.top = (r.bottom + 6) + 'px';
       walletMenu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
     }
@@ -176,6 +211,58 @@ function initTabs() {
         updateConnect();
       });
     }
+    // Inline "View as" prompt (address or ENS) appended inside a wallet-menu dropdown.
+    function appendViewAsPrompt(menu) {
+      var wrap = document.createElement('div');
+      wrap.className = 'viewas-prompt';
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'viewas-input';
+      input.placeholder = '0x address or ENS name';
+      var go = document.createElement('button'); go.type = 'button'; go.className = 'viewas-go'; go.textContent = 'View';
+      var err = document.createElement('div'); err.className = 'viewas-err';
+      function submit() {
+        var q = classifyAccountQuery(input.value);
+        if (q.kind === 'address') { setViewAs(q.address); closeWalletMenu(); return; }
+        if (q.kind === 'ens') {
+          go.disabled = true;
+          err.textContent = 'Resolving ' + q.name + '…';
+          ensAddressOf(q.name).then(function (resolved) {
+            go.disabled = false;
+            if (!resolved) { err.textContent = 'Could not resolve ' + q.name + '.'; return; }
+            setViewAs(resolved);
+            closeWalletMenu();
+          });
+          return;
+        }
+        err.textContent = 'Enter a 0x address or an ENS name.';
+      }
+      go.addEventListener('click', submit);
+      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
+      wrap.appendChild(input); wrap.appendChild(go); wrap.appendChild(err);
+      menu.appendChild(wrap);
+      return input;
+    }
+    // "View as…" menu item that expands the inline prompt in place (one per menu).
+    function appendViewAsItem(menu) {
+      var item = document.createElement('button');
+      item.className = 'wallet-menu-item';
+      item.textContent = 'View as…';
+      item.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (menu.querySelector('.viewas-prompt')) return;
+        var input = appendViewAsPrompt(menu);
+        input.focus();
+      });
+      menu.appendChild(item);
+      if (getViewAs()) {
+        var exit = document.createElement('button');
+        exit.className = 'wallet-menu-item wallet-menu-danger';
+        exit.textContent = 'Exit View as';
+        exit.addEventListener('click', function () { closeWalletMenu(); clearViewAs(); });
+        menu.appendChild(exit);
+      }
+    }
     function openWalletMenu() {
       closeWalletMenu();
       var acc = getAccount();
@@ -183,13 +270,35 @@ function initTabs() {
       walletMenu.className = 'wallet-menu';
       positionWalletMenu();
       var acctItem = document.createElement('button'); acctItem.className = 'wallet-menu-item'; acctItem.textContent = 'Account';
-      acctItem.addEventListener('click', function () { closeWalletMenu(); location.hash = '#account/' + acc; });
+      // While "View as" is active the Account item targets the impersonated address.
+      acctItem.addEventListener('click', function () { closeWalletMenu(); location.hash = '#account/' + (getViewAs() || acc); });
       var copy = document.createElement('button'); copy.className = 'wallet-menu-item'; copy.textContent = 'Copy address';
       copy.addEventListener('click', function () { try { navigator.clipboard.writeText(acc); } catch (_) {} closeWalletMenu(); });
       var disc = document.createElement('button'); disc.className = 'wallet-menu-item wallet-menu-danger'; disc.textContent = 'Disconnect';
       disc.addEventListener('click', function () { closeWalletMenu(); disconnect().catch(function () {}); });
-      walletMenu.appendChild(acctItem); walletMenu.appendChild(copy); walletMenu.appendChild(disc);
+      walletMenu.appendChild(acctItem); walletMenu.appendChild(copy);
+      appendViewAsItem(walletMenu);
+      walletMenu.appendChild(disc);
       document.body.appendChild(walletMenu);
+      setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
+    }
+    // Standalone "View as" dropdown for the header link — available connected or not.
+    function openViewAsMenu() {
+      closeWalletMenu();
+      walletMenu = document.createElement('div');
+      walletMenu.className = 'wallet-menu';
+      walletMenu._viewas = true; // so the link toggles ITS menu but replaces any other open menu
+      positionWalletMenu(viewAsLink);
+      var input = appendViewAsPrompt(walletMenu);
+      if (getViewAs()) {
+        var exit = document.createElement('button');
+        exit.className = 'wallet-menu-item wallet-menu-danger';
+        exit.textContent = 'Exit View as';
+        exit.addEventListener('click', function () { closeWalletMenu(); clearViewAs(); });
+        walletMenu.appendChild(exit);
+      }
+      document.body.appendChild(walletMenu);
+      input.focus();
       setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
     }
     // When not connected, show a list of detected wallets (EIP-6963). One wallet → connect directly.
@@ -228,6 +337,17 @@ function initTabs() {
       if (!getAccount()) { if (walletMenu) closeWalletMenu(); else openWalletPicker(); return; }
       if (walletMenu) closeWalletMenu(); else openWalletMenu();
     });
+    // Small header entry under the connect button so "View as" works while disconnected too
+    // (the connect button's disconnected click goes straight to the wallet picker/connect).
+    viewAsLink = document.createElement('button');
+    viewAsLink.id = 'viewas-link';
+    viewAsLink.type = 'button';
+    viewAsLink.textContent = 'View as';
+    viewAsLink.title = 'Browse the site as any address or ENS name';
+    viewAsLink.addEventListener('click', function () {
+      if (walletMenu && walletMenu._viewas) closeWalletMenu(); else openViewAsMenu();
+    });
+    connectBtn.parentNode.insertBefore(viewAsLink, connectBtn.nextSibling);
   }
   // If the site is opened as a Safe App (inside Safe{Wallet}), auto-connect the Safe; otherwise restore a
   // prior wallet connection silently so a refresh keeps the user connected.
@@ -1055,6 +1175,11 @@ function init() {
   renderBuildTab();
   renderAdminTab();
   renderWhyTab();
+  renderViewAsBanner(); // restore a persisted "View as" session
+  onViewAsChange(function () {
+    renderViewAsBanner();
+    applyHash(); // re-render the active route so every "your …" read reflects the new effective account
+  });
   window.addEventListener('hashchange', onHashChange);
   applyHash(); // restore the nav tab / deep-linked project from the URL on load
 }
