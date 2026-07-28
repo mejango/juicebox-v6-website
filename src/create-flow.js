@@ -140,7 +140,7 @@ var METADATA_FULL = [
   { name: 'allowSetTerminals', type: 'bool' }, { name: 'allowSetController', type: 'bool' },
   { name: 'allowAddAccountingContext', type: 'bool' }, { name: 'allowAddPriceFeed', type: 'bool' },
   { name: 'ownerMustSendPayouts', type: 'bool' }, { name: 'holdFees', type: 'bool' },
-  { name: 'useTotalSurplusForCashOuts', type: 'bool' }, { name: 'useDataHookForPay', type: 'bool' },
+  { name: 'scopeCashOutsToLocalBalances', type: 'bool' }, { name: 'useDataHookForPay', type: 'bool' },
   { name: 'useDataHookForCashOut', type: 'bool' }, { name: 'dataHook', type: 'address' },
   { name: 'metadata', type: 'uint16' },
 ];
@@ -505,12 +505,23 @@ function mergeKnownDraftFields(defaults, input) {
   return out;
 }
 
-function normalizeImportedStage(value) {
+function normalizeImportedStage(value, chainIds) {
   var stage = mergeKnownDraftFields(createStage(), value);
   ['reservedRecipients', 'autoIssuances', 'payoutRecipients'].forEach(function (key) {
     if (!Array.isArray(stage[key])) stage[key] = [];
     else stage[key] = stage[key].slice(0, 100);
   });
+  // An auto-issuance row's mint chain only survives import while it's still a selected chain (canonical
+  // match, mirroring the per-chain override store); anything else becomes null, which encodes as the
+  // first selected chain (aiMintChain).
+  var canonSelected = (chainIds || []).map(canonChainId);
+  stage.autoIssuances = stage.autoIssuances
+    .filter(function (ai) { return ai && typeof ai === 'object' && !Array.isArray(ai); })
+    .map(function (ai) {
+      var cid = Number(ai.chainId);
+      ai.chainId = canonSelected.indexOf(canonChainId(cid)) !== -1 ? cid : null;
+      return ai;
+    });
   if (!stage.payoutByKind || typeof stage.payoutByKind !== 'object' || Array.isArray(stage.payoutByKind)) stage.payoutByKind = {};
   else Object.keys(stage.payoutByKind).forEach(function (key) {
     var pk = stage.payoutByKind[key];
@@ -542,11 +553,6 @@ function mergeDraft(obj) {
   s.collection = mergeKnownDraftFields(defaults.collection, obj.collection);
   s.customToken = mergeKnownDraftFields(defaults.customToken, obj.customToken);
   if (s.customToken.status === 'loading') s.customToken.status = 'idle'; // never import a stuck in-flight lookup (re-verified on import)
-  s.stages = (Array.isArray(obj.stages) && obj.stages.length ? obj.stages : defaults.stages).slice(0, 20).map(normalizeImportedStage);
-  s.nfts = (Array.isArray(obj.nfts) ? obj.nfts : []).slice(0, 100).map(normalizeImportedItem);
-  s.storeCategories = (Array.isArray(obj.storeCategories) ? obj.storeCategories : []).slice(0, 255).map(function (entry) {
-    return { id: Number(entry && entry.id), name: String(entry && entry.name || '').trim() };
-  }).filter(function (entry) { return Number.isSafeInteger(entry.id) && entry.id > 0 && entry.name; });
   var allowedChains = CHAIN_PAIRS.map(function (pair) { return s.network === 'testnet' ? pair.testnet : pair.canon; });
   var seenChains = {};
   s.chainIds = (Array.isArray(obj.chainIds) ? obj.chainIds : []).map(Number).filter(function (chainId) {
@@ -554,6 +560,12 @@ function mergeDraft(obj) {
     seenChains[chainId] = true; return true;
   });
   if (!s.chainIds.length) s.chainIds = allowedChains;
+  s.stages = (Array.isArray(obj.stages) && obj.stages.length ? obj.stages : defaults.stages).slice(0, 20)
+    .map(function (st) { return normalizeImportedStage(st, s.chainIds); });
+  s.nfts = (Array.isArray(obj.nfts) ? obj.nfts : []).slice(0, 100).map(normalizeImportedItem);
+  s.storeCategories = (Array.isArray(obj.storeCategories) ? obj.storeCategories : []).slice(0, 255).map(function (entry) {
+    return { id: Number(entry && entry.id), name: String(entry && entry.name || '').trim() };
+  }).filter(function (entry) { return Number.isSafeInteger(entry.id) && entry.id > 0 && entry.name; });
   var seenAccepts = {};
   s.accepts = (Array.isArray(obj.accepts) ? obj.accepts : defaults.accepts).filter(function (token) {
     if (['eth', 'usdc', 'custom'].indexOf(token) === -1 || seenAccepts[token]) return false;
@@ -1347,7 +1359,7 @@ export function createStage() {
     tokenMode: 'custom', weight: '10000', reservedPercent: 0, weightCutPercent: 0, issuanceCutOn: false,
     cashOutEnabled: false, cashOutTaxRate: 0, allowOwnerMinting: false, pauseTransfers: false,
     // Queue-prefill-only fields which have no concise control but must survive an edit unchanged.
-    useTotalSurplusForCashOuts: false, ownerMustSendPayouts: false, metadataExtra: 0,
+    useTotalSurplusForCashOuts: true, ownerMustSendPayouts: false, metadataExtra: 0,
     reservedRecipients: [], tokenAdvancedOpen: false,
     // revnet-only stage fields (ignored by the custom flow)
     cutFreqDays: '30', autoIssuances: [], startDaysAfter: '30',
@@ -1622,10 +1634,25 @@ function revStageEditor(stage, idx, state, render) {
   var aiHint = el('div', 'create-hint'); aiHint.textContent = 'Optionally, auto-issue $' + tk + ' when the stage starts.'; aiHint.style.marginTop = '22px'; s1.appendChild(aiHint);
   (stage.autoIssuances || []).forEach(function (ai, i) { s1.appendChild(autoIssuanceRow(stage, ai, i, tk, render, state, idx)); });
   var addAi = el('button', 'create-add-btn'); addAi.textContent = '+ Add auto issuance';
-  addAi.addEventListener('click', function (e) { e.preventDefault(); stage.autoIssuances.push({ count: '', address: '' }); render(); });
+  addAi.addEventListener('click', function (e) { e.preventDefault(); stage.autoIssuances.push({ count: '', address: '', chainId: null }); render(); });
   s1.appendChild(addAi);
   var aiTotal = (stage.autoIssuances || []).reduce(function (s, a) { return s + (Number(a.count) || 0); }, 0);
-  if (aiTotal > 0) { var aiSum = el('div', 'create-hint'); aiSum.textContent = 'Total auto issuance of ' + round2(aiTotal) + ' $' + tk + '.'; s1.appendChild(aiSum); }
+  if (aiTotal > 0) {
+    var aiSum = el('div', 'create-hint');
+    var aiText = 'Total auto issuance of ' + round2(aiTotal) + ' $' + tk;
+    if ((state.chainIds || []).length > 1) {
+      // Break the total down by mint chain — each row only mints on its chosen chain.
+      var byChain = {};
+      (stage.autoIssuances || []).forEach(function (a) {
+        var n = Number(a.count) || 0;
+        if (n > 0) { var c = aiMintChain(state, a); byChain[c] = (byChain[c] || 0) + n; }
+      });
+      aiText += ' — ' + state.chainIds.filter(function (cid) { return byChain[cid]; })
+        .map(function (cid) { return round2(byChain[cid]) + ' on ' + chainName(cid); }).join(', ');
+    }
+    aiSum.textContent = aiText + '.';
+    s1.appendChild(aiSum);
+  }
   w.appendChild(s1);
 
   // 2. Cash outs (always on for a revnet — the only exit besides loans)
@@ -1721,6 +1748,19 @@ function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
     toField.appendChild(recipBoxWith(recip, ensHint));
   }
   row.appendChild(toField);
+  // Multichain: each row picks the ONE chain it mints on (every chain's config carries the full row
+  // list; REVDeployer only mints rows matching the local chain). Single chain needs no choice.
+  if (state && (state.chainIds || []).length > 1) {
+    var on = el('span', 'create-split-to'); on.textContent = 'on'; row.appendChild(on);
+    var chSel = el('select', 'field create-input create-split-subsel create-ai-chain');
+    chSel.title = 'The chain this issuance mints on';
+    state.chainIds.forEach(function (cid) {
+      var op = el('option', ''); op.value = String(cid); op.textContent = chainName(cid); chSel.appendChild(op);
+    });
+    chSel.value = String(aiMintChain(state, ai));
+    chSel.addEventListener('change', function () { ai.chainId = Number(chSel.value); render(); });
+    row.appendChild(chSel);
+  }
   var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = stage.autoIssuances.indexOf(ai); if (i >= 0) stage.autoIssuances.splice(i, 1); render(); });
   row.appendChild(rm);
@@ -3184,6 +3224,16 @@ function pcAddrGet(state, chainId, key, def) {
 function pcAddrSet(state, chainId, key, val) { var pc = perChainOf(state, chainId); pc.addr[key] = val; }
 // The resolved 0x address for a field on a chain (per-chain override → default), ENS-resolved.
 function chainAddr(state, chainId, key, defStr) { return resolvedStr(pcAddrGet(state, chainId, key, defStr)); }
+// The ONE chain an auto-issuance row mints on: the row's stored choice while it's still a selected chain
+// (canonical match, so a mainnet↔testnet switch keeps the pick, like the per-chain override store), else
+// the first selected chain. Must be config-chain independent — every chain encodes the SAME row list and
+// REVDeployer mints only rows whose chainId matches the local chain.
+function aiMintChain(state, ai) {
+  var ids = (state && state.chainIds) || [];
+  var want = canonChainId(Number(ai && ai.chainId));
+  for (var i = 0; i < ids.length; i++) if (canonChainId(ids[i]) === want) return ids[i];
+  return ids[0];
+}
 // Per-chain payout amount for one stage recipient (override → default). Stored in the shared per-chain
 // override store under 'pamt:<stage>:<recip>' so the "Set per chain" control machinery applies untouched.
 function chainPayoutAmount(state, chainId, stageIdx, recipIdx) {
@@ -4033,18 +4083,28 @@ function buildRevStage(state, stage, idx, chainId, start) {
       return splitState(e.x, shares[k], benef, chainId, pid, false);
     });
   }
-  // initialIssuance: tokens per base unit × 1e18 (18-dec fixed point). 0 on later stages = inherit (with cut).
+  // initialIssuance: tokens per base unit × 1e18 (18-dec fixed point). Blank on a later stage = keep the
+  // previous stage's (cut) issuance, which JBRulesets encodes as the RAW sentinel weight 1 — a weight of
+  // 0 would turn issuance off permanently. Blank on stage 1 stays an explicit 0 (there is no previous
+  // stage to inherit; the stage summary displays "0" for it).
   // parseEther (not Number×1e18) keeps precision on large/decimal weights and never throws on Infinity.
-  var issuance = (idx === 0 || stage.weight) ? tokenAmount18(stage.weight, UINT112_MAX) : 0n;
+  var issuance = (idx === 0 || stage.weight) ? tokenAmount18(stage.weight, UINT112_MAX) : 1n;
   var cutFreq = stage.issuanceCutOn ? Math.max(0, Math.round((Number(stage.cutFreqDays) || 0) * 86400)) : 0;
   var cutPercent = stage.issuanceCutOn
     ? Math.round(Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) / 100 * JBCONSTANTS.MAX_WEIGHT_CUT_PERCENT)
     : 0;
   var taxRate = Math.round(Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) * 100); // percent → out of 10000
+  // Every chain's config carries the SAME full auto-issuance row list — REVDeployer folds all rows into
+  // encodedConfiguration (which must be byte-identical across chains) and mints only rows whose chainId
+  // matches the local chain. Each row's beneficiary resolves against the ROW's mint chain (where the
+  // tokens land), keeping the encoding independent of the config chain.
   var autos = (stage.autoIssuances || [])
-    .map(function (a, aiIdx) { return { count: tokenAmount18(a.count, UINT104_MAX), addr: chainAddr(state, chainId, 'ai:' + idx + ':' + aiIdx, pickResolved(a.address, a)) }; })
+    .map(function (a, aiIdx) {
+      var mintChain = aiMintChain(state, a) || chainId;
+      return { chainId: mintChain, count: tokenAmount18(a.count, UINT104_MAX), addr: chainAddr(state, mintChain, 'ai:' + idx + ':' + aiIdx, pickResolved(a.address, a)) };
+    })
     .filter(function (a) { return a.count > 0n && isAddr(a.addr); })
-    .map(function (a) { return { chainId: chainId, count: a.count, beneficiary: a.addr }; });
+    .map(function (a) { return { chainId: a.chainId, count: a.count, beneficiary: a.addr }; });
   return {
     startsAtOrAfter: start,
     autoIssuances: autos,
@@ -4648,5 +4708,7 @@ export const __test = {
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
-  surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft,
+  surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft, renderRevnetStages,
+  // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.
+  revDeployAbi, revDeploy721Abi, deployer721Abi, omnichainAbi, omnichain721Abi,
 };

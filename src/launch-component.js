@@ -49,7 +49,7 @@ export var launchProjectAbi = [{
         { name: 'allowAddPriceFeed', type: 'bool' },
         { name: 'ownerMustSendPayouts', type: 'bool' },
         { name: 'holdFees', type: 'bool' },
-        { name: 'useTotalSurplusForCashOuts', type: 'bool' },
+        { name: 'scopeCashOutsToLocalBalances', type: 'bool' },
         { name: 'useDataHookForPay', type: 'bool' },
         { name: 'useDataHookForCashOut', type: 'bool' },
         { name: 'dataHook', type: 'address' },

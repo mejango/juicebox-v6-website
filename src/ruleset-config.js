@@ -16,10 +16,15 @@ export var DURATION_PRESETS = [
   { label: 'Custom', seconds: -1 },
 ];
 
+// Blank = inherit the previous ruleset's (cut) weight, which JBRulesets encodes as the RAW sentinel
+// weight 1 (for a project's first ruleset there is nothing to inherit, so the sentinel resolves to 0
+// on-chain). Any typed number is 18-dec fixed-point tokens per base unit — "1" means 1e18, "0" means
+// no issuance. Garbage/negative input degrades to 0n (never throws).
 export function parseRulesetWeight(value) {
+  if (value == null || String(value).trim() === '') return 1n;
   var weight;
   try {
-    weight = (value == null || String(value).trim() === '') ? 0n : parseEther(String(value).trim());
+    weight = parseEther(String(value).trim());
   } catch (_) {
     return 0n;
   }
@@ -69,7 +74,9 @@ export function createDefaultRuleset(opts) {
     allowAddPriceFeed: false,
     ownerMustSendPayouts: false,
     holdFees: false,
-    useTotalSurplusForCashOuts: false,
+    // UI-space flag: checked = cash outs draw on the omnichain (total) surplus. Inverted into the
+    // on-chain `scopeCashOutsToLocalBalances` bit at the encode boundary in buildRulesetConfigs.
+    useTotalSurplusForCashOuts: true,
     useDataHookForPay: false,
     useDataHookForCashOut: false,
     approvalHook: '',
@@ -111,12 +118,14 @@ export function buildRulesetConfigs(rulesets, opts) {
       ownerMustSendPayouts: rs.ownerMustSendPayouts,
       holdFees: rs.holdFees,
     };
+    // "Use total surplus for cash outs" (UI) is the INVERSE of the on-chain bit: JBRulesetMetadata's
+    // `scopeCashOutsToLocalBalances` = true restricts cash outs to THIS chain's balances.
     if (payDataHook) {
-      meta.scopeCashOutsToLocalBalances = !!rs.useTotalSurplusForCashOuts;
+      meta.scopeCashOutsToLocalBalances = !rs.useTotalSurplusForCashOuts;
       meta.useDataHookForCashOut = !!rs.useDataHookForCashOut;
       meta.metadata = Number(rs.metadataExtra) || 0;
     } else {
-      meta.useTotalSurplusForCashOuts = !!rs.useTotalSurplusForCashOuts;
+      meta.scopeCashOutsToLocalBalances = !rs.useTotalSurplusForCashOuts;
       meta.useDataHookForPay = !!rs.useDataHookForPay;
       meta.useDataHookForCashOut = !!rs.useDataHookForCashOut;
       meta.dataHook = addrOrZero(rs.dataHook);

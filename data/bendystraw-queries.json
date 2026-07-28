@@ -1019,7 +1019,7 @@
         {
           "id": "wallet-portfolio",
           "title": "Wallet portfolio",
-          "hint": "Cross-project aggregate stats for a wallet.",
+          "hint": "Cross-project aggregate stats for a wallet. The wallet entity has no version field, so these lifetime totals span ALL Juicebox versions — not just V6.",
           "kind": "single",
           "path": "wallet",
           "query": "query($address: String!) { wallet(address: $address) { address volume volumeUsd lastPaidTimestamp } }",
@@ -1037,17 +1037,17 @@
             },
             {
               "key": "volume",
-              "label": "Total volume",
+              "label": "Total volume (all versions)",
               "format": "amount"
             },
             {
               "key": "volumeUsd",
-              "label": "USD",
+              "label": "USD (all versions)",
               "format": "volumeUsd"
             },
             {
               "key": "lastPaidTimestamp",
-              "label": "Last paid",
+              "label": "Last paid (any version)",
               "format": "timestamp"
             }
           ]

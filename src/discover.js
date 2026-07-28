@@ -208,6 +208,15 @@ export function cashOutProtocolFee(reclaim, taxRate, feeless, feeFreeSurplus) {
   return feeable / 40n;
 }
 
+// Ambient cash-out figures (You-card cash out column, Composition unit value) show what a cash out would
+// actually pay: the raw reclaim net of the 2.5% protocol fee, matching the cash-out modal's quote. Ambient
+// surfaces assume a non-feeless casher (feeless status is a per-wallet nicety the modal checks exactly).
+export function ambientNetCashOut(gross, taxRate, feeFreeSurplus) {
+  if (gross == null) return gross;
+  var value = toBigInt(gross);
+  return value - cashOutProtocolFee(value, taxRate, false, feeFreeSurplus);
+}
+
 // Pick the pay token after the onchain accounting-context refine resolves the real token list. Preserve the
 // user's pick ONLY when they explicitly chose one (tokenTouched); otherwise default to the project's first
 // accounting token (list[0]). This is the fix for the fund-loss desync where a USDC-accounting project stayed
@@ -1607,8 +1616,12 @@ function renderRecentPurchases(project, mediaP) {
 // sucker group. Lets a tier split route to the SAME project on every chain it's offered on, and lets us
 // confirm the project by name. Cached. Returns { name, byChain: { chainId: projectId } } or null.
 var _splitProjCache = {};
+// A sucker group can hold rows from multiple protocol versions; this explorer is V6-only, so the nested
+// selection filters server-side AND selects `version` so the parser can re-filter defensively. The limit is
+// the schema maximum; a limit-sized page may be truncated, which the parser treats as unreliable.
+var SUCKER_GROUP_PROJECTS_LIMIT = 1000;
 export var BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY =
-  'query($id: String!) { suckerGroup(id: $id) { projects(limit: 100) { items { chainId projectId } } } }';
+  'query($id: String!) { suckerGroup(id: $id) { projects(where: { version: ' + BENDYSTRAW_VERSION + ' }, limit: ' + SUCKER_GROUP_PROJECTS_LIMIT + ') { items { chainId projectId version } } } }';
 
 export function projectIdsByChainFromSuckerGroup(data, chainId, projectId) {
   var byChain = {};
@@ -1618,6 +1631,13 @@ export function projectIdsByChainFromSuckerGroup(data, chainId, projectId) {
   var conflicted = {};
   var items = data && data.suckerGroup && data.suckerGroup.projects && data.suckerGroup.projects.items;
   if (Array.isArray(items)) {
+    // Rows from another protocol version can never authorize a mapping for this V6 project (the server
+    // already filters; this guards older cached shapes). A limit-sized page may be truncated, so it can't
+    // prove the group's full membership — fail closed to the exact route deployment.
+    items = items.filter(function (project) {
+      return project && (project.version == null || Number(project.version) === BENDYSTRAW_VERSION);
+    });
+    if (items.length >= SUCKER_GROUP_PROJECTS_LIMIT) return byChain;
     // If the purported group itself identifies a different deployment on the route's chain, it cannot
     // authorize any remote mapping for this project. Preserve only the exact route deployment.
     if (items.some(function (project) {
@@ -3960,16 +3980,16 @@ var RULESET_OUTPUTS = [
     { name: 'allowSetTerminals', type: 'bool' }, { name: 'allowSetController', type: 'bool' },
     { name: 'allowAddAccountingContext', type: 'bool' }, { name: 'allowAddPriceFeed', type: 'bool' },
     { name: 'ownerMustSendPayouts', type: 'bool' }, { name: 'holdFees', type: 'bool' },
-    { name: 'useTotalSurplusForCashOuts', type: 'bool' }, { name: 'useDataHookForPay', type: 'bool' },
+    { name: 'scopeCashOutsToLocalBalances', type: 'bool' }, { name: 'useDataHookForPay', type: 'bool' },
     { name: 'useDataHookForCashOut', type: 'bool' }, { name: 'dataHook', type: 'address' },
     { name: 'metadata', type: 'uint256' },
   ]},
 ];
-var upcomingRulesetAbi = [{
+export var upcomingRulesetAbi = [{
   type: 'function', name: 'upcomingRulesetOf', stateMutability: 'view',
   inputs: [{ name: 'projectId', type: 'uint256' }], outputs: RULESET_OUTPUTS,
 }];
-var allRulesetsWithMetadataAbi = [{
+export var allRulesetsWithMetadataAbi = [{
   type: 'function', name: 'allRulesetsOf', stateMutability: 'view',
   inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'startingId', type: 'uint256' }, { name: 'size', type: 'uint256' }],
   outputs: [{ name: 'rulesets', type: 'tuple[]', components: [
@@ -4086,7 +4106,7 @@ var useAllowanceAbi = [{
   ],
   outputs: [{ name: 'amountPaidOut', type: 'uint256' }],
 }];
-var currentRulesetAbi = [{
+export var currentRulesetAbi = [{
   type: 'function', name: 'currentRulesetOf', stateMutability: 'view',
   inputs: [{ name: 'projectId', type: 'uint256' }],
   outputs: [
@@ -4116,7 +4136,7 @@ var currentRulesetAbi = [{
       { name: 'allowAddPriceFeed', type: 'bool' },
       { name: 'ownerMustSendPayouts', type: 'bool' },
       { name: 'holdFees', type: 'bool' },
-      { name: 'useTotalSurplusForCashOuts', type: 'bool' },
+      { name: 'scopeCashOutsToLocalBalances', type: 'bool' },
       { name: 'useDataHookForPay', type: 'bool' },
       { name: 'useDataHookForCashOut', type: 'bool' },
       { name: 'dataHook', type: 'address' },
@@ -6111,12 +6131,12 @@ function renderProjectCard(project) {
   if (project.indexedStats) {
     stats.appendChild(statItem('Volume', formatUsd(usdFromScaled(project.indexedStats.volumeUsd))));
     stats.appendChild(statItem('Payments', String(project.indexedStats.paymentsCount)));
-    // Token-holder count — revnets call them "Owners", custom projects "Token holders".
+    // Token-owner count — the same "Owners" label on every project kind (project-page convention).
     // contributorsCount only counts addresses that paid; holders who received tokens via
     // auto-issuance / reserved mint (ART has one) are missed. Seed with it, then correct to
     // the real current-holder count (same aggregation the detail header uses).
     var ownersVal = el('span', ''); ownersVal.textContent = String(project.indexedStats.contributorsCount);
-    stats.appendChild(statItem(project.isRevnet ? 'Owners' : 'Token holders', ownersVal));
+    stats.appendChild(statItem(OWNERS_STAT_LABEL, ownersVal));
     fetchOwnersCount(project).then(function (n) {
       if (n != null && ownersVal.isConnected) ownersVal.textContent = String(n);
     }).catch(function () {});
@@ -6294,7 +6314,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     builders.Funds = function () { return renderFundsSection(project); };
     builders.Tokens = function () {
       return renderOwnersSection(project, {
-        subtabs: ['Accounts', 'Market', 'Settlement', 'Reserved'],
+        subtabs: OWNERS_SUBTABS_CUSTOM,
         noLoans: true,
         tabName: 'Tokens',
         initialSubTab: initialSubTab,
@@ -10000,7 +10020,7 @@ export function activityRowFromEvent(event, project) {
 var WEIGHT_CUT_DEN = 1000000000; // 1e9
 
 // Full decoded ruleset rows grouped by section. r = ruleset tuple, m = decoded metadata tuple.
-function rulesetRows(r, m, project) {
+export function rulesetRows(r, m, project) {
   var baseUnit = currencyUnitLabel(m.baseCurrency, project);
   return [
     ['CYCLE', 'Duration', Number(r.duration) ? formatDuration(r.duration) : 'Not set'],
@@ -10010,7 +10030,8 @@ function rulesetRows(r, m, project) {
     ['TOKEN', 'Reserved rate', percentFromRuleset(m.reservedPercent)],
     ['TOKEN', 'Issuance cut percent', formatCutPercent(r.weightCutPercent)],
     ['TOKEN', 'Cash out tax rate', percentFromRuleset(m.cashOutTaxRate)],
-    ['TOKEN', 'Cash outs use total surplus', m.useTotalSurplusForCashOuts ? 'Enabled' : 'Disabled'],
+    // On-chain bit is scopeCashOutsToLocalBalances: true = local-only, so total surplus is DISABLED.
+    ['TOKEN', 'Cash outs use total surplus', m.scopeCashOutsToLocalBalances ? 'Disabled' : 'Enabled'],
     ['TOKEN', 'Base currency', baseUnit],
     ['TOKEN', 'Project owner token minting', m.allowOwnerMinting ? 'Enabled' : 'Disabled'],
     ['TOKEN', 'Token transfers', m.pauseCreditTransfers ? 'Disabled' : 'Enabled'],
@@ -10761,7 +10782,7 @@ function draftRulesetFingerprint(source) {
       allowSetTerminals: m.allowSetTerminals, allowSetController: m.allowSetController,
       allowAddAccountingContext: m.allowAddAccountingContext, allowAddPriceFeed: m.allowAddPriceFeed,
       ownerMustSendPayouts: m.ownerMustSendPayouts, holdFees: m.holdFees,
-      scopeCashOutsToLocalBalances: m.useTotalSurplusForCashOuts, metadata: m.metadata,
+      scopeCashOutsToLocalBalances: m.scopeCashOutsToLocalBalances, metadata: m.metadata,
       useDataHookForPay: m.useDataHookForPay, useDataHookForCashOut: m.useDataHookForCashOut, hookRole: hookRole,
     },
     contexts: source.contexts.map(function (ctx) { var kind = draftContextKind(ctx, source.chainId); return [kind, kind === 'custom' ? String(ctx.address).toLowerCase() : '', ctx.decimals]; })
@@ -11310,7 +11331,7 @@ export async function buildProjectCreateDraft(project) {
   }
   applyDraftOwnerRemainders(state, sources, project);
   if (sources[0].metadata.ownerMustSendPayouts) throw new Error('The live ruleset requires owner-sent payouts, a flag the .jb editor cannot reproduce.');
-  if (sources[0].metadata.useTotalSurplusForCashOuts) throw new Error('The live ruleset scopes cash outs differently than the .jb editor supports.');
+  if (sources[0].metadata.scopeCashOutsToLocalBalances) throw new Error('The live ruleset scopes cash outs to local balances, which the .jb editor cannot reproduce.');
   if (Number(sources[0].metadata.metadata || 0) !== 0) warnings.push('The live ruleset contains custom metadata bits which are not editable in the create wizard.');
   await applyDraftShop(state, project, sources, warnings);
   if (state.shopEnabled && state.collection.useForRedemptions) state.stages.forEach(function (stage) { stage.cashOutEnabled = false; });
@@ -14556,6 +14577,12 @@ export function formatPrice(n) {
   return n.toPrecision(5);
 }
 
+// The floor chip quotes the contract's raw reclaim: netting the 2.5% protocol fee into a plotted history
+// would need per-point fee-free-surplus state, so the label carries an explicit qualifier instead.
+export function cashOutFloorTip(price, pairSym, sym) {
+  return '~' + formatPrice(price) + ' ' + pairSym + ' / ' + sym + ' (current cash out floor, before the 2.5% cash out fee)';
+}
+
 // Convert Uniswap V4's raw currency1/currency0 sqrt price into terminal-token
 // units per project token. V6 project tokens use 18 decimals.
 export function ammPriceFromSqrtPriceX96(sqrtPriceX96, projectTokenIsCurrency0, terminalDecimals) {
@@ -14693,12 +14720,12 @@ function renderPriceChart(project, stages) {
       var last = history[history.length - 1];
       cashout = last && last.value > 0 ? last.value : f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
-      cashChip.setAttribute('data-tip', 'Historical cash out floor from Bendystraw');
+      cashChip.setAttribute('data-tip', 'Historical cash out floor from Bendystraw (before fees)');
     }
     if (f && f > 0) {
       cashout = cashout || f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
-      if (!history.length) cashChip.setAttribute('data-tip', '~' + formatPrice(f) + ' ' + pairSym + ' / ' + sym + ' (current cash out floor)');
+      if (!history.length) cashChip.setAttribute('data-tip', cashOutFloorTip(f, pairSym, sym));
     } else if (!history.length) {
       cashChip.setAttribute('data-tip', 'No cash out floor indexed yet');
     }
@@ -14711,7 +14738,7 @@ function renderPriceChart(project, stages) {
       : '';
     if (amm) setChipVal(ammChip, formatPrice(amm), liq ? 'on ' + liq + ' liq' : '');
     else ammChip._val.textContent = swaps.count ? '—' : 'No liquidity yet';
-    if (cashout) setChipVal(cashChip, formatPrice(cashout)); else cashChip._val.textContent = '—';
+    if (cashout) setChipVal(cashChip, formatPrice(cashout), 'before fees'); else cashChip._val.textContent = '—';
     // The floor's asymptote lives in the hover tip and the dashed chart line — not as a legend row.
     var currentTax = seriesTaxAt(history, now);
     var lastMin = issPrice && currentTax != null
@@ -14719,7 +14746,7 @@ function renderPriceChart(project, stages) {
       : 0;
     if (cashout) {
       var showsMinimum = shouldShowCashOutAsymptote(cashout, lastMin);
-      cashChip.setAttribute('data-tip', 'Live quote for cashing out 1 ' + sym + ': (balance ÷ supply) × ((1 − tax) + tax × your share of supply).'
+      cashChip.setAttribute('data-tip', 'Live quote for cashing out 1 ' + sym + ', before the 2.5% cash out fee: (balance ÷ supply) × ((1 − tax) + tax × your share of supply).'
         + (showsMinimum
           ? ' As paid issuance grows supply, the quote can fall toward the dashed cash-out asymptote — currently ' + formatPrice(lastMin) + ' ' + pairUnit + '.'
           : ' The payment asymptote is hidden unless the current cash-out quote is above it and can fall toward it.'));
@@ -15156,14 +15183,34 @@ export function indexedActivityAmount(scaledUsd) {
   return usd > 0 ? formatUsd(usd) : '';
 }
 
-// The amount that moved, in the flow's OWN currency. When the project has a single accounting token we know
-// the pay/cash-out/payout token exactly (project._flowToken, resolved once in fetchProjectActivity), so label
-// the raw amount with it. Otherwise the event only indexes a USD value — multiple accepted tokens can't be
-// told apart from the raw amount — so fall back to that.
+// The amount that moved, in the flow's OWN currency. When every chain accounts in the same single token we
+// know the pay/cash-out/payout token exactly (project._flowToken, resolved once in fetchProjectActivity), so
+// label the raw amount with it. Otherwise the event only indexes a USD value — multiple accepted tokens
+// can't be told apart from the raw amount — so fall back to that.
 function activityFlowAmount(project, raw, scaledUsd) {
   var ft = project && project._flowToken;
   if (ft && toBigInt(raw) > 0n) return formatActivityAmount(raw, ft.symbol, ft.decimals);
   return indexedActivityAmount(scaledUsd);
+}
+
+// Activity events don't index their token, so a raw amount may only be labeled when EVERY chain's terminal
+// has exactly one accounting context and all of them agree on the same token shape (kind, symbol,
+// decimals) — a project accounting in 6-dec USDC on one chain and an 18-dec token on another would
+// otherwise mislabel remote amounts by 1e12. `contextLists` is one resolved context list per chain; any
+// missing/failed/multi-context chain disqualifies the label (the caller falls back to the indexed USD).
+export function flowTokenFromContexts(contextLists) {
+  if (!contextLists || !contextLists.length) return null;
+  var agreed = null;
+  for (var i = 0; i < contextLists.length; i++) {
+    var contexts = contextLists[i];
+    if (!contexts || contexts.length !== 1) return null;
+    var context = contexts[0];
+    var native = !!(context.address && context.address.toLowerCase() === NATIVE_TOKEN.toLowerCase());
+    var shape = { native: native, symbol: context.symbol, decimals: Number(context.decimals) };
+    if (!agreed) agreed = shape;
+    else if (agreed.native !== shape.native || agreed.symbol !== shape.symbol || agreed.decimals !== shape.decimals) return null;
+  }
+  return agreed ? { symbol: agreed.symbol, decimals: agreed.decimals } : null;
 }
 
 function renderExplorerTxLink(chainId, txHash, label) {
@@ -15350,15 +15397,21 @@ function ownersCard(title, node) {
   return card;
 }
 
+// People who hold a project's tokens are "owners" on every project-page surface (the revnet tab
+// convention) — the wallet/holder subtab, the header stat, and the Learn-tab copy all share the word.
+export var OWNERS_SUBTABS_DEFAULT = ['Owners', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'];
+export var OWNERS_SUBTABS_CUSTOM = ['Owners', 'Market', 'Settlement', 'Reserved'];
+export var OWNERS_STAT_LABEL = 'Owners';
+
 // Owners tab (revnets) — split into lazy SUBTABS so each pane's reads only fire when first opened
-// (the page no longer fetches every holder/settlement/splits/loan source at once on tab open).
+// (the page no longer fetches every owner/settlement/splits/loan source at once on tab open).
 function renderOwnersSection(project, opts) {
   opts = opts || {};
   var section = el('div', 'detail-section owners-section');
   var stages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
 
   var subBuilders = {
-    'Accounts': function () {
+    'Owners': function () {
       var w = el('div', 'owners-subgroup');
       w.appendChild(ownersCard('You', renderYouCard(project, opts)));
       w.appendChild(ownersCard('All', renderOwnersAll(project)));
@@ -15414,7 +15467,7 @@ function renderOwnersSection(project, opts) {
     },
   };
   var tokenCapabilities = tokenUiCapabilities(project);
-  var order = (opts.subtabs || ['Accounts', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'])
+  var order = (opts.subtabs || OWNERS_SUBTABS_DEFAULT)
     .filter(function (name) { return name !== 'Market' || tokenCapabilities.showMarket; });
 
   var subRow = el('div', 'owners-subtabs');
@@ -15449,7 +15502,7 @@ function renderOwnersSection(project, opts) {
   section.addEventListener('jb:goto-subtab', function (e) { if (e.detail) show(e.detail); });
   // Expose subtab switching so a route change (#…/tab/subtab) can drive it; pick the routed subtab if given.
   if (_activeDetail) _activeDetail.showSubTab = show;
-  var initial = 'Accounts';
+  var initial = 'Owners';
   if (opts.initialSubTab) {
     for (var oi = 0; oi < order.length; oi++) if (tabSlug(order[oi]) === tabSlug(opts.initialSubTab)) { initial = order[oi]; break; }
   }
@@ -16248,15 +16301,16 @@ async function fetchProjectActivity(project) {
   var deployments = projectDeployments(project);
   var chainIds = deployments.map(function (deployment) { return deployment.chainId; });
   if (!deployments.length) return [];
-  // Resolve the flow currency ONCE: if the project accounts in a single token, every pay/cash-out/payout
-  // amount is in that token, so we can label it natively (the events don't index their token). Multiple
-  // tokens → leave it unset and fall back to the indexed USD value.
+  // Resolve the flow currency ONCE, from EVERY chain's own accounting contexts: events land on every chain
+  // and don't index their token, so raw amounts are only labeled when all chains agree on a single shared
+  // context shape (flowTokenFromContexts). Any disagreement or failed read → fall back to the indexed USD.
   if (project._flowToken === undefined) {
     project._flowToken = null;
     try {
-      var homePid = pidOn(project, project.chainId);
-      var ctxs = await resolveAcctTokens(project.chainId, homePid);
-      if (ctxs && ctxs.length === 1) project._flowToken = { symbol: ctxs[0].symbol, decimals: ctxs[0].decimals };
+      var contextLists = await Promise.all(deployments.map(function (deployment) {
+        return resolveAcctTokens(deployment.chainId, deployment.projectId);
+      }));
+      project._flowToken = flowTokenFromContexts(contextLists);
     } catch (_) {}
   }
   var groupId = await resolveBendystrawSuckerGroupId(project, chainIds);
@@ -18178,7 +18232,8 @@ function openQueueRulesetModal(project) {
       s.allowSetCustomToken = !!m.allowSetCustomToken;
       s.allowAddAccountingContext = !!m.allowAddAccountingContext;
       s.allowAddPriceFeed = !!m.allowAddPriceFeed;
-      s.useTotalSurplusForCashOuts = !!m.useTotalSurplusForCashOuts;
+      // UI-space flag is the inverse of the on-chain scope bit (checked = total/omnichain surplus).
+      s.useTotalSurplusForCashOuts = !m.scopeCashOutsToLocalBalances;
       s.ownerMustSendPayouts = !!m.ownerMustSendPayouts;
       s.metadataExtra = Number(m.metadata) || 0;
     }
@@ -18921,6 +18976,7 @@ function renderOpsActions(project) {
 // loan (borrowable ETH against that balance via REVLoans). Null fields where unavailable on a chain.
 function fetchYouPosition(project) {
   var acct = getEffectiveAccount();
+  var taxRate = Number(project.metadata && project.metadata.cashOutTaxRate || 0);
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   return Promise.all(chains.map(function (chain) {
     var cid = chain.id;
@@ -18954,8 +19010,15 @@ function fetchYouPosition(project) {
         var loanJob = (hasBal && revLoans && acct)
           ? read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, bal, BigInt(acct.decimals == null ? 18 : acct.decimals), borrowCurrencyForAccountContext(acct)]).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; })
           : Promise.resolve(revLoans ? (hasBal ? null : 0n) : null);
-        return Promise.all([cashJob, loanJob]).then(function (out) {
-          return { id: cid, name: chain.name, balance: bal, credit: credit, cashout: out[0], maxLoan: out[1], acct: acct };
+        // The zero-tax protocol fee applies only up to the fee-free surplus, so that read is needed to net
+        // the cash out value; a non-zero tax fees the full reclaim and needs no extra read.
+        var feeFreeJob = (!taxRate && hasBal && terminal && acct)
+          ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return 0n; })
+          : Promise.resolve(0n);
+        return Promise.all([cashJob, loanJob, feeFreeJob]).then(function (out) {
+          // Show the net cash out value — what the wallet would actually receive after the 2.5% protocol
+          // fee — matching the cash-out modal's quote.
+          return { id: cid, name: chain.name, balance: bal, credit: credit, cashout: ambientNetCashOut(out[0], taxRate, out[2]), maxLoan: out[1], acct: acct };
         });
       });
     });
@@ -23990,6 +24053,7 @@ function readGossipAdjustment(chainId, pid, current) {
 }
 
 function fetchOps(project) {
+  var taxRate = Number(project.metadata && project.metadata.cashOutTaxRate || 0);
   // Home-only fallback (like every other per-chain helper) — never the global chain list, whose foreign chain
   // ids would make the synchronous pidOn below throw fail-closed and break card construction before .then.
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
@@ -24048,11 +24112,18 @@ function fetchOps(project) {
         var base = { id: cid, name: chain.name, supply: supply, balance: balance, tokens: tokens, unitValue: null, acct: acct,
           tokensVerified: !!chainBalances.verified && tokenReadsVerified,
           gossipSupply: gossipSupply, gossipTokens: gossipTokens, gossipVerified: gossipVerified };
-        // Unit value = reclaim for 1 token at current supply + surplus; only meaningful once there's at
-        // least a token of supply. No currency conversion → no price-feed revert.
+        // Unit value = reclaim for 1 token at current supply + surplus, net of the 2.5% protocol fee (so it
+        // matches what a cash out would actually pay); only meaningful once there's at least a token of
+        // supply. No currency conversion → no price-feed revert.
         if (supply && supply >= ONE_TOKEN && balance != null) {
-          return read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, balance])
-            .then(function (uv) { base.unitValue = uv; return base; })
+          // Zero-tax fee applies only up to the fee-free surplus; non-zero tax fees the full reclaim.
+          var feeFreeP = (!taxRate && terminal && acct)
+            ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return 0n; })
+            : Promise.resolve(0n);
+          return Promise.all([
+            read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, balance]),
+            feeFreeP,
+          ]).then(function (uv) { base.unitValue = ambientNetCashOut(uv[0], taxRate, uv[1]); return base; })
             .catch(function () { return base; });
         }
         return base;

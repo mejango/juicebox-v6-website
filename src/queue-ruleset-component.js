@@ -35,7 +35,7 @@ export var queueRulesetsAbi = [{
         { name: 'allowAddPriceFeed', type: 'bool' },
         { name: 'ownerMustSendPayouts', type: 'bool' },
         { name: 'holdFees', type: 'bool' },
-        { name: 'useTotalSurplusForCashOuts', type: 'bool' },
+        { name: 'scopeCashOutsToLocalBalances', type: 'bool' },
         { name: 'useDataHookForPay', type: 'bool' },
         { name: 'useDataHookForCashOut', type: 'bool' },
         { name: 'dataHook', type: 'address' },
@@ -93,7 +93,7 @@ export function renderQueueRulesetComponent() {
     tokens: [],
     selectedToken: null,
     decimals: 18,
-    rulesets: [createDefaultRuleset({ mustStartAtOrAfter: '0', weight: '1' })],
+    rulesets: [createDefaultRuleset({ mustStartAtOrAfter: '0', weight: '' })],
     memo: '',
     error: null,
     txStatus: null,
@@ -127,8 +127,8 @@ export function renderQueueRulesetComponent() {
       var rs = state.rulesets[ri];
       body.appendChild(renderRulesetFieldset(rs, ri, state, updateUI, {
         includeStartAt: true,
-        weightHint: 'tokens per ' + (Number(rs.baseCurrency) === 2 ? 'USD' : 'ETH') + ', 1 = inherit previous, 0 = no issuance',
-        weightPlaceholder: '1',
+        weightHint: 'tokens per ' + (Number(rs.baseCurrency) === 2 ? 'USD' : 'ETH') + ', blank = inherit previous, 0 = no issuance',
+        weightPlaceholder: 'inherit',
       }));
     }
 
@@ -137,7 +137,7 @@ export function renderQueueRulesetComponent() {
     addBtn.type = 'button';
     addBtn.textContent = '+ ruleset';
     addBtn.addEventListener('click', function() {
-      state.rulesets.push(createDefaultRuleset({ mustStartAtOrAfter: '0', weight: '1' }));
+      state.rulesets.push(createDefaultRuleset({ mustStartAtOrAfter: '0', weight: '' }));
       updateUI();
     });
     body.appendChild(addBtn);

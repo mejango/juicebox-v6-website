@@ -31,7 +31,7 @@ const defaultRulesetMetadata = {
   allowAddPriceFeed: false,
   ownerMustSendPayouts: false,
   holdFees: false,
-  useTotalSurplusForCashOuts: false,
+  scopeCashOutsToLocalBalances: false,
   useDataHookForPay: false,
   useDataHookForCashOut: false,
   dataHook: ZERO,
@@ -204,7 +204,7 @@ describe('source-of-truth data guards', () => {
     // A group which claims a different project on the route's own chain is not authoritative for this route.
     expect(projectIdsByChainFromSuckerGroup(data, 10, 99)).toEqual({ 10: 99 });
     expect(projectIdsByChainFromSuckerGroup(null, 10, 99)).toEqual({ 10: 99 });
-    expect(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY).toMatch(/projects\(limit: 100\).*items/s);
+    expect(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY).toMatch(/projects\(where: \{ version: 6 \}, limit: 1000\).*items/s);
   });
 
   it('normalizes any accounting token with its verified USD quote and preserves raw mixed-token fallbacks', () => {
