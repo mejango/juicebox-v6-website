@@ -13,6 +13,7 @@ import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links.js';
 import { reverseEns } from './create-flow.js';
+import { renderAccountView } from './account-view.js';
 
 // Component renderers for pretty mode
 import { renderPayComponent } from './pay-component.js';
@@ -73,7 +74,7 @@ var PRETTY_COMPONENTS = {
 // --- Tab switching ---
 
 // URL nav-name <-> data-tab id mapping (the hash uses friendly names).
-var NAV_TO_TAB = { discover: 'discover', actions: 'common', learn: 'learn', build: 'build', api: 'directory', data: 'data', admin: 'admin', why: 'why' };
+var NAV_TO_TAB = { discover: 'discover', actions: 'common', learn: 'learn', build: 'build', api: 'directory', data: 'data', admin: 'admin', why: 'why', account: 'account' };
 var TAB_TO_NAV = { discover: 'discover', common: 'actions', learn: 'learn', build: 'build', directory: 'api', data: 'data', admin: 'admin', why: 'why' };
 
 function activateNavTab(dataTab) {
@@ -181,11 +182,13 @@ function initTabs() {
       walletMenu = document.createElement('div');
       walletMenu.className = 'wallet-menu';
       positionWalletMenu();
+      var acctItem = document.createElement('button'); acctItem.className = 'wallet-menu-item'; acctItem.textContent = 'Account';
+      acctItem.addEventListener('click', function () { closeWalletMenu(); location.hash = '#account/' + acc; });
       var copy = document.createElement('button'); copy.className = 'wallet-menu-item'; copy.textContent = 'Copy address';
       copy.addEventListener('click', function () { try { navigator.clipboard.writeText(acc); } catch (_) {} closeWalletMenu(); });
       var disc = document.createElement('button'); disc.className = 'wallet-menu-item wallet-menu-danger'; disc.textContent = 'Disconnect';
       disc.addEventListener('click', function () { closeWalletMenu(); disconnect().catch(function () {}); });
-      walletMenu.appendChild(copy); walletMenu.appendChild(disc);
+      walletMenu.appendChild(acctItem); walletMenu.appendChild(copy); walletMenu.appendChild(disc);
       document.body.appendChild(walletMenu);
       setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
     }
@@ -234,13 +237,15 @@ function initTabs() {
 // Parse the hash and apply it: pick the nav tab, and (for discover) open the project route.
 function applyHash() {
   var raw = (location.hash || '').replace(/^#\/?/, '');
-  var nav, projectRoute = null, sectionId = null;
+  var nav, projectRoute = null, sectionId = null, accountRoute = null;
   if (raw === '' || raw === 'discover') { nav = 'discover'; }
   else if (raw.indexOf(':') !== -1) { nav = 'discover'; projectRoute = raw; } // <slug>:<id>[/tab]
+  else if (/^account\//.test(raw)) { nav = 'account'; accountRoute = raw.slice('account/'.length); } // #account/<address-or-ens>
   else if (/^(learn|build|why)-/.test(raw)) { nav = raw.split('-')[0]; sectionId = raw; } // guide section deep link
   else { nav = raw.split('/')[0]; }
   activateNavTab(NAV_TO_TAB[nav] || 'discover');
-  if ((NAV_TO_TAB[nav] || 'discover') === 'discover') applyDiscoverRoute(projectRoute);
+  if (accountRoute != null) renderAccountView(accountRoute);
+  else if ((NAV_TO_TAB[nav] || 'discover') === 'discover') applyDiscoverRoute(projectRoute);
   // Scroll to a deep-linked guide section once the tab's content has rendered (copy-link buttons emit these).
   else if (sectionId) setTimeout(function () { var t = document.getElementById(sectionId); if (t) t.scrollIntoView({ block: 'start' }); }, 60);
 }

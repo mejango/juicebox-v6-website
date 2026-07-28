@@ -270,6 +270,19 @@ export function loadRelayrPendingSession(scope) {
   }
 }
 
+// Every scope with a persisted pending session (the part of the storage key after the shared prefix).
+// Lets the account view surface all in-flight Relayr work without knowing each feature's scope scheme.
+export function listRelayrPendingScopes() {
+  var scopes = [];
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if (key && key.indexOf(RELAYR_PENDING_PREFIX) === 0) scopes.push(key.slice(RELAYR_PENDING_PREFIX.length));
+    }
+  } catch (_) {}
+  return scopes;
+}
+
 export function clearRelayrPendingSession(scope) {
   delete RELAYR_LAST_SAVED[relayrPendingStorageKey(scope)];
   try { localStorage.removeItem(relayrPendingStorageKey(scope)); } catch (_) {}

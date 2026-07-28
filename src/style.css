@@ -5952,3 +5952,29 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .redeem-tier-head .shop-cust-thumb { width: 22px; height: 22px; }
 .redeem-item-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding-left: 8px; cursor: pointer; }
 .redeem-item-id { color: var(--muted-2); }
+
+/* ── Account view (#account/<address-or-ens>) ─────────────────────────────── */
+.account-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.account-avatar { width: 44px; height: 44px; border-radius: 50%; flex: 0 0 44px; }
+.account-head > .detail-address .detail-address-label { font-size: 16px; font-weight: bold; }
+.account-you { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.03em; color: var(--c-teal); }
+.account-viewas { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.account-viewas .field { width: min(240px, 60vw); }
+.account-viewas-go {
+  font-family: inherit; font-size: 12px; font-weight: bold; cursor: pointer;
+  padding: 5px 12px; background: transparent; color: var(--c-black); border: 2px solid var(--c-black);
+}
+#tab-account .detail-card + .detail-card { margin-top: 18px; }
+.account-activity-status { color: var(--muted-2); }
+.account-load-more { display: block; margin-top: 10px; font-family: inherit; font-size: 12px; font-weight: bold; cursor: pointer; padding: 5px 12px; background: transparent; color: var(--c-black); border: 2px solid var(--c-black); }
+.account-activity-proj { display: inline-block; font-size: 10px; color: var(--muted-3); text-decoration: none; margin-top: 2px; }
+.account-activity-proj:hover { color: var(--c-teal); text-decoration: underline; }
+.account-pending { margin-bottom: 12px; }
+.account-pending-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted-2); margin-bottom: 4px; }
+.account-pending-check { margin-top: 8px; }
+.account-proj-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--depth-bg-1); }
+.account-proj-row:last-child { border-bottom: none; }
+.account-proj-link { font-weight: bold; color: var(--text); }
+.account-proj-chain { font-size: 11px; color: var(--muted-3); }
+.account-safe-badge { font-size: 11px; color: var(--muted-2); }
+.account-granted-by { font-size: 12px; color: var(--muted-2); margin-top: 3px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }

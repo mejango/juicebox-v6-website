@@ -18,6 +18,7 @@ const entry = vi.hoisted(() => ({
   }),
   renderLearnTab: vi.fn(),
   renderWhyTab: vi.fn(),
+  renderAccountView: vi.fn(),
 }));
 
 const readThing = {
@@ -91,6 +92,7 @@ vi.mock('../src/discover.js', () => ({
   renderAdminTab: entry.renderAdminTab,
 }));
 vi.mock('../src/data-tab.js', () => ({ renderDataTab: entry.renderDataTab }));
+vi.mock('../src/account-view.js', () => ({ renderAccountView: entry.renderAccountView }));
 vi.mock('../src/create-flow.js', () => ({ reverseEns: vi.fn().mockResolvedValue(null) }));
 vi.mock('../src/font-selector.js', () => ({
   mountFontSelector: entry.mountFontSelector,
@@ -129,7 +131,7 @@ function shell() {
     <header id="header"><button id="connect-btn"></button></header>
     <nav id="tabs">${tabs.map(([label, tab]) => `<button class="tab" data-tab="${tab}">${label}</button>`).join('')}</nav>
     <a id="audit-prompt-link" href="#">audit</a>
-    <main>${tabs.map(([, tab]) => `<section id="tab-${tab}" class="tab-content"></section>`).join('')}</main>
+    <main>${tabs.map(([, tab]) => `<section id="tab-${tab}" class="tab-content"></section>`).join('')}<section id="tab-account" class="tab-content"></section></main>
     <footer><span id="ipfs-cid-meta"></span></footer>`;
 }
 
@@ -202,6 +204,11 @@ describe('production app entry point', () => {
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(location.hash).toBe('#data');
     expect(document.getElementById('tab-data').classList.contains('active')).toBe(true);
+
+    location.hash = '#account/0x1111111111111111111111111111111111111111';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(entry.renderAccountView).toHaveBeenCalledWith('0x1111111111111111111111111111111111111111');
+    expect(document.getElementById('tab-account').classList.contains('active')).toBe(true);
 
     document.getElementById('audit-prompt-link').click();
     await vi.waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('audit the canonical V6 call'));
