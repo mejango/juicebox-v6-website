@@ -1,10 +1,11 @@
-// Account view pure helpers: route parsing, activity project-stub building, owned-project dedupe,
-// operated-project grouping — plus the safe-owner listing and the Relayr pending-scope enumeration
-// the view is built on. DOM rendering is exercised through the offline-safe error paths.
+// Account view pure helpers: route parsing (address + tab), activity project-stub building,
+// owned-project dedupe, operated-project grouping, holdings version-dedupe and nft grouping —
+// plus the safe-owner listing and the Relayr pending-scope enumeration the view is built on.
+// DOM rendering is exercised through the offline-safe error paths.
 import { describe, it, expect, vi } from 'vitest';
 import {
   parseAccountRoute, distinctProjectRefs, projectStubsFromRows, dedupeOwnedProjects,
-  groupOperatedProjects, renderAccountView,
+  groupOperatedProjects, dedupeTokenHoldings, groupNftHoldings, renderAccountView, ACCOUNT_TABS,
 } from '../src/account-view.js';
 import { listRelayrPendingScopes, loadRelayrPendingSession } from '../src/relayr.js';
 import { safesForOwner } from '../src/safe.js';
@@ -12,13 +13,24 @@ import { safesForOwner } from '../src/safe.js';
 const ADDR = '0x823b92d6A4b2AED4b15675c7917c9f922ea8ADAd';
 
 describe('parseAccountRoute', () => {
-  it('accepts a 0x address (and URI-encoded input)', () => {
-    expect(parseAccountRoute(ADDR)).toEqual({ address: ADDR });
-    expect(parseAccountRoute(encodeURIComponent(' ' + ADDR + ' '))).toEqual({ address: ADDR });
+  it('accepts a 0x address (and URI-encoded input), defaulting to the activity tab', () => {
+    expect(parseAccountRoute(ADDR)).toEqual({ address: ADDR, tab: 'activity' });
+    expect(parseAccountRoute(encodeURIComponent(' ' + ADDR + ' '))).toEqual({ address: ADDR, tab: 'activity' });
   });
   it('accepts an ENS name, lowercased', () => {
-    expect(parseAccountRoute('Jango.ETH')).toEqual({ ens: 'jango.eth' });
-    expect(parseAccountRoute('team.banny.eth')).toEqual({ ens: 'team.banny.eth' });
+    expect(parseAccountRoute('Jango.ETH')).toEqual({ ens: 'jango.eth', tab: 'activity' });
+    expect(parseAccountRoute('team.banny.eth')).toEqual({ ens: 'team.banny.eth', tab: 'activity' });
+  });
+  it('parses the tab segment for every known tab (case-insensitively)', () => {
+    for (const tab of ACCOUNT_TABS) {
+      expect(parseAccountRoute(ADDR + '/' + tab)).toEqual({ address: ADDR, tab });
+    }
+    expect(parseAccountRoute(ADDR + '/Holdings')).toEqual({ address: ADDR, tab: 'holdings' });
+    expect(parseAccountRoute('jango.eth/roles')).toEqual({ ens: 'jango.eth', tab: 'roles' });
+  });
+  it('falls back to the default tab for unknown segments', () => {
+    expect(parseAccountRoute(ADDR + '/bogus')).toEqual({ address: ADDR, tab: 'activity' });
+    expect(parseAccountRoute(ADDR + '/')).toEqual({ address: ADDR, tab: 'activity' });
   });
   it('rejects garbage', () => {
     expect(parseAccountRoute('')).toBeNull();
@@ -26,6 +38,46 @@ describe('parseAccountRoute', () => {
     expect(parseAccountRoute('0x123')).toBeNull(); // short hex
     expect(parseAccountRoute('12345')).toBeNull();
     expect(parseAccountRoute('0xnothexnothexnothexnothexnothexnothexnothe')).toBeNull();
+    expect(parseAccountRoute('/holdings')).toBeNull(); // tab without an identity
+  });
+});
+
+describe('dedupeTokenHoldings', () => {
+  it('keeps the highest-version row per (chainId, projectId), preserving first-seen order', () => {
+    const items = [
+      { chainId: 1, projectId: 3, version: 5, balance: '900' },
+      { chainId: 1, projectId: 3, version: 6, balance: '900' }, // same holding, higher version wins
+      { chainId: 8453, projectId: 3, version: 4, balance: '500' },
+      { chainId: 1, projectId: 3, version: 4, balance: '900' }, // lower version, dropped
+      { chainId: 1, projectId: 0, version: 6, balance: '1' }, // no project
+      null,
+    ];
+    const rows = dedupeTokenHoldings(items);
+    expect(rows).toEqual([
+      { chainId: 1, projectId: 3, version: 6, balance: '900' },
+      { chainId: 8453, projectId: 3, version: 4, balance: '500' },
+    ]);
+    expect(dedupeTokenHoldings(null)).toEqual([]);
+  });
+});
+
+describe('groupNftHoldings', () => {
+  it('dedupes by (chainId, tokenId) then groups per project with tier quantities', () => {
+    const items = [
+      { chainId: 1, projectId: 3, tokenId: '3000000001', tierId: 3 },
+      { chainId: 1, projectId: 3, tokenId: '3000000001', tierId: 3 }, // same token, other version row
+      { chainId: 1, projectId: 3, tokenId: '3000000002', tierId: 3 },
+      { chainId: 1, projectId: 3, tokenId: '5000000001', tierId: 5 },
+      { chainId: 8453, projectId: 3, tokenId: '3000000001', tierId: 3 }, // same tokenId, other chain
+      { chainId: 1, projectId: 0, tokenId: '1', tierId: 1 }, // no project
+      null,
+    ];
+    const groups = groupNftHoldings(items);
+    expect(groups).toEqual([
+      { chainId: 1, projectId: 3, tiers: [{ tierId: 3, count: 2 }, { tierId: 5, count: 1 }] },
+      { chainId: 8453, projectId: 3, tiers: [{ tierId: 3, count: 1 }] },
+    ]);
+    expect(groupNftHoldings(null)).toEqual([]);
   });
 });
 
@@ -135,18 +187,40 @@ describe('renderAccountView', () => {
     expect(tab.textContent).toMatch(/Could not resolve "not-an-address"/);
     expect(tab.querySelector('.account-viewas input')).not.toBeNull();
   });
-  it('renders header + sections for a valid address, degrading gracefully offline', async () => {
+  it('renders header + tab bar for a valid address, defaulting to Activity and degrading gracefully offline', async () => {
     document.body.innerHTML = '<section id="tab-account" class="tab-content"></section>';
     renderAccountView(ADDR);
     const tab = document.getElementById('tab-account');
     expect(tab.querySelector('.account-avatar')).not.toBeNull();
+    // Project-page tab idiom: one .detail-tab-btn per account tab, Activity active by default.
+    const btns = [...tab.querySelectorAll('.project-detail-tabs .detail-tab-btn')];
+    expect(btns.map(b => b.dataset.tab)).toEqual(['activity', 'holdings', 'projects', 'roles']);
+    expect(btns[0].classList.contains('active')).toBe(true);
     expect(tab.textContent).toContain('Activity');
-    expect(tab.textContent).toContain('Owned projects');
-    expect(tab.textContent).toContain('Operated projects');
     await vi.waitFor(() => {
       expect(tab.textContent).toMatch(/Could not load activity from Bendystraw/);
-      expect(tab.textContent).toMatch(/No V6 projects owned by this account/);
-      expect(tab.textContent).toMatch(/Could not read permissions from Bendystraw/);
     });
+  });
+  it('opens the routed tab and switches panes on tab clicks', async () => {
+    document.body.innerHTML = '<section id="tab-account" class="tab-content"></section>';
+    renderAccountView(ADDR + '/holdings');
+    const tab = document.getElementById('tab-account');
+    const btns = [...tab.querySelectorAll('.detail-tab-btn')];
+    expect(btns.find(b => b.dataset.tab === 'holdings').classList.contains('active')).toBe(true);
+    expect(tab.textContent).toContain('Tokens');
+    expect(tab.textContent).toContain('Store items');
+    await vi.waitFor(() => {
+      expect(tab.textContent).toMatch(/Could not load token balances from Bendystraw/);
+      expect(tab.textContent).toMatch(/Could not load store items from Bendystraw/);
+    });
+    // Click through the mapped legacy sections: Projects (owned) and Roles (operated).
+    btns.find(b => b.dataset.tab === 'projects').click();
+    expect(tab.textContent).toContain('Owned projects');
+    await vi.waitFor(() => expect(tab.textContent).toMatch(/No V6 projects owned by this account/));
+    btns.find(b => b.dataset.tab === 'roles').click();
+    expect(tab.textContent).toContain('Operated projects');
+    await vi.waitFor(() => expect(tab.textContent).toMatch(/Could not read permissions from Bendystraw/));
+    // Tab clicks update the hash without retriggering the router.
+    expect(location.hash).toBe('#account/' + ADDR + '/roles');
   });
 });

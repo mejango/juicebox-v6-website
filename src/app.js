@@ -360,7 +360,7 @@ function applyHash() {
   var nav, projectRoute = null, sectionId = null, accountRoute = null;
   if (raw === '' || raw === 'discover') { nav = 'discover'; }
   else if (raw.indexOf(':') !== -1) { nav = 'discover'; projectRoute = raw; } // <slug>:<id>[/tab]
-  else if (/^account\//.test(raw)) { nav = 'account'; accountRoute = raw.slice('account/'.length); } // #account/<address-or-ens>
+  else if (/^account\//.test(raw)) { nav = 'account'; accountRoute = raw.slice('account/'.length); } // #account/<address-or-ens>[/tab]
   else if (/^(learn|build|why)-/.test(raw)) { nav = raw.split('-')[0]; sectionId = raw; } // guide section deep link
   else { nav = raw.split('/')[0]; }
   activateNavTab(NAV_TO_TAB[nav] || 'discover');
