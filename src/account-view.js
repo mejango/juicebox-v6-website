@@ -1,11 +1,13 @@
 // src/account-view.js
-// Account view (#account/<address-or-ens>): everything Juicebox knows about one account —
-// its indexed V6 activity (with any in-flight Relayr work when viewing your own account),
-// the projects it owns (directly or through a Safe it signs for), and the projects it
-// operates via granted permissions. "View as" is inherent: any address or ENS name in the
-// hash renders that account; action CTAs only appear for the connected account.
+// Account view (#account/<address-or-ens>[/tab]): everything Juicebox knows about one account,
+// laid out with the project page's tab idiom. Tabs: Activity (indexed V6 activity, plus any
+// in-flight Relayr work when viewing your own account), Holdings (per-project token balances
+// and owned store items), Projects (owned directly or through a Safe it signs for), and Roles
+// (projects operated via granted permissions). "View as" is inherent: any address or ENS name
+// in the hash renders that account; action CTAs only appear for the connected account.
 
 import { el, truncAddr, getAccount, isAddr, getViewAs, setViewAs, clearViewAs } from './component-base.js';
+import { formatTokenCount } from './pay-preview.js';
 import { bendystrawQuery } from './bendystraw-client.js';
 import {
   ensAddressOf, addressNode, identGradient, activityRowFromEvent, renderActivityRow,
@@ -41,18 +43,74 @@ var ACCOUNT_SAFE_OWNED_QUERY = 'query($owners: [String!], $chainId: Int!, $versi
 var ACCOUNT_OPERATED_QUERY = 'query($operator: String!, $version: Int!) { '
   + 'permissionHolders(where: { operator: $operator, version: $version }, limit: 200) { '
   + 'items { chainId projectId account operator permissions isRevnetOperator } } }';
+// Holdings: per-project token balances. Bendystraw indexes the same participant once per version
+// tag it recognizes the project under, so rows are deduped to the highest version per project.
+var ACCOUNT_TOKEN_HOLDINGS_QUERY = 'query($account: String!) { '
+  + 'participants(where: { address: $account, balance_gt: "0" }, '
+  + 'orderBy: "balance", orderDirection: "desc", limit: 500) { '
+  + 'items { chainId projectId version balance } } }';
+// Holdings: store items (721s) currently owned. Deduped by (chainId, tokenId) for the same reason.
+var ACCOUNT_NFT_HOLDINGS_QUERY = 'query($owner: String!) { '
+  + 'nfts(where: { owner: $owner }, limit: 1000) { '
+  + 'items { chainId projectId tokenId tierId } } }';
 
 // -- Pure helpers (unit-tested) --
 
-// '#account/<rest>' payload → { address } (checksummed/hex) or { ens } or null for garbage.
+// The account page's tabs, in display order. Slugs double as the hash segment; the first is default.
+export var ACCOUNT_TABS = ['activity', 'holdings', 'projects', 'roles'];
+
+// '#account/<rest>' payload → { address, tab } (checksummed/hex) or { ens, tab } or null for
+// garbage. The optional second segment picks a tab; unknown tabs fall back to the default.
 export function parseAccountRoute(rest) {
   var v = String(rest == null ? '' : rest);
   try { v = decodeURIComponent(v); } catch (_) {}
-  v = v.trim();
-  if (!v) return null;
-  if (isAddr(v)) return { address: v };
-  if (isEnsName(v)) return { ens: v.toLowerCase() };
+  var parts = v.split('/');
+  var who = (parts[0] || '').trim();
+  if (!who) return null;
+  var tab = (parts[1] || '').trim().toLowerCase();
+  if (ACCOUNT_TABS.indexOf(tab) === -1) tab = ACCOUNT_TABS[0];
+  if (isAddr(who)) return { address: who, tab: tab };
+  if (isEnsName(who)) return { ens: who.toLowerCase(), tab: tab };
   return null;
+}
+
+// participants rows arrive balance-desc but duplicated per indexed version; keep the
+// highest-version row per (chainId, projectId), preserving first-seen (balance) order.
+export function dedupeTokenHoldings(items) {
+  var byKey = {}, order = [];
+  (items || []).forEach(function (it) {
+    if (!it) return;
+    var chainId = Number(it.chainId), projectId = Number(it.projectId);
+    if (!Number.isFinite(chainId) || !Number.isFinite(projectId) || projectId <= 0) return;
+    var key = chainId + ':' + projectId;
+    var prev = byKey[key];
+    if (!prev) { byKey[key] = it; order.push(key); }
+    else if (Number(it.version) > Number(prev.version)) byKey[key] = it;
+  });
+  return order.map(function (key) { return byKey[key]; });
+}
+
+// nft rows → dedupe by (chainId, tokenId) (rows repeat per indexed version), then group by
+// (chainId, projectId) with per-tier quantities: { chainId, projectId, tiers: [{tierId, count}] }.
+export function groupNftHoldings(items) {
+  var seenToken = {}, byProj = {}, order = [];
+  (items || []).forEach(function (it) {
+    if (!it) return;
+    var chainId = Number(it.chainId), projectId = Number(it.projectId), tierId = Number(it.tierId);
+    if (!Number.isFinite(chainId) || !Number.isFinite(projectId) || projectId <= 0) return;
+    var tokenKey = chainId + ':' + String(it.tokenId);
+    if (seenToken[tokenKey]) return;
+    seenToken[tokenKey] = true;
+    var projKey = chainId + ':' + projectId;
+    var g = byProj[projKey];
+    if (!g) { g = byProj[projKey] = { chainId: chainId, projectId: projectId, tiers: [] }; order.push(g); }
+    var tier = null;
+    for (var i = 0; i < g.tiers.length; i++) if (g.tiers[i].tierId === tierId) { tier = g.tiers[i]; break; }
+    if (!tier) { tier = { tierId: tierId, count: 0 }; g.tiers.push(tier); }
+    tier.count += 1;
+  });
+  order.forEach(function (g) { g.tiers.sort(function (a, b) { return a.tierId - b.tierId; }); });
+  return order;
 }
 
 // Distinct (chainId, projectId) pairs referenced by a page of activity events, in first-seen order.
@@ -144,6 +202,32 @@ function projectLinkNode(className, chainId, projectId, name) {
   return a;
 }
 
+// "Chain | #id" chip shown next to a project link across all account cards.
+function chainChipNode(chainId, projectId) {
+  var chain = el('span', 'account-proj-chain');
+  chain.textContent = chainNameOf(chainId) + ' | #' + Number(projectId);
+  return chain;
+}
+
+// Set the location hash without retriggering the router (app.js's hashchange handler honors the flag).
+function setHashQuiet(h) {
+  if (location.hash === h) return;
+  window.__suppressHash = true;
+  location.hash = h;
+}
+
+// Best-effort project stubs for a list of {chainId, projectId} refs, keyed 'chainId:projectId'.
+// One bendystraw query per chain; failures degrade to an empty map (rows render name-less).
+function fetchProjectStubs(refs) {
+  var byChain = {};
+  (refs || []).forEach(function (r) { (byChain[r.chainId] = byChain[r.chainId] || []).push(r.projectId); });
+  return Promise.all(Object.keys(byChain).map(function (cid) {
+    return bendystrawQuery(ACCOUNT_PROJECT_STUBS_QUERY, {
+      chainId: Number(cid), version: VERSION, projectIds: byChain[cid],
+    }).then(function (d) { return projectStubsFromRows(d && d.projects && d.projects.items); }).catch(function () { return {}; });
+  })).then(function (maps) { return Object.assign.apply(Object, [{}].concat(maps)); });
+}
+
 function viewAsForm(prefill) {
   var wrap = el('div', 'account-viewas');
   var input = el('input', 'field');
@@ -194,14 +278,15 @@ export function renderAccountView(rest) {
       if (!live()) return;
       container.innerHTML = '';
       if (!addr) { container.appendChild(invalidCard(parsed.ens)); return; }
-      renderAccount(container, addr, live);
+      renderAccount(container, addr, parsed.ens, parsed.tab, live);
     });
     return;
   }
-  renderAccount(container, parsed.address, live);
+  renderAccount(container, parsed.address, parsed.address, parsed.tab, live);
 }
 
-function renderAccount(container, address, live) {
+// ident is the identity as routed (ENS name or address) so tab clicks keep the hash the user chose.
+function renderAccount(container, address, ident, initialTab, live) {
   var connected = getAccount();
   var isOwn = !!(connected && connected.toLowerCase() === address.toLowerCase());
   var homeChain = activeDiscoverChains()[0];
@@ -231,9 +316,39 @@ function renderAccount(container, address, live) {
   head.appendChild(viewAsForm(''));
   container.appendChild(head);
 
-  container.appendChild(renderActivityCard(address, isOwn, live));
-  container.appendChild(renderOwnedCard(address, live));
-  container.appendChild(renderOperatedCard(address, live));
+  // Tab bar with the project page's visual idiom, hash-routed as #account/<ident>/<tab>.
+  // Panes build lazily on first visit and are kept, so switching back doesn't re-fetch.
+  var builders = {
+    activity: function () { return renderActivityCard(address, isOwn, live); },
+    holdings: function () { return renderHoldingsCard(address, live); },
+    projects: function () { return renderOwnedCard(address, live); },
+    roles: function () { return renderOperatedCard(address, live); },
+  };
+  var tabRow = el('div', 'project-detail-tabs');
+  var contentArea = el('div', 'project-detail-content');
+  var built = {};
+  function showTab(slug) {
+    if (!builders[slug]) slug = ACCOUNT_TABS[0];
+    if (!built[slug]) built[slug] = builders[slug]();
+    contentArea.innerHTML = '';
+    contentArea.appendChild(built[slug]);
+    var btns = tabRow.querySelectorAll('.detail-tab-btn');
+    for (var b = 0; b < btns.length; b++) btns[b].classList.toggle('active', btns[b].dataset.tab === slug);
+  }
+  ACCOUNT_TABS.forEach(function (slug) {
+    var btn = document.createElement('button');
+    btn.className = 'detail-tab-btn';
+    btn.dataset.tab = slug;
+    btn.textContent = slug.charAt(0).toUpperCase() + slug.slice(1);
+    btn.addEventListener('click', function () {
+      showTab(slug);
+      setHashQuiet('#account/' + ident + '/' + slug);
+    });
+    tabRow.appendChild(btn);
+  });
+  container.appendChild(tabRow);
+  container.appendChild(contentArea);
+  showTab(initialTab || ACCOUNT_TABS[0]);
 }
 
 // -- Activity --
@@ -270,15 +385,8 @@ function renderActivityCard(address, isOwn, live) {
   function loadStubs(events) {
     var refs = distinctProjectRefs(events).filter(function (r) { return !stubs[r.chainId + ':' + r.projectId]; });
     if (!refs.length) return Promise.resolve();
-    var byChain = {};
-    refs.forEach(function (r) { (byChain[r.chainId] = byChain[r.chainId] || []).push(r.projectId); });
-    return Promise.all(Object.keys(byChain).map(function (cid) {
-      return bendystrawQuery(ACCOUNT_PROJECT_STUBS_QUERY, {
-        chainId: Number(cid), version: VERSION, projectIds: byChain[cid],
-      }).then(function (data) {
-        Object.assign(stubs, projectStubsFromRows(data && data.projects && data.projects.items));
-      }).catch(function () {}); // graceful: rows fall back to a symbol-less stub
-    }));
+    // graceful: on fetch failure rows fall back to a symbol-less stub
+    return fetchProjectStubs(refs).then(function (map) { Object.assign(stubs, map); });
   }
 
   function appendRows(items) {
@@ -373,6 +481,81 @@ function renderPendingRelayrSection() {
   return wrap;
 }
 
+// -- Holdings (tokens + store items) --
+
+function renderHoldingsCard(address, live) {
+  var wrap = el('div', 'account-holdings');
+  wrap.appendChild(renderTokenHoldingsCard(address, live));
+  wrap.appendChild(renderNftHoldingsCard(address, live));
+  return wrap;
+}
+
+function renderTokenHoldingsCard(address, live) {
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Tokens'; card.appendChild(title);
+  var body = el('div', 'detail-card-body');
+  body.textContent = 'Loading…';
+  card.appendChild(body);
+
+  bendystrawQuery(ACCOUNT_TOKEN_HOLDINGS_QUERY, { account: address.toLowerCase() }).then(function (data) {
+    var rows = dedupeTokenHoldings(data && data.participants && data.participants.items);
+    return fetchProjectStubs(rows).then(function (stubMap) {
+      if (!live() || !body.isConnected) return;
+      body.innerHTML = '';
+      if (!rows.length) { body.textContent = 'No project token balances for this account.'; return; }
+      rows.forEach(function (row) {
+        var stub = stubMap[row.chainId + ':' + row.projectId];
+        var line = el('div', 'account-proj-row');
+        line.appendChild(projectLinkNode('account-proj-link', row.chainId, row.projectId, stub && stub.name));
+        line.appendChild(chainChipNode(row.chainId, row.projectId));
+        var bal = el('span', 'account-holding-balance');
+        // Project tokens are always 18-decimal (this is the credit/ERC-20 balance, never the
+        // accounting token); symbol comes from the deployed ERC-20, else the "tokens" fallback.
+        bal.textContent = formatTokenCount(row.balance) + ' ' + ((stub && stub.tokenSymbol) || 'tokens');
+        line.appendChild(bal);
+        body.appendChild(line);
+      });
+    });
+  }).catch(function () {
+    if (!live() || !body.isConnected) return;
+    body.textContent = 'Could not load token balances from Bendystraw.';
+  });
+  return card;
+}
+
+function renderNftHoldingsCard(address, live) {
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Store items'; card.appendChild(title);
+  var body = el('div', 'detail-card-body');
+  body.textContent = 'Loading…';
+  card.appendChild(body);
+
+  bendystrawQuery(ACCOUNT_NFT_HOLDINGS_QUERY, { owner: address.toLowerCase() }).then(function (data) {
+    var groups = groupNftHoldings(data && data.nfts && data.nfts.items);
+    return fetchProjectStubs(groups).then(function (stubMap) {
+      if (!live() || !body.isConnected) return;
+      body.innerHTML = '';
+      if (!groups.length) { body.textContent = 'No store items held by this account.'; return; }
+      groups.forEach(function (g) {
+        var stub = stubMap[g.chainId + ':' + g.projectId];
+        var line = el('div', 'account-proj-row');
+        line.appendChild(projectLinkNode('account-proj-link', g.chainId, g.projectId, stub && stub.name));
+        line.appendChild(chainChipNode(g.chainId, g.projectId));
+        g.tiers.forEach(function (t) {
+          var item = el('span', 'account-holding-item');
+          item.textContent = 'Tier ' + t.tierId + (t.count > 1 ? ' × ' + t.count : '');
+          line.appendChild(item);
+        });
+        body.appendChild(line);
+      });
+    });
+  }).catch(function () {
+    if (!live() || !body.isConnected) return;
+    body.textContent = 'Could not load store items from Bendystraw.';
+  });
+  return card;
+}
+
 // -- Owned projects --
 
 function renderOwnedCard(address, live) {
@@ -410,9 +593,7 @@ function renderOwnedCard(address, live) {
     rows.forEach(function (row) {
       var line = el('div', 'account-proj-row');
       line.appendChild(projectLinkNode('account-proj-link', row.chainId, row.projectId, row.name || row.handle));
-      var chain = el('span', 'account-proj-chain');
-      chain.textContent = chainNameOf(row.chainId) + ' | #' + Number(row.projectId);
-      line.appendChild(chain);
+      line.appendChild(chainChipNode(row.chainId, row.projectId));
       if (row.safe) {
         var badge = el('span', 'account-safe-badge');
         badge.textContent = 'via Safe ' + truncAddr(row.safe);
@@ -444,15 +625,7 @@ function renderOperatedCard(address, live) {
     if (!groups.length) { body.textContent = 'This account operates no V6 projects.'; return; }
 
     // Best-effort project names for the group headers.
-    var byChain = {};
-    groups.forEach(function (g) { (byChain[g.chainId] = byChain[g.chainId] || []).push(g.projectId); });
-    var names = Promise.all(Object.keys(byChain).map(function (cid) {
-      return bendystrawQuery(ACCOUNT_PROJECT_STUBS_QUERY, {
-        chainId: Number(cid), version: VERSION, projectIds: byChain[cid],
-      }).then(function (d) { return projectStubsFromRows(d && d.projects && d.projects.items); }).catch(function () { return {}; });
-    })).then(function (maps) { return Object.assign.apply(Object, [{}].concat(maps)); });
-
-    names.then(function (stubMap) {
+    fetchProjectStubs(groups).then(function (stubMap) {
       if (!body.isConnected) return;
       groups.forEach(function (g) {
         var stub = stubMap[g.chainId + ':' + g.projectId];
@@ -461,9 +634,7 @@ function renderOperatedCard(address, live) {
         var lab = el('span', 'powers-label');
         lab.appendChild(projectLinkNode('account-proj-link', g.chainId, g.projectId, stub && stub.name));
         head.appendChild(lab);
-        var chain = el('span', 'account-proj-chain');
-        chain.textContent = chainNameOf(g.chainId) + ' | #' + g.projectId;
-        head.appendChild(chain);
+        head.appendChild(chainChipNode(g.chainId, g.projectId));
         if (g.isRevnetOperator) { var b = el('span', 'powers-state on'); b.textContent = 'Revnet operator'; head.appendChild(b); }
         row.appendChild(head);
 
