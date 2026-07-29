@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { confirmTransactionModal } from '../src/component-base.js';
 
 afterEach(() => {
-  document.querySelectorAll('.modal-overlay').forEach((node) => node.remove());
+  document.querySelectorAll('dialog.modal-dialog').forEach((node) => node.remove());
 });
 
 describe('transaction confirmation recovery', () => {
@@ -18,9 +18,9 @@ describe('transaction confirmation recovery', () => {
       value: 0n,
     }, { keepOpenForProgress: true });
 
-    const overlay = document.querySelector('.modal-overlay');
-    const confirm = overlay.querySelector('.create-modal-foot .create-btn.primary');
-    const cancel = overlay.querySelector('.create-modal-foot .create-btn.ghost');
+    const dialog = document.querySelector('dialog.modal-dialog');
+    const confirm = dialog.querySelector('.create-modal-foot .create-btn.primary');
+    const cancel = dialog.querySelector('.create-modal-foot .create-btn.ghost');
     confirm.click();
     const result = await resultPromise;
 
@@ -30,7 +30,7 @@ describe('transaction confirmation recovery', () => {
     expect(cancel.disabled).toBe(false);
     expect(cancel.textContent).toBe('Close');
 
-    overlay.querySelector('.modal-close').click();
-    expect(document.body.contains(overlay)).toBe(false);
+    dialog.querySelector('.modal-close').click();
+    expect(document.body.contains(dialog)).toBe(false);
   });
 });

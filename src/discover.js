@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { createPublicClient, http, keccak256, stringToHex, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl } from './component-base.js';
+import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -20174,27 +20174,18 @@ function attachCardPromptLinks(contentArea) {
   }).observe(contentArea, { childList: true, subtree: true });
 }
 
-function openModal(titleText, contentNode, opts) {
+// Opens `contentNode` in the shared native-<dialog> modal root (component-base's openDialog): top-layer
+// stacking, an inert page behind, and Escape scoped to the topmost modal. `opts.canClose` refuses
+// dismissal while a send is in flight.
+export function openModal(titleText, contentNode, opts) {
   opts = opts || {};
-  var overlay = el('div', 'modal-overlay');
-  var dialog = el('div', 'modal-dialog');
-  var head = el('div', 'modal-head');
-  var h = el('div', 'modal-title'); h.textContent = titleText; head.appendChild(h);
-  var x = document.createElement('button'); x.className = 'modal-close'; x.textContent = '✕';
-  x.addEventListener('click', close); head.appendChild(x);
-  dialog.appendChild(head);
-  dialog.appendChild(contentNode);
+  var modal = openDialog(titleText, { canClose: opts.canClose });
+  modal.panel.appendChild(contentNode);
   // Every action modal/form is a recreatable component — give it an LLM prompt link. Skip transient
   // pre-sign confirmations (opts.noPrompt), which aren't features to rebuild.
-  if (!opts.noPrompt) dialog.appendChild(discoverPromptFoot(titleText));
-  overlay.appendChild(dialog);
-  overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
-  function onKey(e) { if (e.key === 'Escape') close(); }
-  function close() { document.removeEventListener('keydown', onKey); overlay.remove(); }
-  contentNode.addEventListener('jb:close-modal', close);
-  document.addEventListener('keydown', onKey);
-  document.body.appendChild(overlay);
-  return { close: close };
+  if (!opts.noPrompt) modal.panel.appendChild(discoverPromptFoot(titleText));
+  contentNode.addEventListener('jb:close-modal', modal.close);
+  return { close: modal.close };
 }
 
 // Pre-sign confirmation: shows the exact transaction payload as JSON and only sends on explicit confirm.
@@ -20210,7 +20201,13 @@ function openTxConfirm(payload, onConfirm, opts) {
   var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm';
   foot.appendChild(cancel); foot.appendChild(confirm);
   content.appendChild(foot);
-  var modal = openModal(opts.title || 'Confirm transaction', content, { noPrompt: true });
+  // `closeOnConfirm: false` callers keep the modal open while they send, locking BOTH buttons for the
+  // duration and re-enabling them on failure. Escape / ✕ / backdrop follow that same lock, so a
+  // dismissal can't orphan an in-flight transaction's status display (matches confirmTransactionModal).
+  var modal = openModal(opts.title || 'Confirm transaction', content, {
+    noPrompt: true,
+    canClose: function () { return !(confirm.disabled && cancel.disabled); },
+  });
   cancel.addEventListener('click', modal.close);
   function showStatus(message, kind) {
     status.style.display = message ? '' : 'none';

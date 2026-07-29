@@ -681,15 +681,23 @@ export function openCreateFlow() {
   // Owner/operator are required and explicit — prefill the connected wallet only where still blank.
   if (pre) { if (!state.details.owner) state.details.owner = pre; if (!state.revOperator) state.revOperator = pre; }
 
-  var overlay = el('div', 'create-overlay');
+  // The wizard is a native <dialog> for the same reason every modal is: it joins the browser's top
+  // layer, so a confirm modal opened from inside it stacks above and takes Escape for itself — the
+  // wizard's old document keydown handler tore the whole wizard down on that same keypress.
+  var overlay = el('dialog', 'create-overlay');
   var sheet = el('div', 'create-sheet');
   overlay.appendChild(sheet);
 
-  function close() { document.removeEventListener('keydown', onKey); overlay.remove(); }
+  var closed = false;
+  function close() {
+    if (closed) return;
+    closed = true;
+    if (overlay.open) overlay.close();
+    overlay.remove();
+  }
   state._close = close; // so the success panel's "Go to project" can dismiss the overlay
-  function onKey(e) { if (e.key === 'Escape' && !state.deploying) close(); }
+  overlay.addEventListener('cancel', function (e) { e.preventDefault(); if (!state.deploying) close(); });
   overlay.addEventListener('mousedown', function (e) { if (e.target === overlay && !state.deploying) close(); });
-  document.addEventListener('keydown', onKey);
 
   // Replace the live state object's contents in place (render/handlers close over `state`), then re-render.
   function installImported(merged) {
@@ -735,6 +743,7 @@ export function openCreateFlow() {
   if (customAccounting(state) && state.customToken.status === 'idle' && isAddr((state.customToken.address || '').trim())) lookupCustomToken(state, render);
 
   document.body.appendChild(overlay);
+  overlay.showModal();
   return { close: close };
 }
 

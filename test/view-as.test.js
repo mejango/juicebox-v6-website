@@ -75,7 +75,7 @@ describe('view-as read/write seam (component-base)', () => {
   afterEach(async () => {
     const { clearViewAs } = await import('../src/view-as.js');
     clearViewAs();
-    document.querySelectorAll('.modal-overlay').forEach((node) => node.remove());
+    document.querySelectorAll('dialog.modal-dialog').forEach((node) => node.remove());
   });
 
   it('getEffectiveAccount prefers the viewed address over the connected wallet', async () => {
@@ -99,12 +99,12 @@ describe('view-as read/write seam (component-base)', () => {
     const base = await import('../src/component-base.js');
     base.setViewAs(ADDR);
     const resultPromise = base.confirmTransactionModal({ action: 'Pay', chainId: 1 }, { keepOpenForProgress: true });
-    const overlay = document.querySelector('.modal-overlay');
-    expect(overlay.textContent).toContain(base.VIEW_AS_TX_ERROR);
-    expect(overlay.querySelector('.create-btn.primary')).toBeNull(); // nothing to confirm
-    overlay.querySelector('.create-btn.ghost').click();
+    const dialog = document.querySelector('dialog.modal-dialog');
+    expect(dialog.textContent).toContain(base.VIEW_AS_TX_ERROR);
+    expect(dialog.querySelector('.create-btn.primary')).toBeNull(); // nothing to confirm
+    dialog.querySelector('.create-btn.ghost').click();
     const result = await resultPromise;
     expect(result).toEqual({ ok: false });
-    expect(document.body.contains(overlay)).toBe(false);
+    expect(document.body.contains(dialog)).toBe(false);
   });
 });

@@ -2065,7 +2065,7 @@ input[type="checkbox"].field {
 .comp-prompt-link:hover { opacity: 1; color: var(--c-teal); }
 .comp-prompt-link--ok { opacity: 1; color: var(--c-teal); }
 /* In a modal/form the tag sits right under the submit button — give it room to breathe. */
-.modal-dialog > .comp-prompt-foot { margin-top: 14px; }
+.modal-panel > .comp-prompt-foot { margin-top: 14px; }
 /* Inside the create wizard, match .create-foot's horizontal padding so the link right-aligns with Next. */
 .create-sheet > .comp-prompt-foot { padding: 0 22px; }
 /* Pre-deploy export: a small right-aligned action above the full-width Launch button. */
@@ -3086,15 +3086,22 @@ input[type="checkbox"].field {
 .ops-actions .ops-action-btn { border-color: var(--write); background: var(--c-green-light); color: var(--c-black); }
 .ops-actions .ops-action-btn:hover { opacity: 0.9; text-shadow: none; }
 
-.modal-overlay {
-  /* Above the create overlay (200) + its sub-modals (210) so the wallet-confirm modal it spawns is reachable. */
-  position: fixed; inset: 0; background: rgba(44, 32, 24, 0.45); z-index: 300;
-  display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; overflow-y: auto;
-}
+/* Modals are native <dialog>s opened with showModal(). The browser's top layer paints them above
+   everything else — including the create overlay (200) — so no z-index is needed, and the page behind
+   goes inert. The global reset zeroes the UA `margin: auto`, so the geometry the old overlay produced
+   (centered, 48px from the top, 16px side gutters) is restated here. The page behind still scrolls,
+   as it did before; long modals scroll inside themselves. */
 .modal-dialog {
-  background: var(--card-bg); border: 3px solid var(--c-black-light); max-width: 480px; width: 100%;
-  padding: 18px 20px; box-shadow: 0 10px 44px rgba(44, 32, 24, 0.35);
+  position: fixed; top: 0; right: 0; bottom: auto; left: 0;
+  margin: 48px auto; width: calc(100% - 32px); max-width: 480px; max-height: calc(100% - 96px);
+  overflow-y: auto; padding: 0;
+  background: var(--card-bg); border: 3px solid var(--c-black-light); color: var(--text);
+  box-shadow: 0 10px 44px rgba(44, 32, 24, 0.35);
 }
+/* Replaces the dimming overlay div. */
+.modal-dialog::backdrop { background: rgba(44, 32, 24, 0.45); }
+/* Content box: padding lives here, not on the dialog, so only true backdrop clicks target the dialog. */
+.modal-panel { padding: 18px 20px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .modal-title { font-size: 18px; font-weight: bold; color: var(--text); }
 .modal-close { background: none; border: none; font-size: 16px; color: var(--muted-2); cursor: pointer; line-height: 1; }
@@ -5288,10 +5295,16 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .wallet-pick-icon { width: 18px; height: 18px; border-radius: 4px; flex: none; }
 
 /* Overlay + sheet */
+/* The wizard is a native <dialog> too: the top layer keeps it above the page and below any modal it
+   spawns, with no z-index. It stays the full-viewport scroll container it always was; ::backdrop paints
+   the dim the element itself used to. */
 .create-overlay {
-  position: fixed; inset: 0; background: rgba(44, 32, 24, 0.5); z-index: 200;
+  position: fixed; inset: 0; margin: 0; border: none; background: transparent; color: var(--text);
+  width: 100%; max-width: 100%; height: 100%; max-height: 100%;
   display: flex; align-items: flex-start; justify-content: center; padding: 32px 16px; overflow-y: auto;
 }
+.create-overlay:not([open]) { display: none; }
+.create-overlay::backdrop { background: rgba(44, 32, 24, 0.5); }
 .create-sheet {
   background: var(--bg); border: 3px solid var(--c-black-light); width: 100%; max-width: 480px;
   padding: 0 0 20px; box-shadow: 0 10px 40px rgba(44, 32, 24, 0.35);

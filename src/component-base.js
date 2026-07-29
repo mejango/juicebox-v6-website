@@ -1070,39 +1070,81 @@ export function renderConfirmBody(content, payload, opts) {
   appendAuditPromptLink(content, payload);
 }
 
+// Modal chrome, shared by every modal in the app. The root is a native <dialog> opened with
+// showModal(): the browser puts it in the TOP LAYER, so the newest modal paints above every earlier one
+// (and above the create overlay) with no z-index bookkeeping, everything behind it goes inert, and the
+// `cancel` event Escape fires reaches the TOP dialog only — which is why Escape now closes one modal
+// instead of every stacked modal at once. Callers append their content into `panel`.
+// opts: { canClose(): boolean — refuse dismissal (e.g. a send is in flight), onClose(): void }
+var _modalTitleSeq = 0;
+export function openDialog(titleText, opts) {
+  opts = opts || {};
+  var canClose = opts.canClose || function () { return true; };
+  var dialog = el('dialog', 'modal-dialog');
+  // The dialog element is the click target for backdrop clicks, so all content lives one level in.
+  var panel = el('div', 'modal-panel');
+  var head = el('div', 'modal-head');
+  var title = el('div', 'modal-title');
+  title.textContent = titleText || '';
+  title.id = 'modal-title-' + (++_modalTitleSeq);
+  // showModal() already implies role="dialog" + aria-modal="true"; the name is the part it can't infer.
+  dialog.setAttribute('aria-labelledby', title.id);
+  head.appendChild(title);
+  var x = el('button', 'modal-close');
+  x.type = 'button'; x.textContent = '✕'; x.setAttribute('aria-label', 'Close');
+  head.appendChild(x);
+  panel.appendChild(head);
+  dialog.appendChild(panel);
+
+  var closed = false;
+  function close() {
+    if (closed) return;
+    closed = true;
+    if (dialog.open) dialog.close(); // restores focus to whatever opened the modal
+    if (dialog.parentNode) dialog.remove();
+    if (opts.onClose) opts.onClose();
+  }
+  function requestClose() { if (canClose()) close(); }
+  x.addEventListener('click', requestClose);
+  // Escape. preventDefault() unconditionally so the browser's own close never bypasses this teardown
+  // (and so a refusing canClose() keeps the dialog up); our close path runs instead.
+  dialog.addEventListener('cancel', function (e) { e.preventDefault(); requestClose(); });
+  // A backdrop click targets the <dialog> itself — anything inside targets .modal-panel or deeper.
+  dialog.addEventListener('click', function (e) { if (e.target === dialog) requestClose(); });
+  document.body.appendChild(dialog);
+  if (!dialog.open) dialog.showModal(); // showModal() on an already-open dialog throws
+  return { dialog: dialog, panel: panel, title: title, closeButton: x, close: close, requestClose: requestClose };
+}
+
 export function confirmTransactionModal(payload, opts) {
   opts = opts || {};
   // View-as is browse-only: every confirm funnel refuses here with a clear notice instead of a review.
   if (getViewAs()) {
     return new Promise(function (resolve) {
-      var overlay = el('div', 'modal-overlay');
-      var dialog = el('div', 'modal-dialog');
-      var head = el('div', 'modal-head');
-      var h = el('div', 'modal-title'); h.textContent = 'Viewing as another account'; head.appendChild(h);
-      var x = document.createElement('button'); x.className = 'modal-close'; x.textContent = '✕'; head.appendChild(x);
-      dialog.appendChild(head);
+      var cancelResult = opts.keepOpenForProgress ? { ok: false } : false;
+      var modal = openDialog('Viewing as another account', { onClose: function () { resolve(cancelResult); } });
       var content = el('div', 'pay-confirm');
       var note = el('div', 'tx-confirm-note viewas-blocked'); note.textContent = VIEW_AS_TX_ERROR; content.appendChild(note);
       var foot = el('div', 'create-modal-foot');
       var closeBtn = el('button', 'create-btn ghost'); closeBtn.textContent = 'Close'; foot.appendChild(closeBtn);
-      content.appendChild(foot); dialog.appendChild(content); overlay.appendChild(dialog);
-      var cancelResult = opts.keepOpenForProgress ? { ok: false } : false;
-      function close() { if (overlay.parentNode) overlay.remove(); document.removeEventListener('keydown', onKey); resolve(cancelResult); }
-      function onKey(e) { if (e.key === 'Escape') close(); }
-      x.addEventListener('click', close);
-      closeBtn.addEventListener('click', close);
-      overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
-      document.addEventListener('keydown', onKey);
-      document.body.appendChild(overlay);
+      content.appendChild(foot);
+      modal.panel.appendChild(content);
+      closeBtn.addEventListener('click', modal.requestClose);
     });
   }
   return new Promise(function (resolve) {
-    var overlay = el('div', 'modal-overlay');
-    var dialog = el('div', 'modal-dialog');
-    var head = el('div', 'modal-head');
-    var h = el('div', 'modal-title'); h.textContent = opts.title || 'Confirm transaction'; head.appendChild(h);
-    var x = document.createElement('button'); x.className = 'modal-close'; x.textContent = '✕'; head.appendChild(x);
-    dialog.appendChild(head);
+    // Legacy callers await a boolean and expect the modal to close on confirm. `keepOpenForProgress`
+    // (executeTransaction only) opts into the richer behavior: stay open, resolve { ok, showStatus, close }.
+    var keepOpen = !!opts.keepOpenForProgress;
+    var cancelResult = keepOpen ? { ok: false } : false;
+    var resolved = false, inFlight = false;
+    function finish(result) { if (resolved) return; resolved = true; resolve(result); }
+    // Escape, ✕ and backdrop clicks all run through one gate: refused while the reviewed tx is in
+    // flight, and any dismissal that isn't an explicit confirm resolves as cancelled.
+    var modal = openDialog(opts.title || 'Confirm transaction', {
+      canClose: function () { return !inFlight; },
+      onClose: function () { finish(cancelResult); },
+    });
     var content = el('div', 'pay-confirm');
     renderConfirmBody(content, payload, opts); // safety note + decoded summary + raw-in-details + audit link
     var foot = el('div', 'create-modal-foot');
@@ -1113,14 +1155,8 @@ export function confirmTransactionModal(payload, opts) {
     // Post-confirm progress shows HERE, inside the modal — the modal stays open after "Confirm" so callers
     // don’t have to render tx status next to a button. Hidden until the tx is in flight.
     var statusEl = el('div', 'tx-confirm-status'); statusEl.style.display = 'none'; content.appendChild(statusEl);
-    dialog.appendChild(content); overlay.appendChild(dialog);
-    // Legacy callers await a boolean and expect the modal to close on confirm. `keepOpenForProgress`
-    // (executeTransaction only) opts into the richer behavior: stay open, resolve { ok, showStatus, close }.
-    var keepOpen = !!opts.keepOpenForProgress;
-    var cancelResult = keepOpen ? { ok: false } : false;
-    var resolved = false, inFlight = false;
-    function finish(result) { if (resolved) return; resolved = true; resolve(result); }
-    function teardown() { document.removeEventListener('keydown', onKey); if (overlay.parentNode) overlay.remove(); }
+    modal.panel.appendChild(content);
+    var teardown = modal.close;
     function close(result) { finish(result); teardown(); }
     function showStatus(m, kind, meta) {
       statusEl.style.display = '';
@@ -1135,9 +1171,7 @@ export function confirmTransactionModal(payload, opts) {
         cancel.textContent = 'Close';
       }
     }
-    function onKey(e) { if (e.key === 'Escape' && !inFlight) close(cancelResult); }
-    x.addEventListener('click', function () { if (!inFlight) close(cancelResult); });
-    cancel.addEventListener('click', function () { if (!inFlight) close(cancelResult); });
+    cancel.addEventListener('click', modal.requestClose);
     confirm.addEventListener('click', function () {
       if (keepOpen) {
         // Hand control to the caller: keep the modal open, disable the buttons, and let it drive
@@ -1148,9 +1182,6 @@ export function confirmTransactionModal(payload, opts) {
         close(true);
       }
     });
-    overlay.addEventListener('click', function (e) { if (e.target === overlay && !inFlight) close(cancelResult); });
-    document.addEventListener('keydown', onKey);
-    document.body.appendChild(overlay);
   });
 }
 
