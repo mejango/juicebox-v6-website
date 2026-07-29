@@ -51,7 +51,7 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-what', '1. WHAT IS JUICEBOX?', [
     'Juicebox is a programmable money engine for the open web. Anyone can create a project, accept payments, and distribute funds according to rules they define — all without middlemen.',
-    'People who pay into a project get tokens in return. Those tokens represent their stake. If the project has money beyond what it needs for payouts, token owners can cash out their tokens to reclaim a portion of that extra money (called "surplus").',
+    'People who pay into a project get tokens in return. Those tokens represent their stake. If the project has money beyond what it needs for payouts, token holders can cash out their tokens to reclaim a portion of that extra money (called "surplus").',
     'Projects can accept any currency, operate across multiple blockchains, and customize every aspect of how money flows in and out. Tokens can be programmed to serve any purpose — governance votes, membership access, revenue shares, or just a way to track participation.'
   ], []));
 
@@ -65,7 +65,7 @@ export function renderLearnTab() {
       '  2. The project DISTRIBUTES payouts',
       '     └─▶ To team members, partners, other projects',
       '',
-      '  3. Token owners can CASH OUT',
+      '  3. Token holders can CASH OUT',
       '     └─▶ Burn tokens, reclaim a share of what’s left',
       '',
       '  surplus = project balance - payout commitments',
@@ -142,9 +142,9 @@ export function renderLearnTab() {
   ]));
 
   wrap.appendChild(guideSection('learn-tokens', '6. TOKENS', [
-    'When someone pays a project, they receive project tokens. Tokens record participation, define each owner’s share of the surplus that can be cashed out, and can be used by extensions or outside apps as the project’s own asset. The exchange rate is set by the ruleset weight — for example, 1,000 tokens per ETH.',
+    'When someone pays a project, they receive project tokens. Tokens record participation, define each holder’s share of the surplus that can be cashed out, and can be used by extensions or outside apps as the project’s own asset. The exchange rate is set by the ruleset weight — for example, 1,000 tokens per ETH.',
     'A portion of tokens can be reserved for the project team. If reservedPercent is 20%, then for every payment, 80% of tokens go to the payer and 20% are set aside for the team’s configured splits.',
-    'Tokens start as internal "credits" — lightweight balances tracked by the protocol. The project can deploy a full ERC-20 token at any time, and owners can convert their credits into real tokens.'
+    'Tokens start as internal "credits" — lightweight balances tracked by the protocol. The project can deploy a full ERC-20 token at any time, and token holders can convert their credits into real tokens.'
   ], [
     diagram('TOKEN FLOW EXAMPLE', [
       '  payment: 2 ETH',
@@ -163,7 +163,7 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-splits', '7. SPLITS & PAYOUTS', [
     'Splits control where money and reserved tokens go. Each split directs a percentage to a wallet, another project, or a custom contract.',
-    'Payout limits cap how much the project can distribute per cycle. Everything beyond the payout limit is "surplus" — and that’s what token owners can cash out against.',
+    'Payout limits cap how much the project can distribute per cycle. Everything beyond the payout limit is "surplus" — and that’s what token holders can cash out against.',
     'Splits can be locked until a specific date. Once locked, they can’t be reduced or removed — only added to. This protects team members and partners from having their share cut.'
   ], [
     diagram('FUND FLOW', [
@@ -257,8 +257,8 @@ export function renderLearnTab() {
   wrap.appendChild(guideSection('learn-omnichain', '11. OMNICHAIN', [
     'A single project can operate across multiple blockchains — Ethereum, Optimism, Arbitrum, and more. The same project tokens work everywhere, and funds move proportionally between chains.',
     'This works through "suckers" — bridge contracts that connect a project’s funds across chains. When tokens are bridged from one chain to another, the sucker moves a proportional share of the funds to match. Each chain pair has its own sucker using the native bridge (Optimism bridge, Arbitrum bridge, or Chainlink CCIP).',
-    'Once tokens have been bridged through a sucker, the token mapping between chains becomes permanent — it can’t be changed, only disabled. This protects owners from having their cross-chain tokens invalidated.',
-    'If a bridge ever stops working, owners aren’t stranded: the project can deprecate the sucker (with a built-in delay so in-flight transfers still arrive) and enable an emergency hatch that lets owners withdraw their backing funds locally on the chain they deposited from.'
+    'Once tokens have been bridged through a sucker, the token mapping between chains becomes permanent — it can’t be changed, only disabled. This protects token holders from having their cross-chain tokens invalidated.',
+    'If a bridge ever stops working, token holders aren’t stranded: the project can deprecate the sucker (with a built-in delay so in-flight transfers still arrive) and enable an emergency hatch that lets holders withdraw their backing funds locally on the chain they deposited from.'
   ], [
     diagram('CROSS-CHAIN FLOW', [
       '  Ethereum funds ◄──── sucker ────► Optimism funds',
@@ -353,9 +353,9 @@ export function renderLearnTab() {
   ]));
 
   wrap.appendChild(guideSection('learn-loans', '17. LOANS', [
-    'Revnet token owners who need cash don’t have to sell. They can take out a loan against their tokens instead — keeping their position while accessing liquidity.',
+    'Revnet token holders who need cash don’t have to sell. They can take out a loan against their tokens instead — keeping their position while accessing liquidity.',
     'When you borrow, your collateral tokens are burned (removed from supply) and you receive funds from the project. The loan itself is represented as an NFT, so it can be transferred or sold. When you repay, your tokens are re-minted and returned to you.',
-    'Loans have an upfront fee (2.5% to 50% of the borrowed amount, paid to the revnet) plus a small protocol fee. If a loan isn’t repaid within 10 years, anyone can liquidate it — the collateral tokens stay burned permanently and the loan is written off. This actually benefits remaining token owners, since there are now fewer tokens sharing the same funds.'
+    'Loans have an upfront fee (2.5% to 50% of the borrowed amount, paid to the revnet) plus a small protocol fee. If a loan isn’t repaid within 10 years, anyone can liquidate it — the collateral tokens stay burned permanently and the loan is written off. This actually benefits remaining token holders, since there are now fewer tokens sharing the same funds.'
   ], [
     diagram('LOAN LIFECYCLE', [
       '  borrow',
@@ -369,7 +369,7 @@ export function renderLearnTab() {
       '',
       '  liquidation (after 10 years)',
       '     └─▶ loan written off — collateral stays burned',
-      '     └─▶ remaining owners benefit from reduced supply',
+      '     └─▶ remaining token holders benefit from reduced supply',
     ]),
     textBlock('At high cash out tax rates, loan fees can be cheaper than the tax you’d lose by cashing out — making loans a more capital-efficient way to access liquidity while keeping your position.')
   ]));
@@ -390,9 +390,9 @@ export function renderLearnTab() {
   ]));
 
   wrap.appendChild(guideSection('learn-distributor', '19. DISTRIBUTOR', [
-    'The distributor is an optional add-on a project can deploy (it isn’t part of the core protocol deployment). It’s a reward system that automatically shares revenue (or any tokens) among project participants. Think of it like a dividend: funds go into the distributor, and owners collect their fair share over time.',
+    'The distributor is an optional add-on a project can deploy (it isn’t part of the core protocol deployment). It’s a reward system that automatically shares revenue (or any tokens) among project participants. Think of it like a dividend: funds go into the distributor, and participants collect their fair share over time.',
     'Distribution happens in rounds. At the start of each round, a snapshot captures how much each participant holds. Their share of the round’s rewards is proportional to their holdings at that moment. Rewards don’t unlock all at once — they vest gradually over a set number of rounds, encouraging long-term participation.',
-    'There are two flavors: one for regular token owners (based on voting power), and one for NFT owners (based on their NFT tiers). Both work the same way — fund it, start a round, and let owners collect as their rewards vest.'
+    'There are two flavors: one for regular token holders (based on voting power), and one for NFT owners (based on their NFT tiers). Both work the same way — fund it, start a round, and let participants collect as their rewards vest.'
   ], [
     diagram('HOW DISTRIBUTION WORKS', [
       '  funds deposited into the distributor',
@@ -401,7 +401,7 @@ export function renderLearnTab() {
       '  round starts → snapshot of all holdings',
       '     │',
       '     ▼',
-      '  owners begin vesting their share',
+      '  participants begin vesting their share',
       '     └─▶ share = your holdings / total holdings',
       '     └─▶ rewards unlock gradually over time',
       '     │',

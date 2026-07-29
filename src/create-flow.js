@@ -1099,7 +1099,7 @@ function operatorSection(state, render) {
   }
   box.appendChild(perChainAddrControl(state, render, 'op', state.revOperatorResolved || state.revOperator || ''));
   box.appendChild(infoNote('The address that operates the few controls available in revnets.'));
-  wrap.appendChild(fieldBlock('Project operator', false, box));
+  wrap.appendChild(fieldBlock('Revnet operator', false, box));
   return wrap;
 }
 
@@ -2621,12 +2621,12 @@ function collectionExtrasSection(state, render) {
   // Revnet operator 721 permissions — REVDeployer grants the operator all four by default; these let the
   // user revoke individual ones at deploy time (encoded as the REVDeploy721TiersHookConfig preventOperator* flags).
   if (state.projectType === 'revnet') {
-    var opHead = el('div', 'create-label'); opHead.style.marginTop = '16px'; opHead.textContent = 'Project operator store permissions'; f.appendChild(opHead);
-    var opNote = el('div', 'create-hint'); opNote.textContent = 'What the revnet’s project operator can do to the store after launch.'; f.appendChild(opNote);
-    f.appendChild(toggleRow('Project operator can add & remove items', dz('The project operator can adjust the store’s items.', 'The project operator can’t change the store’s items.'), c.opCanAdjustTiers, function (v) { c.opCanAdjustTiers = v; }));
-    f.appendChild(toggleRow('Project operator can update item metadata', dz('The project operator can update the store’s metadata.', 'The project operator can’t update the store’s metadata.'), c.opCanUpdateMetadata, function (v) { c.opCanUpdateMetadata = v; }));
-    f.appendChild(toggleRow('Project operator can mint items for free', dz('The project operator can mint shop items from inventory without paying.', 'The project operator pays like everyone else.'), c.opCanMint, function (v) { c.opCanMint = v; }));
-    f.appendChild(toggleRow('Project operator can increase discounts', dz('The project operator can raise an item’s discount.', 'The project operator can’t raise item discounts.'), c.opCanIncreaseDiscount, function (v) { c.opCanIncreaseDiscount = v; }));
+    var opHead = el('div', 'create-label'); opHead.style.marginTop = '16px'; opHead.textContent = 'Revnet operator store permissions'; f.appendChild(opHead);
+    var opNote = el('div', 'create-hint'); opNote.textContent = 'What the revnet’s revnet operator can do to the store after launch.'; f.appendChild(opNote);
+    f.appendChild(toggleRow('Revnet operator can add & remove items', dz('The revnet operator can adjust the store’s items.', 'The revnet operator can’t change the store’s items.'), c.opCanAdjustTiers, function (v) { c.opCanAdjustTiers = v; }));
+    f.appendChild(toggleRow('Revnet operator can update item metadata', dz('The revnet operator can update the store’s metadata.', 'The revnet operator can’t update the store’s metadata.'), c.opCanUpdateMetadata, function (v) { c.opCanUpdateMetadata = v; }));
+    f.appendChild(toggleRow('Revnet operator can mint items for free', dz('The revnet operator can mint shop items from inventory without paying.', 'The revnet operator pays like everyone else.'), c.opCanMint, function (v) { c.opCanMint = v; }));
+    f.appendChild(toggleRow('Revnet operator can increase discounts', dz('The revnet operator can raise an item’s discount.', 'The revnet operator can’t raise item discounts.'), c.opCanIncreaseDiscount, function (v) { c.opCanIncreaseDiscount = v; }));
   }
   return f;
 }
@@ -3156,7 +3156,7 @@ function renderDeploy(state, render) {
   if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to ' + (isRev ? 'deploy.' : 'launch.')));
   if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
   if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Flavor step to launch.'));
-  if (needOperator) wrap.appendChild(infoNote('Set a project operator on the Flavor step to deploy your revnet.'));
+  if (needOperator) wrap.appendChild(infoNote('Set a revnet operator on the Flavor step to deploy your revnet.'));
   if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet — fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
   if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying — otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
@@ -3503,7 +3503,7 @@ function reviewSummary(state) {
     c.appendChild(row('Token', '$' + tickerLabel(state)));
     c.appendChild(row('Accounting token', surplusTokenLabel(state)));
     var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-    c.appendChild(row('Project operator', /^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || '—')));
+    c.appendChild(row('Revnet operator', /^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || '—')));
     c.appendChild(row('Stages', String(state.stages.length)));
     state.stages.forEach(function (s, i) { c.appendChild(row('Stage #' + (i + 1), revStageSummary(s, i, state))); });
     c.appendChild(row('Chains', state.chainIds.map(chainName).join(', ')));
@@ -3745,7 +3745,7 @@ function deploy(state, render) {
   }
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
-  // The project owner / project operator is an explicit, required launch argument (ENS-resolved).
+  // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
   if (state.projectType === 'revnet' ? !isAddr(operatorRaw) : !isAddr(ownerRaw)) {

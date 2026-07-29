@@ -1265,7 +1265,7 @@ function renderShopSection(project, shop, cart) {
   var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; head.appendChild(title);
   // Top-right "+ Add items" for the owner/operator (shown once the 721 hook resolves; gated on submit).
   var headAdd = el('a', 'operator-cta shop-head-add'); headAdd.href = '#'; headAdd.textContent = '+ Add items';
-  headAdd.title = 'Add NFT items for sale (project operator only)'; headAdd.style.display = 'none';
+  headAdd.title = 'Add NFT items for sale (revnet operator only)'; headAdd.style.display = 'none';
   head.appendChild(headAdd);
   card.appendChild(head);
   var body = el('div', 'shop-body'); card.appendChild(body);
@@ -2707,7 +2707,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   var authority = projectAuthorityAddress(project);
   var acct = getEffectiveAccount();
   if (acct && authority && acct.toLowerCase() === authority.toLowerCase()) {
-    var opH = el('div', 'tier-detail-section-h'); opH.textContent = 'Project operator'; content.appendChild(opH);
+    var opH = el('div', 'tier-detail-section-h'); opH.textContent = 'Revnet operator'; content.appendChild(opH);
     var opBox = el('div', 'tier-detail-op');
     var opStatus = el('div', 'modal-status'); opStatus.style.display = 'none';
     var dRow = el('div', 'tier-detail-op-row');
@@ -5248,7 +5248,7 @@ async function revnetOperatorOf(projectId, chainId) {
 }
 
 function projectAuthorityLabel(project) {
-  return project && project.isRevnet ? 'Project operator' : 'Project owner';
+  return project && project.isRevnet ? 'Revnet operator' : 'Project owner';
 }
 
 function projectAuthorityAddress(project) {
@@ -6441,6 +6441,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   var built = {};
   // Resolve the initial tab (from a deep link) case-insensitively; fall back to the first tab.
   var startTab = tabs[0];
+  // Preserve links created while the revnet holder tab briefly used "Tokens".
+  if (project.isRevnet && tabSlug(initialTab) === 'tokens') initialTab = 'Owners';
   if (initialTab) {
     for (var k = 0; k < tabs.length; k++) if (tabSlug(tabs[k]) === tabSlug(initialTab)) { startTab = tabs[k]; break; }
   }
@@ -7855,7 +7857,7 @@ function renderDetailHeader(project) {
     fetchOwnersCount(project).then(function (n) {
       n = (n == null) ? 0 : n;
       oStrong.textContent = String(n);
-      oLabel.textContent = n === 1 ? ' owner' : ' owners';
+      oLabel.textContent = n === 1 ? ' token holder' : ' token holders';
     }).catch(function () { oStrong.textContent = '0'; });
   } else {
     // Indexed activity (Bendystraw): volume raised + payment/contributor counts.
@@ -7946,7 +7948,7 @@ function renderAboutCard(project) {
 
   var foot = el('div', 'detail-about-foot');
   var edit = el('a', 'operator-cta'); edit.textContent = 'Edit'; edit.href = '#';
-  edit.title = 'Edit the project — logo, tagline, description, links (project operator only)';
+  edit.title = 'Edit the project — logo, tagline, description, links (revnet operator only)';
   edit.addEventListener('click', function (e) { e.preventDefault(); openEditProjectModal(project); });
   foot.appendChild(edit);
   card.appendChild(foot);
@@ -8251,21 +8253,21 @@ function openTransferAuthorityModal(project, opts) {
   var homeChainId = (chains[0] && chains[0].id) || project.chainId;
   var chainListText = chains.map(function (c) { return c.name || chainNameOf(c.id); }).join(', ');
   var content = el('div', 'modal-body operator-edit');
-  content.appendChild(operatorGateNode((projectAuthorityLabel(project) || (isRev ? 'Project operator' : 'Project owner')).toLowerCase(), authorityAddr, isRev ? 'to transfer the project operator role.' : 'to transfer project ownership.', homeChainId));
+  content.appendChild(operatorGateNode((projectAuthorityLabel(project) || (isRev ? 'Revnet operator' : 'Project owner')).toLowerCase(), authorityAddr, isRev ? 'to transfer the revnet operator role.' : 'to transfer project ownership.', homeChainId));
   var warn = el('div', 'operator-edit-across');
   warn.textContent = isRev
-    ? 'Hands over project operator control on ' + chainListText + '. Use the zero address to relinquish project operator powers permanently. Does not move funds or change rulesets.'
+    ? 'Hands over revnet operator control on ' + chainListText + '. Use the zero address to relinquish revnet operator powers permanently. Does not move funds or change rulesets.'
     : 'Transfers project ownership (the JBProjects NFT) on ' + chainListText + '. The new project owner controls owner-only actions there. Does not move funds or change rulesets.';
   content.appendChild(warn);
-  var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = isRev ? 'New project operator' : 'New project owner'; content.appendChild(nlbl);
-  var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new ' + (isRev ? 'project operator' : 'project owner') + ' address'; content.appendChild(addrInput);
+  var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = isRev ? 'New revnet operator' : 'New project owner'; content.appendChild(nlbl);
+  var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new ' + (isRev ? 'revnet operator' : 'project owner') + ' address'; content.appendChild(addrInput);
   var addrHint = el('div', 'operator-edit-token-name'); content.appendChild(addrHint);
-  var authorityValueOf = attachAddressRecognition(addrInput, addrHint, homeChainId, { label: isRev ? 'New project operator' : 'New project owner' });
+  var authorityValueOf = attachAddressRecognition(addrInput, addrHint, homeChainId, { label: isRev ? 'New revnet operator' : 'New project owner' });
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = isRev ? 'Transfer project operator' : 'Transfer project ownership';
+  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = isRev ? 'Transfer revnet operator' : 'Transfer project ownership';
   actions.appendChild(submit); content.appendChild(actions);
-  var modal = openModal(isRev ? 'Transfer project operator' : 'Transfer project ownership', content);
+  var modal = openModal(isRev ? 'Transfer revnet operator' : 'Transfer project ownership', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -8561,7 +8563,7 @@ async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, 
   var denied = chains.filter(function (_, i) { return !allowed[i]; }).map(function (chain) {
     return chain.name || chainNameOf(chain.id);
   });
-  var hint = operatorHint ? (' The indexed project operator is ' + truncAddr(operatorHint) + '.') : '';
+  var hint = operatorHint ? (' The indexed revnet operator is ' + truncAddr(operatorHint) + '.') : '';
   setStatus('This wallet does not have permission to manage the shop on ' + denied.join(', ') + '.' + hint, 'error');
   return null;
 }
@@ -12064,7 +12066,7 @@ function renderAccountCard(project) {
   // For a revnet, the JBProjects owner is the REVDeployer — the controlling account is the OPERATOR; show
   // that instead. For custom projects, the owner IS the controlling account (read per chain via ownerOf).
   var isRev = project.isRevnet;
-  var addrLabel = isRev ? 'Project operator' : 'Project owner';
+  var addrLabel = isRev ? 'Revnet operator' : 'Project owner';
   var authorityRowsP = isRev
     ? fetchOperatorsPerChain(project).then(function (res) {
       var byChain = {};
@@ -13154,22 +13156,22 @@ function renderPermissionsCard(project) {
   var title = el('div', 'detail-card-title'); title.textContent = 'Permissions'; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro');
   intro.textContent = isRev
-    ? 'What this revnet’s project operator is allowed to do. These powers come with the project operator role (the default revnet powers plus any NFT powers granted when the revnet was deployed).'
-    : 'Project operators the project owner has authorized to act on the project’s behalf, and what each one can do. The project owner can grant or revoke permissions at any time.';
+    ? 'What this revnet’s revnet operator is allowed to do. These powers come with the revnet operator role (the default revnet powers plus any NFT powers granted when the revnet was deployed).'
+    : 'Revnet operators the project owner has authorized to act on the project’s behalf, and what each one can do. The project owner can grant or revoke permissions at any time.';
   card.appendChild(intro);
   var body = el('div'); body.appendChild(skel('100%', '40px')); card.appendChild(body);
 
   fetchPermissionOperators(project).then(function (ops) {
     body.innerHTML = '';
     if (!ops.length) {
-      var empty = el('div', 'powers-desc'); empty.textContent = isRev ? 'No project operator permissions found.' : 'No project operators authorized yet.';
+      var empty = el('div', 'powers-desc'); empty.textContent = isRev ? 'No revnet operator permissions found.' : 'No revnet operators authorized yet.';
       body.appendChild(empty);
     } else {
       ops.forEach(function (g) {
         var row = el('div', 'powers-row');
         var head = el('div', 'powers-head');
         var lab = el('span', 'powers-label'); lab.appendChild(addressNode(g.operator, project.chainId)); head.appendChild(lab);
-        if (g.isRevnetOperator) { var b = el('span', 'powers-state on'); b.textContent = 'Project operator'; head.appendChild(b); }
+        if (g.isRevnetOperator) { var b = el('span', 'powers-state on'); b.textContent = 'Revnet operator'; head.appendChild(b); }
         row.appendChild(head);
         var list = el('div', 'perm-list');
         g.permsUnion.forEach(function (id) {
@@ -13188,7 +13190,7 @@ function renderPermissionsCard(project) {
       });
     }
     if (!isRev) {
-      var add = el('a', 'operator-cta powers-act'); add.href = '#'; add.textContent = '+ Add project operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
+      var add = el('a', 'operator-cta powers-act'); add.href = '#'; add.textContent = '+ Add revnet operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
       add.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, null, []); });
       body.appendChild(add);
     }
@@ -13206,17 +13208,17 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var editing = !!existingOperator;
 
   var content = el('div', 'modal-body operator-edit');
-  content.appendChild(operatorGateNode(authorityLabel, account, editing ? 'to change this project operator’s permissions.' : 'to authorize a new project operator.', project.chainId));
+  content.appendChild(operatorGateNode(authorityLabel, account, editing ? 'to change this revnet operator’s permissions.' : 'to authorize a new revnet operator.', project.chainId));
   var note = el('div', 'operator-edit-across');
-  note.textContent = 'Grants the checked permissions to the project operator. Setting permissions REPLACES the project operator’s current set on each selected chain — unchecking a box revokes that power, and clearing every box removes the project operator.';
+  note.textContent = 'Grants the checked permissions to the revnet operator. Setting permissions REPLACES the revnet operator’s current set on each selected chain — unchecking a box revokes that power, and clearing every box removes the revnet operator.';
   content.appendChild(note);
 
-  var olbl = el('div', 'operator-edit-label'); olbl.style.marginTop = '12px'; olbl.textContent = 'Project operator'; content.appendChild(olbl);
-  var opInput = el('input', 'operator-edit-jwt'); opInput.type = 'text'; opInput.placeholder = '0x… project operator address';
+  var olbl = el('div', 'operator-edit-label'); olbl.style.marginTop = '12px'; olbl.textContent = 'Revnet operator'; content.appendChild(olbl);
+  var opInput = el('input', 'operator-edit-jwt'); opInput.type = 'text'; opInput.placeholder = '0x… revnet operator address';
   if (editing) { opInput.value = existingOperator; opInput.disabled = true; }
   content.appendChild(opInput);
   var opHint = el('div', 'operator-edit-token-name'); content.appendChild(opHint);
-  var operatorValueOf = attachAddressRecognition(opInput, opHint, project.chainId, { label: 'Project operator' });
+  var operatorValueOf = attachAddressRecognition(opInput, opHint, project.chainId, { label: 'Revnet operator' });
 
   var plbl = el('div', 'operator-edit-label'); plbl.style.marginTop = '14px'; plbl.textContent = 'Permissions'; content.appendChild(plbl);
   var have = {}; (existingPermIds || []).forEach(function (id) { have[id] = true; });
@@ -13248,7 +13250,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
   var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = editing ? 'Update permissions' : 'Add operator'; actions.appendChild(submit);
-  var gate = appendDangerGate(content, 'Granting permissions lets the project operator act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious project operator can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the project operator address and the permissions I’m granting.');
+  var gate = appendDangerGate(content, 'Granting permissions lets the revnet operator act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious revnet operator can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the revnet operator address and the permissions I’m granting.');
   content.appendChild(actions);
   var modal = openModal(editing ? 'Edit permissions' : 'Add operator', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
@@ -15831,11 +15833,12 @@ function ownersCard(title, node) {
   return card;
 }
 
-// People who hold a project's tokens are "owners" on every project-page surface (the revnet tab
-// convention) — the wallet/holder subtab, the header stat, and the Learn-tab copy all share the word.
-export var OWNERS_SUBTABS_DEFAULT = ['Owners', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'];
-export var OWNERS_SUBTABS_CUSTOM = ['Owners', 'Market', 'Settlement', 'Reserved'];
-export var OWNERS_STAT_LABEL = 'Owners';
+// Token-holding accounts are distinct from the project Owner / revnet
+// Operator authority tabs. Keep authority labels short in the tab row, while
+// holder distribution consistently lives under Accounts.
+export var OWNERS_SUBTABS_DEFAULT = ['Accounts', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'];
+export var OWNERS_SUBTABS_CUSTOM = ['Accounts', 'Market', 'Settlement', 'Reserved'];
+export var OWNERS_STAT_LABEL = 'Token holders';
 
 // Owners tab (revnets) — split into lazy SUBTABS so each pane's reads only fire when first opened
 // (the page no longer fetches every owner/settlement/splits/loan source at once on tab open).
@@ -15845,7 +15848,7 @@ function renderOwnersSection(project, opts) {
   var stages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
 
   var subBuilders = {
-    'Owners': function () {
+    'Accounts': function () {
       var w = el('div', 'owners-subgroup');
       w.appendChild(ownersCard('You', renderYouCard(project, opts)));
       w.appendChild(ownersCard('All', renderOwnersAll(project)));
@@ -15936,7 +15939,7 @@ function renderOwnersSection(project, opts) {
   section.addEventListener('jb:goto-subtab', function (e) { if (e.detail) show(e.detail); });
   // Expose subtab switching so a route change (#…/tab/subtab) can drive it; pick the routed subtab if given.
   if (_activeDetail) _activeDetail.showSubTab = show;
-  var initial = 'Owners';
+  var initial = 'Accounts';
   if (opts.initialSubTab) {
     for (var oi = 0; oi < order.length; oi++) if (tabSlug(order[oi]) === tabSlug(opts.initialSubTab)) { initial = order[oi]; break; }
   }
@@ -17721,7 +17724,7 @@ function renderOwnersSplits(project, opts) {
   var intro = el('div', 'splits-intro');
   intro.textContent = reserved
     ? 'A reserved percentage of newly issued ' + sym + ' is split between these accounts. The project owner can adjust the recipients at any time, up to the reserved rate set by the ruleset.'
-    : 'Newly issued and bought back ' + sym + ' are split between these accounts. The project operator can adjust the splits at any time within each stage’s permanent split limit.';
+    : 'Newly issued and bought back ' + sym + ' are split between these accounts. The revnet operator can adjust the splits at any time within each stage’s permanent split limit.';
   wrap.appendChild(intro);
 
   var stages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
@@ -17819,7 +17822,7 @@ function renderOwnersSplits(project, opts) {
   if (!reserved) {
     var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '20px';
     var edit = el('a', 'operator-cta'); edit.textContent = 'Edit splits'; edit.href = '#';
-    edit.title = 'Edit the current stage’s split recipients (project operator only)';
+    edit.title = 'Edit the current stage’s split recipients (revnet operator only)';
     edit.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project); });
     foot.appendChild(edit);
     wrap.appendChild(foot);
@@ -20503,7 +20506,7 @@ function buildRedeemItemsModal(project, requestClose) {
       return Promise.all([
         clientFor(cid).readContract({ address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [acct, localPid, 0n, state.acct.address, acct, metadata] }).catch(function () { return null; }),
         isFeelessAddress(cid, acct, state.localPid),
-        read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [localPid, state.acct.address]).then(toBigInt).catch(function () { return 0n; }),
+        read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [localPid, state.acct.address]).then(toBigInt),
       ]).then(function (res) {
         if (seq !== previewSeq) return;
         var pc = res[0];
@@ -23203,7 +23206,8 @@ async function lpSendTx(chainId, p) {
   if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId] }));
   try {
-    await client.waitForTransactionReceipt({ hash: hash, timeout: p.smartWallet ? 180000 : undefined });
+    var receipt = await client.waitForTransactionReceipt({ hash: hash, timeout: p.smartWallet ? 180000 : undefined });
+    if (!receipt || receipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
   } catch (e) {
     // A multisig executes when its co-signers get to it — possibly days after the proposal. The receipt wait
     // giving up is expected there, not a failure: stop gracefully and tell the user how the flow resumes.
