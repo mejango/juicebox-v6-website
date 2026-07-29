@@ -400,6 +400,14 @@ var TIER721_STORE_ABI = [
   { type: 'function', name: 'tiersOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256[]' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }], outputs: [TIER721_TUPLE] },
   { type: 'function', name: 'tokenUriResolverOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'address' }] },
 ];
+var TIER721_CONFIG_FLAGS_ABI = [{
+  type: 'function', name: 'flagsOf', stateMutability: 'view', inputs: [{ type: 'address' }],
+  outputs: [{ type: 'tuple', components: [
+    { name: 'noNewTiersWithReserves', type: 'bool' }, { name: 'noNewTiersWithVotes', type: 'bool' },
+    { name: 'noNewTiersWithOwnerMinting', type: 'bool' }, { name: 'preventOverspending', type: 'bool' },
+    { name: 'issueTokensForSplits', type: 'bool' },
+  ] }],
+}];
 var TIER721_PRICING_CONTEXT_ABI = [{ type: 'function', name: 'pricingContext', stateMutability: 'view', inputs: [], outputs: [{ name: 'currency', type: 'uint256' }, { name: 'decimals', type: 'uint256' }] }];
 var TIER721_PAY_CREDITS_ABI = [{ type: 'function', name: 'payCreditsOf', stateMutability: 'view', inputs: [{ name: 'addr', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 var TIER721_RESOLVER_ABI = [{ type: 'function', name: 'tokenUriOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'string' }] }];
@@ -823,7 +831,11 @@ async function fetchProjectTiersUncached(project) {
   }
   var resolver = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tokenUriResolverOf', args: [hook] });
   if (resolver && /^0x0+$/.test(resolver)) resolver = null;
-  var raw = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] });
+  var shopReads = await Promise.all([
+    client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] }),
+    client.readContract({ address: store, abi: TIER721_CONFIG_FLAGS_ABI, functionName: 'flagsOf', args: [hook] }).catch(function () { return null; }),
+  ]);
+  var raw = shopReads[0], configFlags = shopReads[1];
   var indexedByTier = await fetchBendystrawTierMetadata(project, hook);
   var tiers = (raw || []).map(function (t) {
     return { id: Number(t.id), price: toBigInt(t.price), remaining: Number(t.remainingSupply), initial: Number(t.initialSupply),
@@ -834,7 +846,8 @@ async function fetchProjectTiersUncached(project) {
       flags: t.flags || {}, allowOwnerMint: t.flags && t.flags.allowOwnerMint,
       indexedMetadata: indexedByTier && indexedByTier[Number(t.id)] || null };
   }).filter(function (t) { return t.initial > 0; });
-  return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers, itemsCashOut: !!hookInfo.itemsCashOut };
+  return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers,
+    configFlags: configFlags, itemsCashOut: !!hookInfo.itemsCashOut };
 }
 
 // Resolve a tier's display { name, image, category } — prefer the onchain tokenUriResolver (it returns
@@ -1306,6 +1319,36 @@ function renderShopSection(project, shop, cart) {
     card.appendChild(foot);
   }
 
+  function appendShopConfig(s) {
+    if (!s || !s.hook) return;
+    var details = document.createElement('details'); details.className = 'shop-config';
+    var summary = document.createElement('summary'); summary.textContent = 'Shop config'; details.appendChild(summary);
+    var flags = s.configFlags;
+    if (!flags) {
+      var unavailable = el('div', 'shop-config-unavailable');
+      unavailable.textContent = 'Couldn’t read the current shop config.';
+      details.appendChild(unavailable);
+      card.appendChild(details);
+      return;
+    }
+    var rows = [
+      ['preventOverspending', 'Require exact payment'],
+      ['noNewTiersWithReserves', 'Lock reserved items after launch'],
+      ['noNewTiersWithVotes', 'Lock voting items after launch'],
+      ['noNewTiersWithOwnerMinting', 'Lock owner minting after launch'],
+      ['issueTokensForSplits', 'Give split recipients project tokens'],
+    ];
+    var list = el('dl', 'shop-config-list');
+    rows.forEach(function (row) {
+      var line = el('div', 'shop-config-row');
+      var label = document.createElement('dt'); label.textContent = row[1]; line.appendChild(label);
+      var value = document.createElement('dd'); value.textContent = flags[row[0]] ? 'On' : 'Off'; line.appendChild(value);
+      list.appendChild(line);
+    });
+    details.appendChild(list);
+    card.appendChild(details);
+  }
+
   var ready = shop ? Promise.resolve(shop) : fetchProjectTiers(project);
   body.textContent = 'Loading items…';
   ready.then(function (s) {
@@ -1316,10 +1359,12 @@ function renderShopSection(project, shop, cart) {
       body.className = 'detail-card-body owners-empty';
       body.textContent = s ? 'No items being sold yet' : 'No NFT store available.';
       appendAddTierFoot(s);
+      appendShopConfig(s);
       return;
     }
     showCredits(s);
     appendAddTierFoot(s);
+    appendShopConfig(s);
     body.className = 'shop-body';
     // Group tiers under category headings (juicy-vision layout), sorted by category number.
     var cats = [], seen = {};
@@ -8863,9 +8908,9 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
 }
 
 // The metadata-edit form's managed keys. Everything else in the live projectUri JSON (custom fields
-// like an external league id, tags, coverImageUri, version, …) rides through saves untouched.
+// like an external league id, tags, coverImageUri, …) rides through saves untouched.
 var PROJECT_METADATA_FORM_KEYS = ['name', 'projectTagline', 'description', 'infoUri', 'logoUri',
-  'twitter', 'discord', 'telegram', 'payDisclosure', 'storeCategories'];
+  'twitter', 'discord', 'telegram', 'payDisclosure', 'storeCategories', 'version'];
 
 // Keys present in the live projectUri JSON that the edit form does NOT manage — the set the modal's
 // "Advanced — custom properties (JSON)" editor owns, so operators can trust the round-trip.
@@ -8964,7 +9009,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin the updated metadata.', 'error'); return; }
 
   // Start from the live metadata so every field the operator didn't touch (custom fields, tags,
-  // version, …) is preserved.
+  // recognized retained fields such as version, plus custom fields, are preserved.
   var primaryChain = (chains[0] && chains[0].id) || project.chainId;
   var controllers = await controllerMapFor(chains, project);
   var meta = form.preloadedMeta;

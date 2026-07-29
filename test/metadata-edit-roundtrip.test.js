@@ -89,7 +89,6 @@ describe('projectCustomPropertiesText — the Advanced textarea prefill', () => 
       leagueID: 'FEPL-2026',
       tags: ['fantasy', 'epl'],
       extensions: { fepl: { season: 2026, teams: [1, 2, 3] } },
-      version: 6,
     });
     expect(text).toBe(JSON.stringify(JSON.parse(text), null, 2));
     // Saving the untouched prefill reproduces the live metadata byte-for-key.
@@ -113,9 +112,9 @@ describe('parseProjectCustomProperties — invalid JSON blocks the save', () => 
     expect(ok.value).toEqual({ leagueID: 'X', a: [1] });
     expect(ok.stripped).toEqual([]);
 
-    const collide = parseProjectCustomProperties('{ "name": "sneaky", "leagueID": "X" }');
+    const collide = parseProjectCustomProperties('{ "name": "sneaky", "version": 99, "leagueID": "X" }');
     expect(collide.error).toBeUndefined();
-    expect(collide.stripped).toEqual(['name']);
+    expect(collide.stripped).toEqual(['name', 'version']);
   });
 
   it('treats blank text as an empty object (clear-all when dirty)', () => {
@@ -136,14 +135,14 @@ describe('mergeProjectMetadataEdit — customProperties replaces the unmanaged-k
   it('supports editing, adding, and deleting custom keys', () => {
     const out = mergeProjectMetadataEdit(LIVE, [], {
       dirty: true,
-      // leagueID edited, newKey added; tags/extensions/version omitted → deleted.
+      // leagueID edited, newKey added; custom tags/extensions omitted → deleted.
       value: { leagueID: 'FEPL-2027', newKey: { nested: true } },
     });
     expect(out.leagueID).toBe('FEPL-2027');
     expect(out.newKey).toEqual({ nested: true });
     expect('tags' in out).toBe(false);
     expect('extensions' in out).toBe(false);
-    expect('version' in out).toBe(false);
+    expect(out.version).toBe(6);
     // Managed fields untouched.
     expect(out.name).toBe('FEPL');
     expect(out.payDisclosure).toBe('Entry fees are final.');
@@ -185,7 +184,7 @@ describe('mergeProjectMetadataEdit — customProperties replaces the unmanaged-k
 
 describe('unmanagedProjectMetadataKeys — the Advanced textarea key set', () => {
   it('lists only keys the form does not edit, sorted', () => {
-    expect(unmanagedProjectMetadataKeys(LIVE)).toEqual(['extensions', 'leagueID', 'tags', 'version']);
+    expect(unmanagedProjectMetadataKeys(LIVE)).toEqual(['extensions', 'leagueID', 'tags']);
   });
 
   it('is empty for null and for purely form-managed metadata', () => {

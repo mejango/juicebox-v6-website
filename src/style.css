@@ -2824,6 +2824,13 @@ input[type="checkbox"].field {
 .detail-about-foot { display: flex; justify-content: flex-start; margin-top: 10px; }
 .shop-foot { justify-content: flex-start; align-items: center; gap: 14px; }
 .shop-collection-addr { font-size: 11px; color: var(--muted-2); }
+.shop-config { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--c-orange-light); }
+.shop-config summary { cursor: pointer; color: var(--text); font-size: 12px; font-weight: bold; list-style-position: inside; }
+.shop-config-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 0; }
+.shop-config-row { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; font-size: 12px; }
+.shop-config-row dt { color: var(--muted-2); }
+.shop-config-row dd { margin: 0; color: var(--text); font-weight: bold; }
+.shop-config-unavailable { margin-top: 10px; color: var(--muted-2); font-size: 12px; }
 .operator-cta {
   font-size: 11px; color: var(--muted-2); text-decoration: underline; cursor: pointer;
   text-underline-offset: 2px;
