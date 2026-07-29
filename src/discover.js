@@ -6282,11 +6282,15 @@ function renderProjectCard(project) {
     // contributorsCount only counts addresses that paid; holders who received tokens via
     // auto-issuance / reserved mint (ART has one) are missed. Seed with it, then correct to
     // the real current-holder count (same aggregation the detail header uses).
-    var ownersVal = el('span', ''); ownersVal.textContent = String(project.indexedStats.contributorsCount);
+    var ownersVal = el('span', ''); ownersVal.textContent = '…';
     stats.appendChild(statItem(OWNERS_STAT_LABEL, ownersVal));
-    fetchOwnersCount(project).then(function (n) {
-      if (n != null && ownersVal.isConnected) ownersVal.textContent = String(n);
-    }).catch(function () {});
+    fetchOwnersCount(project).then(function (result) {
+      if (!ownersVal.isConnected) return;
+      ownersVal.textContent = ownerCountText(result);
+      ownersVal.title = result && !result.exact
+        ? 'At least this many unique token holders were found before the indexer result cap.'
+        : '';
+    }).catch(function () { if (ownersVal.isConnected) ownersVal.textContent = '—'; });
   }
   card.appendChild(stats);
 
@@ -7899,11 +7903,18 @@ function renderDetailHeader(project) {
     var sepSpan = el('span', 'detail-head-sep'); sepSpan.textContent = '|'; statLine.appendChild(sepSpan);
     var oStrong = el('strong'); oStrong.textContent = '…'; statLine.appendChild(oStrong);
     var oLabel = document.createTextNode(' owners'); statLine.appendChild(oLabel);
-    fetchOwnersCount(project).then(function (n) {
-      n = (n == null) ? 0 : n;
-      oStrong.textContent = String(n);
-      oLabel.textContent = n === 1 ? ' token holder' : ' token holders';
-    }).catch(function () { oStrong.textContent = '0'; });
+    fetchOwnersCount(project).then(function (result) {
+      oStrong.textContent = ownerCountText(result);
+      oStrong.title = result && !result.exact
+        ? 'At least this many unique token holders were found before the indexer result cap.'
+        : '';
+      oLabel.textContent = result && result.exact && result.count === 1
+        ? ' token holder'
+        : ' token holders';
+    }).catch(function () {
+      oStrong.textContent = '—';
+      oStrong.title = 'Token-holder data is unavailable.';
+    });
   } else {
     // Indexed activity (Bendystraw): volume raised + payment/contributor counts.
     appendIndexedStats(statLine, project.indexedStats);
@@ -17065,8 +17076,9 @@ async function fetchBridgeTransactions(project) {
 
 async function fetchBendystrawParticipantPages(query, variables) {
   var items = [];
-  var totalCount = 0;
+  var totalCount = null;
   var offset = 0;
+  var exhausted = false;
   while (offset < OWNERS_MAX_PARTICIPANTS) {
     var data = await bendystrawQuery(query, Object.assign({}, variables, {
       limit: OWNERS_PAGE_SIZE,
@@ -17074,12 +17086,24 @@ async function fetchBendystrawParticipantPages(query, variables) {
     }));
     var result = data && data.participants;
     var page = (result && result.items) || [];
-    if (result && result.totalCount != null) totalCount = Number(result.totalCount) || 0;
+    if (result && result.totalCount != null) {
+      var parsedTotal = Number(result.totalCount);
+      if (Number.isFinite(parsedTotal) && parsedTotal >= 0) totalCount = parsedTotal;
+    }
     items = items.concat(page);
-    if (!page.length || items.length >= totalCount || items.length >= OWNERS_MAX_PARTICIPANTS) break;
+    if (!page.length || page.length < OWNERS_PAGE_SIZE || (totalCount != null && items.length >= totalCount)) {
+      exhausted = true;
+      break;
+    }
+    if (items.length >= OWNERS_MAX_PARTICIPANTS) break;
     offset += page.length;
   }
-  return { items: items, totalCount: totalCount || items.length };
+  var knownTotal = totalCount == null ? items.length : totalCount;
+  return {
+    items: items,
+    totalCount: knownTotal,
+    exact: exhausted && (totalCount == null || items.length >= totalCount),
+  };
 }
 
 async function fetchParticipantsByDeployments(project) {
@@ -17091,12 +17115,13 @@ async function fetchParticipantsByDeployments(project) {
       version: BENDYSTRAW_VERSION,
     });
   }));
-  var items = [], totalCount = 0;
+  var items = [], totalCount = 0, exact = true;
   pages.forEach(function (page) {
     items = items.concat(page.items || []);
     totalCount += Number(page.totalCount || 0);
+    exact = exact && page.exact !== false;
   });
-  return { items: items, totalCount: totalCount };
+  return { items: items, totalCount: totalCount, exact: exact };
 }
 
 function aggregateParticipants(items) {
@@ -17137,7 +17162,13 @@ async function readTotalSupplyAcrossChains(project, chainIds) {
   return supplies.reduce(function (sum, value) { return sum + toBigInt(value); }, 0n);
 }
 
-// Count of unique owners (holders, deduped across chains) — matches the Owners tab. Null on failure.
+export function ownerCountText(result) {
+  if (!result) return '—';
+  return String(result.count) + (result.exact ? '' : '+');
+}
+
+// Count of unique owners (holders, deduped across chains) — matches the Owners
+// tab. A bounded result is explicitly marked inexact; null means unavailable.
 async function fetchOwnersCount(project) {
   try {
     var chainIds = projectChainIds(project);
@@ -17152,7 +17183,11 @@ async function fetchOwnersCount(project) {
     if (!result || !result.items.length) {
       result = await fetchParticipantsByDeployments(project);
     }
-    return aggregateParticipants(result.items).length;
+    return {
+      count: aggregateParticipants(result.items).length,
+      exact: result.exact !== false && result.items.length >= result.totalCount,
+      totalCount: result.totalCount,
+    };
   } catch (e) {
     return null;
   }
