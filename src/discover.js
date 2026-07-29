@@ -137,10 +137,14 @@ function chainFamily(chainId) {
   if (chainId === 42161 || chainId === 421614) return 'arb';
   return null;
 }
+// Pass `titleName` only where the mark stands alone (a bare logo cell, a logo-only link, a stacked
+// filter trigger). Beside a visible chain name the mark is decorative, so it's hidden from assistive
+// tech rather than repeating the name that's already there.
 function chainLogo(chainId, titleName) {
   var fam = chainFamily(chainId);
   var span = el('span', 'chain-logo');
   if (titleName) span.title = titleName;
+  else span.setAttribute('aria-hidden', 'true');
   if (fam && CHAIN_LOGO_SVG[fam]) span.innerHTML = CHAIN_LOGO_SVG[fam];
   else span.textContent = '◦';
   return span;
@@ -149,10 +153,9 @@ function chainLogo(chainId, titleName) {
 // An interactive chain logo for a project: hover shows the project's ID on that chain, click routes to
 // the project on that chain (works from both the card and the detail header).
 function projectChainLogo(project, chain) {
-  var span = chainLogo(chain.id, null);
   var localProjectId = chain.projectId != null ? BigInt(chain.projectId) : pidOn(project, chain.id);
+  var span = chainLogo(chain.id, '#' + localProjectId.toString() + ' on ' + chain.name);
   span.classList.add('chain-logo-link');
-  span.title = '#' + localProjectId.toString() + ' on ' + chain.name;
   span.addEventListener('click', function (e) {
     e.stopPropagation();
     var tab = _activeDetail ? _activeDetail.current : null;
@@ -2107,7 +2110,7 @@ function openAddTierModal(project, shop) {
   var chainChecks = allChains.map(function (c) {
     var row = el('label', 'splits-edit-chain');
     var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.value = String(c.id);
-    row.appendChild(cb); row.appendChild(chainLogo(c.id, c.name));
+    row.appendChild(cb); row.appendChild(chainLogo(c.id, null));
     var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); row.appendChild(nm);
     chainBox.appendChild(row); return { chain: c, cb: cb };
   });
@@ -2659,7 +2662,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     var head = el('div', 'tier-detail-section-h'); head.textContent = 'Supply by chain'; sup.appendChild(head);
     rows.forEach(function (r) {
       var row = el('div', 'tier-detail-supply-row');
-      var nm = el('span', 'tier-detail-supply-chain'); nm.appendChild(chainLogo(r.chainId, r.name)); var tn = el('span'); tn.textContent = ' ' + r.name; nm.appendChild(tn); row.appendChild(nm);
+      var nm = el('span', 'tier-detail-supply-chain'); nm.appendChild(chainLogo(r.chainId, null)); var tn = el('span'); tn.textContent = ' ' + r.name; nm.appendChild(tn); row.appendChild(nm);
       var v = el('span', 'tier-detail-supply-val');
       v.textContent = r.none ? 'not on this chain' : r.err ? '—' : (r.initial >= TIER_UNLIMITED_SUPPLY ? 'unlimited' : (r.remaining + ' / ' + r.initial + ' left'));
       row.appendChild(v); sup.appendChild(row);
@@ -3748,7 +3751,7 @@ function renderProjectContractWarnings(project) {
     unknown.forEach(function (u) {
       var row = el('div', 'project-contract-warning-row');
       var left = el('span', 'project-contract-warning-left');
-      left.appendChild(chainLogo(u.chainId, u.chain));
+      left.appendChild(chainLogo(u.chainId, null));
       var label = el('span'); label.textContent = ' ' + u.chain + ' | ' + u.role; left.appendChild(label);
       row.appendChild(left);
       var right = el('span', 'project-contract-warning-right');
@@ -8193,7 +8196,7 @@ function renderOtherInfoPanel(project) {
       var warn = el('div', 'detail-owner-warn'); warn.textContent = projectAuthorityLabel(project) + ' differs by chain'; opVal.appendChild(warn);
       res.rows.forEach(function (r) {
         var row = el('div', 'detail-owner-chainrow');
-        row.appendChild(chainLogo(r.chainId, r.name));
+        row.appendChild(chainLogo(r.chainId, null));
         var nm = el('span', 'detail-info-chainname'); nm.textContent = ' ' + r.name + ' '; row.appendChild(nm);
         if (r.owner) row.appendChild(fullAddressNode(r.owner, false, r.chainId)); else { var dash = el('span'); dash.textContent = '—'; row.appendChild(dash); }
         opVal.appendChild(row);
@@ -9174,7 +9177,7 @@ function runRelayrBundle(entries, opts) {
         var parts = previewParts(p);
         var r = el('div', 'relayr-preview-row');
         var chainCell = el('div', 'relayr-preview-chain');
-        chainCell.appendChild(chainLogo(p.cid || 0, p.chain));
+        chainCell.appendChild(chainLogo(p.cid || 0, null));
         var s = el('span'); s.textContent = p.chain || 'Chain'; chainCell.appendChild(s);
         r.appendChild(chainCell);
         var nonceCell = el('div', 'relayr-preview-nonce'); nonceCell.textContent = parts.nonce; r.appendChild(nonceCell);
@@ -9354,7 +9357,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     chains.forEach(function (c) {
       var call = buildCall(c.id);
       var block = el('div', 'safe-propose-chain');
-      var head = el('div', 'safe-propose-head'); head.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = ' ' + c.name; head.appendChild(nm); block.appendChild(head);
+      var head = el('div', 'safe-propose-head'); head.appendChild(chainLogo(c.id, null)); var nm = el('span'); nm.textContent = ' ' + c.name; head.appendChild(nm); block.appendChild(head);
       block.appendChild(renderTxReview({ chain: c.name, chainId: c.id, contract: resolveContractName(call.to, c.id) || call.to, address: call.to, calldata: call.data, value: '0' }));
       var st = el('div', 'safe-propose-hint'); st.style.marginTop = '6px'; st.textContent = 'checking Safe…'; block.appendChild(st);
       listEl.appendChild(block);
@@ -10866,7 +10869,7 @@ function renderProjectPayerAddresses(project) {
     rows.forEach(function (row) {
       var r = el('div', 'extras-payers-row');
       var chain = el('div', 'extras-payers-chain');
-      chain.appendChild(chainLogo(row.chainId, chainNameOf(row.chainId)));
+      chain.appendChild(chainLogo(row.chainId, null));
       var cn = el('span'); cn.textContent = chainNameOf(row.chainId); chain.appendChild(cn);
       r.appendChild(chain);
 
@@ -11848,7 +11851,7 @@ function renderExtrasSection(project) {
     cb.disabled = !deployer;
     cb.value = String(c.id);
     row.appendChild(cb);
-    row.appendChild(chainLogo(c.id, c.name));
+    row.appendChild(chainLogo(c.id, null));
     var nm = el('span'); nm.textContent = c.name || chainNameOf(c.id); row.appendChild(nm);
     if (!deployer) {
       var miss = el('span', 'extras-chain-missing'); miss.textContent = 'no deployer'; row.appendChild(miss);
@@ -12274,7 +12277,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
     var readyBlockedExcluded = 0;
     var chainLoads = chains.map(function (c) {
       var block = el('div', 'backoffice-chain');
-      var h = el('div', 'backoffice-chain-head'); h.appendChild(chainLogo(c.id, c.name)); var t = el('span'); t.textContent = ' ' + c.name; h.appendChild(t);
+      var h = el('div', 'backoffice-chain-head'); h.appendChild(chainLogo(c.id, null)); var t = el('span'); t.textContent = ' ' + c.name; h.appendChild(t);
       var ql = safeQueueLink(c.id, safe);
       if (ql) { var qa = document.createElement('a'); qa.className = 'backoffice-chain-link'; qa.href = ql; qa.target = '_blank'; qa.rel = 'noopener'; qa.textContent = '↗'; qa.title = 'Open this chain’s Safe queue'; h.appendChild(qa); }
       block.appendChild(h);
@@ -12693,7 +12696,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
       chains.forEach(function (c) {
         var row = el('div', 'operator-chain-address-row');
         var chain = el('div', 'operator-chain-address-chain');
-        chain.appendChild(chainLogo(c.id, c.name));
+        chain.appendChild(chainLogo(c.id, null));
         var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); chain.appendChild(nm);
         row.appendChild(chain);
         var field = el('div', 'operator-chain-address-field');
@@ -12735,7 +12738,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
   chains.forEach(function (c) {
     var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
     cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; syncChainFieldRows(); });
-    r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
+    r2.appendChild(cb); r2.appendChild(chainLogo(c.id, null)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
     chainBox.appendChild(r2);
   });
   content.appendChild(chainBox);
@@ -13002,7 +13005,7 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
     chainList.forEach(function (c) {
       var row = el('div', 'operator-chain-address-row');
       var chain = el('div', 'operator-chain-address-chain');
-      chain.appendChild(chainLogo(c.id, c.name));
+      chain.appendChild(chainLogo(c.id, null));
       var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); chain.appendChild(nm);
       row.appendChild(chain);
       var field = el('div', 'operator-chain-address-field');
@@ -13237,7 +13240,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   allChains.forEach(function (c) {
     var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
     cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; });
-    r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
+    r2.appendChild(cb); r2.appendChild(chainLogo(c.id, null)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
     chainBox.appendChild(r2);
   });
   content.appendChild(chainBox);
@@ -13465,7 +13468,7 @@ function openPowerModal(project, action) {
         if (!avail) chainSelected[c.id] = false;
         var row = el('div', 'operator-chain-address-row');
         var chain = el('div', 'operator-chain-address-chain');
-        chain.appendChild(chainLogo(c.id, c.name));
+        chain.appendChild(chainLogo(c.id, null));
         var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); chain.appendChild(nm);
         row.appendChild(chain);
         var field = el('div', 'operator-chain-address-field');
@@ -13515,7 +13518,7 @@ function openPowerModal(project, action) {
         if (!avail2) chainSelected[c.id] = false;
         var row2 = el('div', 'operator-chain-address-row');
         var chain2 = el('div', 'operator-chain-address-chain');
-        chain2.appendChild(chainLogo(c.id, c.name));
+        chain2.appendChild(chainLogo(c.id, null));
         var nm2 = el('span'); nm2.textContent = c.name || ('Chain ' + c.id); chain2.appendChild(nm2);
         row2.appendChild(chain2);
         var field2 = el('div', 'operator-chain-address-field');
@@ -13599,7 +13602,7 @@ function openPowerModal(project, action) {
     if (!avail) chainSelected[c.id] = false;
     var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = avail && chainSelected[c.id] !== false; cb.disabled = !avail;
     cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; syncChainFieldRows(); });
-    r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
+    r2.appendChild(cb); r2.appendChild(chainLogo(c.id, null)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
     if (!avail) { var un = el('span', 'operator-edit-cur'); un.style.marginLeft = '6px'; un.style.marginTop = '0'; un.textContent = action.unavailableNote || '(unavailable here)'; r2.appendChild(un); r2.style.opacity = '0.55'; }
     chainBox.appendChild(r2);
   });
@@ -13691,7 +13694,7 @@ function openAddAccountingContextModal(project) {
     allChains.forEach(function (c) {
       var row = el('div', 'operator-chain-address-row');
       var chain = el('div', 'operator-chain-address-chain');
-      chain.appendChild(chainLogo(c.id, c.name));
+      chain.appendChild(chainLogo(c.id, null));
       var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); chain.appendChild(nm);
       row.appendChild(chain);
       var field = el('div', 'operator-chain-address-field');
@@ -13771,7 +13774,7 @@ function openAddAccountingContextModal(project) {
   allChains.forEach(function (c) {
     var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
     cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; updatePresetList(); });
-    r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
+    r2.appendChild(cb); r2.appendChild(chainLogo(c.id, null)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
     chainBox.appendChild(r2);
   });
   content.appendChild(chainBox);
@@ -14634,7 +14637,7 @@ function buildFundsTokenBlock(project, kind, showHead, onBalance) {
     rows.forEach(function (x) {
       var snapshot = x.snapshot;
       var row = el('div', 'funds-chain-row');
-      var nm = el('span', 'funds-chain-name'); nm.appendChild(chainLogo(x.c.id, x.c.name));
+      var nm = el('span', 'funds-chain-name'); nm.appendChild(chainLogo(x.c.id, null));
       var t = el('span'); t.textContent = ' ' + x.c.name; nm.appendChild(t); row.appendChild(nm);
       var auditLabel = fundsKindAuditLabel(kind, x.c.id);
       var b = el('span'); b.textContent = snapshot ? fmt(snapshot.balance) : '—'; b.title = auditLabel; row.appendChild(b);
@@ -16284,7 +16287,7 @@ function renderAutoIssuanceTable(rows, sym, distribute) {
 
     var chainCell = el('span', 'autoissue-chain');
     chainCell.setAttribute('data-label', labels[0]);
-    chainCell.appendChild(chainLogo(row.chain.id, row.chain.name));
+    chainCell.appendChild(chainLogo(row.chain.id, null));
     // Show the real chain name (incl. "… Sepolia" on testnet) — stripping it made L2 testnets look like mainnet.
     chainCell.appendChild(document.createTextNode(row.chain.name));
     tr.appendChild(chainCell);
@@ -17250,7 +17253,7 @@ function renderSplitHookCard(project) {
     if (!getAddress('JBP6FeeLPSplitHook', c.id)) return;
     var pid = pidOn(project, c.id);
     var block = el('div', 'splithook-chain');
-    var head = el('div', 'splithook-head'); head.appendChild(chainLogo(c.id, c.name));
+    var head = el('div', 'splithook-head'); head.appendChild(chainLogo(c.id, null));
     var nm = el('span'); nm.textContent = ' ' + c.name; head.appendChild(nm);
     block.appendChild(head);
     var body = el('div'); body.appendChild(skel('100%', '40px')); block.appendChild(body);
@@ -18519,7 +18522,7 @@ function openQueueRulesetModal(project) {
       allChains.forEach(function (c) {
         var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = chainSelected[c.id] !== false; cb.value = String(c.id);
         cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; });
-        r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
+        r2.appendChild(cb); r2.appendChild(chainLogo(c.id, null)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
         chainBox.appendChild(r2);
       });
       body.appendChild(chainBox);
@@ -19118,7 +19121,7 @@ function openEditSplitsModal(project, opts) {
     var row = el('label', 'splits-edit-chain');
     var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.value = String(c.id);
     row.appendChild(cb);
-    row.appendChild(chainLogo(c.id, c.name));
+    row.appendChild(chainLogo(c.id, null));
     var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); row.appendChild(nm);
     chainBox.appendChild(row);
     return { chain: c, cb: cb };
@@ -19265,7 +19268,7 @@ function appendChainSplitBlock(container, splits, md, project, sym, isCurrent, p
   var block = el('div', 'splits-chain-block');
   var chainrow = el('div', 'splits-chainrow');
   var name = el('span', 'splits-chain-head');
-  name.appendChild(chainLogo(pc.id, pc.name));
+  name.appendChild(chainLogo(pc.id, null));
   name.appendChild(document.createTextNode(pc.name));
   chainrow.appendChild(name);
   block.appendChild(chainrow);
@@ -19438,7 +19441,7 @@ function renderBridgesSubsection(project) {
       var row = el('div', 'detail-ops-row');
       // A sucker bridges both ways — show the pair joined by a bidirectional arrow, not a From→To direction.
       var chains = el('span', 'detail-ops-cell bridge-pair');
-      chains.appendChild(chainLogo(g.a, moveChainName(g.a)));
+      chains.appendChild(chainLogo(g.a, null));
       chains.appendChild(document.createTextNode(moveChainName(g.a)));
       var arrow = el('span', 'bridge-pair-arrow');
       arrow.innerHTML = '<svg viewBox="0 0 30 12" width="30" height="12" aria-hidden="true">'
@@ -19447,7 +19450,7 @@ function renderBridgesSubsection(project) {
         + '<path d="M21 2.5 L25.5 6 L21 9.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
         + '</svg>';
       chains.appendChild(arrow);
-      chains.appendChild(chainLogo(g.b, moveChainName(g.b)));
+      chains.appendChild(chainLogo(g.b, null));
       chains.appendChild(document.createTextNode(moveChainName(g.b)));
       row.appendChild(chains);
       var type = el('span', 'detail-ops-cell bridge-types');
@@ -19593,7 +19596,7 @@ function buildClaimModal(project, creditRows) {
   creditRows.forEach(function (r) {
     var rowEl = el('div', 'claim-row');
     var chainCell = el('span', 'claim-row-chain');
-    chainCell.appendChild(chainLogo(r.id, r.name));
+    chainCell.appendChild(chainLogo(r.id, null));
     var nm = el('span', 'claim-row-chainname'); nm.textContent = r.name; chainCell.appendChild(nm);
     rowEl.appendChild(chainCell);
     var amt = el('span', 'claim-row-amt'); amt.textContent = formatTokenCount(r.credit) + ' credits'; rowEl.appendChild(amt);
@@ -20289,7 +20292,7 @@ function renderBalanceTables(balTable, project, sym, opts) {
   opts = opts || {};
   balTable.innerHTML = '';
   var chs = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
-  function chainCell(cid, name) { var c = el('span', 'cashout-tbl-chain'); c.appendChild(chainLogo(cid, name)); var t = el('span'); t.textContent = ' ' + (name || ('Chain ' + cid)); c.appendChild(t); return c; }
+  function chainCell(cid, name) { var c = el('span', 'cashout-tbl-chain'); c.appendChild(chainLogo(cid, null)); var t = el('span'); t.textContent = ' ' + (name || ('Chain ' + cid)); c.appendChild(t); return c; }
   function th(text, num) { var s = el('span', 'cashout-tbl-th' + (num ? ' num' : '')); s.textContent = text; return s; }
   function numCell(text) { var s = el('span', 'cashout-tbl-num'); s.textContent = text == null ? '…' : text; return s; }
   // Each table is a stack of row-grids (like the owners table) so rows can carry separators.
@@ -22327,7 +22330,7 @@ function renderGossipSection(project) {
         if (!d.peers.length) return;
         var block = el('div', 'xchain-block');
         var head = el('div', 'xchain-head');
-        head.appendChild(chainLogo(d.chainId, d.name));
+        head.appendChild(chainLogo(d.chainId, null));
         var hn = el('span'); hn.textContent = d.name + ' knows'; head.appendChild(hn);
         block.appendChild(head);
 
@@ -22366,7 +22369,7 @@ function renderGossipSection(project) {
 
           var row = el('div', 'gossip-row');
           var c0 = el('span', 'gossip-cell gossip-peer');
-          c0.appendChild(chainLogo(p.peerChainId, p.peerName));
+          c0.appendChild(chainLogo(p.peerChainId, null));
           c0.appendChild(document.createTextNode(p.peerName));
           var c1 = el('span', 'gossip-cell'); c1.textContent = formatTokens(p.supply);
           var c2 = el('span', 'gossip-cell'); c2.textContent = balStr;
@@ -24557,7 +24560,7 @@ function opsRow(c, s, b, u, isHead, isTotal, chainId, lp) {
     var cell = el('span', 'detail-ops-cell');
     if (i === 0 && chainId != null) {
       cell.classList.add('detail-ops-chain');
-      cell.appendChild(chainLogo(chainId, c));
+      cell.appendChild(chainLogo(chainId, null));
       cell.appendChild(document.createTextNode(c));
     } else if (v && v.nodeType === 1) {
       cell.appendChild(v); // pre-built DOM node (e.g. the clickable LP-positions cell)
