@@ -5266,6 +5266,9 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 }
 #header > #connect-btn:hover { text-shadow: 0 0 0.6px currentColor; }
 #header > #connect-btn.connected { background: var(--c-black); color: var(--bg); }
+#header > #connect-btn.viewing-as {
+  background: var(--c-orange); border-color: var(--c-orange); color: var(--bg);
+}
 
 /* Connected-wallet dropdown (Copy address / Disconnect). Fixed to the viewport, anchored under the button. */
 .wallet-menu {
@@ -5278,6 +5281,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   cursor: pointer; padding: 7px 10px; background: transparent; color: var(--bg); border: none;
 }
 .wallet-menu-item:hover { background: var(--c-black-light); }
+.wallet-menu-separator { margin: 4px 8px; border-top: 1px solid var(--c-black-light); }
 /* Danger (Disconnect) reads light pink on the dark menu — palette --c-pink is invisible on --c-black. */
 .wallet-menu-danger { color: var(--c-pink-light); }
 .wallet-menu-link { text-decoration: none; }
@@ -6035,28 +6039,6 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .account-holding-item { font-size: 12px; color: var(--muted-2); }
 
 /* --- View as (impersonation) mode --- */
-/* Slim sticky banner while browsing the site as another account. */
-#viewas-banner {
-  position: sticky; top: 0; z-index: 1200;
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 16px;
-  background: var(--c-orange); color: var(--bg);
-  font-size: 12px; font-weight: bold;
-}
-.viewas-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
-.viewas-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.viewas-exit {
-  margin-left: auto; font-family: inherit; font-size: 11px; font-weight: bold; cursor: pointer;
-  padding: 2px 10px; background: transparent; color: var(--bg); border: 2px solid var(--bg); flex: none;
-}
-.viewas-exit:hover { background: var(--bg); color: var(--c-orange); }
-/* Header entry point under the connect button — works while disconnected too. */
-#header > #viewas-link {
-  position: absolute; top: 52px; right: 16px; margin: 0;
-  font-family: inherit; font-size: 11px; cursor: pointer; padding: 2px 0;
-  background: transparent; border: none; color: var(--c-orange); text-decoration: underline;
-}
-#header > #viewas-link:hover { text-shadow: 0 0 0.6px currentColor; }
 /* Inline address/ENS prompt inside the dark dropdown menus. */
 .viewas-prompt { padding: 7px 10px; display: flex; flex-wrap: wrap; gap: 6px; }
 .viewas-input {
@@ -6073,6 +6055,3 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .tx-confirm-note.viewas-blocked { color: var(--c-orange); font-weight: bold; }
 /* Account page: activate view-as for the viewed account. */
 .account-siteas { border-color: var(--c-orange); color: var(--c-orange); }
-@media (max-width: 600px) {
-  #header > #viewas-link { position: static; display: block; margin: 0 auto 8px; }
-}
