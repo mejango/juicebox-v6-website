@@ -5782,7 +5782,8 @@ select.create-input-auto { width: auto; max-width: 100%; }
 /* Inline "Issues [x] tokens per [unit]" row */
 .create-inline-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--c-black); }
 .create-inline-num { width: 90px; flex: 0 0 auto; border-radius: 0; }
-.create-payout-amt { width: 51px; } /* payout amount field — compact (≈9/16 of the standard inline-num width) */
+/* Leave enough content width for decimal payout amounts after the field's horizontal padding. */
+.create-payout-amt { width: 90px; }
 .create-symbol-field { width: 25%; min-width: 96px; } /* token symbol is short — 1/4 width (floored for readability) */
 .create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 26px 6px 8px; font-size: 12px; }
 /* Payout amount row: match the currency dropdown's height to the amount field; space the two lines. */
