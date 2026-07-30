@@ -5,6 +5,7 @@
 import { createPublicClient, http, keccak256, stringToHex, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
+import { downsampleTimeSeries } from './time-series.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
@@ -110,16 +111,10 @@ var LOGO_COLORS = ['#1a8a8a','#3d7a5a','#c43550','#2c2018','#b8602e','#6ec4c4','
 function logoColor(id) { return LOGO_COLORS[(id - 1) % LOGO_COLORS.length]; }
 var BENDYSTRAW_VERSION = 6;
 var OWNERS_PAGE_SIZE = 250;
-var OWNERS_MAX_PARTICIPANTS = 1000;
 var AUTO_ISSUE_PAGE_SIZE = 250;
-var AUTO_ISSUE_MAX_EVENTS = 1000;
 var PRICE_HISTORY_PAGE_SIZE = 1000;
 var PRICE_HISTORY_MAX_POINTS = 3000;
 var ACTIVITY_PAGE_SIZE = 10;
-// Total events to load per query. The pager stops early once a project's full history is fetched (short page /
-// totalCount), so this only costs extra requests on projects that actually have more than 10 events — it stops
-// the oldest events (project-create, earlier pay-ins) from being cut off at 10.
-var ACTIVITY_MAX_ITEMS = 100;
 // Default .activity-feed scroll height (mirrors style.css). sizeActivity() grows the feed to 2x this (or the body
 // height) so loaded activity isn't hidden behind a short scrollbox.
 var ACTIVITY_FEED_BASE_PX = 390;
@@ -398,6 +393,7 @@ var TIER721_TUPLE = { type: 'tuple[]', components: [
   TIER721_FLAGS, { name: 'splitPercent', type: 'uint32' }, { name: 'resolvedUri', type: 'string' }] };
 var TIER721_STORE_ABI = [
   { type: 'function', name: 'tiersOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256[]' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }], outputs: [TIER721_TUPLE] },
+  { type: 'function', name: 'maxTierIdOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'tokenUriResolverOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'address' }] },
 ];
 var TIER721_CONFIG_FLAGS_ABI = [{
@@ -411,6 +407,47 @@ var TIER721_CONFIG_FLAGS_ABI = [{
 var TIER721_PRICING_CONTEXT_ABI = [{ type: 'function', name: 'pricingContext', stateMutability: 'view', inputs: [], outputs: [{ name: 'currency', type: 'uint256' }, { name: 'decimals', type: 'uint256' }] }];
 var TIER721_PAY_CREDITS_ABI = [{ type: 'function', name: 'payCreditsOf', stateMutability: 'view', inputs: [{ name: 'addr', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 var TIER721_RESOLVER_ABI = [{ type: 'function', name: 'tokenUriOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'string' }] }];
+
+async function readAllActiveTiers(client, store, hook) {
+  var maxTierId = await client.readContract({
+    address: store, abi: TIER721_STORE_ABI, functionName: 'maxTierIdOf', args: [hook],
+  });
+  if (maxTierId === 0n) return [];
+  var out = [], seen = {}, startingId = 0n, pageSize = 200;
+  while (true) {
+    var page = await client.readContract({
+      address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf',
+      args: [hook, [], false, startingId, BigInt(startingId === 0n ? pageSize : pageSize + 1)],
+    });
+    if (!page || !page.length) break;
+    if (startingId !== 0n && toBigInt(page[0].id) !== startingId) {
+      throw new Error('Shop inventory changed while it was being read.');
+    }
+    var fresh = startingId === 0n ? page : page.slice(1);
+    for (var i = 0; i < fresh.length; i++) {
+      var id = toBigInt(fresh[i].id);
+      if (id < 1n || id > maxTierId || seen[String(id)]) {
+        throw new Error('Shop inventory returned an invalid or duplicate tier.');
+      }
+      seen[String(id)] = true;
+      out.push(fresh[i]);
+    }
+    if (fresh.length < pageSize) break;
+    var next = toBigInt(fresh[fresh.length - 1].id);
+    if (next === startingId) throw new Error('Shop inventory returned a cyclic cursor.');
+    startingId = next;
+  }
+  return out;
+}
+
+async function readActiveTier(client, store, hook, tierId) {
+  var rows = await client.readContract({
+    address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf',
+    args: [hook, [], false, BigInt(tierId), 1n],
+  });
+  var tier = rows && rows[0];
+  return tier && Number(tier.id) === Number(tierId) ? tier : null;
+}
 
 // bytes32 IPFS hash → both codec candidates which have historically been stored by the app:
 //   - DAG-PB/CIDv0 (`Qm…`), which is the 721 hook's canonical reconstruction.
@@ -616,9 +653,9 @@ function readShopHook(project) {
 // again on every reopen. `bustTiersCache` clears it after an operator adds a tier.
 var _tiersCache = {};
 var _tierMetadataCache = {};
-export var BENDYSTRAW_NFT_TIERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $hook: String!) { '
-  + 'nftTiers(where: { projectId: $projectId, chainId: $chainId, version: $version, hook: $hook }, limit: 500) { '
-  + 'items { tierId metadata resolvedUri encodedIpfsUri category votingUnits } } }';
+export var BENDYSTRAW_NFT_TIERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $hook: String!, $limit: Int!, $offset: Int!) { '
+  + 'nftTiers(where: { projectId: $projectId, chainId: $chainId, version: $version, hook: $hook }, limit: $limit, offset: $offset) { '
+  + 'totalCount items { tierId metadata resolvedUri encodedIpfsUri category votingUnits } } }';
 
 // Store-item purchases: one row per minted NFT (beneficiary = the customer, tierId = the item bought).
 // `beneficiary` filters to "You"; omit it for "All".
@@ -631,7 +668,6 @@ function nftMintsQuery(withBeneficiary) {
     + 'totalCount items { tierId beneficiary from timestamp txHash tokenId chainId hook } } }';
 }
 var NFT_MINTS_PAGE = 200;
-var NFT_MINTS_MAX = 1000;
 // Per-chain project IDs for a project (linked deployments can have DIFFERENT ids per chain — the detail
 // page's `project.chains` only carries {id,name} and assumes same-id, so resolve the real map from the
 // sucker group). Returns Promise<{chainId: projectId}>, always including the home (chainId,projectId).
@@ -682,7 +718,7 @@ function attachProjectChainIds(project) {
   });
 }
 // All store-item purchases for a project (optionally filtered to one beneficiary), across its chains.
-// Paginated + capped; returns { rows, total, capped }. Uses each chain's OWN project id (see projectIdByChain).
+// Paginated to completion. Uses each chain's OWN project id (see projectIdByChain).
 function fetchNftMints(project, beneficiary) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
   var query = nftMintsQuery(!!beneficiary);
@@ -700,16 +736,16 @@ function fetchNftMints(project, beneficiary) {
         if (res.totalCount != null) total = Number(res.totalCount) || 0;
         rows = rows.concat(items);
         offset += items.length;
-        if (items.length && rows.length < total && rows.length < NFT_MINTS_MAX) return page();
+        if (items.length && rows.length < total) return page();
         return { rows: rows, total: total, chainId: c.id };
       });
     }
-    return page().catch(function () { return { rows: [], total: 0, chainId: c.id, error: true }; });
+    return page();
   })).then(function (perChain) {
-    var rows = [], total = 0, capped = false;
-    perChain.forEach(function (r) { rows = rows.concat(r.rows.map(function (m) { return Object.assign({ _chainId: r.chainId, _localProjectId: idByChain[Number(r.chainId)] }, m); })); total += r.total; if (r.rows.length >= NFT_MINTS_MAX) capped = true; });
+    var rows = [], total = 0;
+    perChain.forEach(function (r) { rows = rows.concat(r.rows.map(function (m) { return Object.assign({ _chainId: r.chainId, _localProjectId: idByChain[Number(r.chainId)] }, m); })); total += r.total; });
     rows.sort(function (a, b) { return Number(b.timestamp) - Number(a.timestamp); });
-    return { rows: rows, total: total, capped: capped };
+    return { rows: rows, total: total, capped: false };
   });
   });
 }
@@ -718,11 +754,11 @@ function fetchBendystrawTierMetadata(project, hook) {
   var localProjectId = Number(pidOn(project, project.chainId));
   var key = DISCOVER_NETWORK + ':' + project.chainId + ':' + localProjectId + ':' + String(hook).toLowerCase();
   if (_tierMetadataCache[key]) return _tierMetadataCache[key];
-  _tierMetadataCache[key] = optionalWithin(bendystrawQuery(BENDYSTRAW_NFT_TIERS_QUERY, {
+  _tierMetadataCache[key] = optionalWithin(fetchBendystrawCollectionPages(BENDYSTRAW_NFT_TIERS_QUERY, 'nftTiers', {
     projectId: localProjectId, chainId: Number(project.chainId), version: BENDYSTRAW_VERSION, hook: String(hook).toLowerCase(),
-  }).then(function (data) {
+  }, 250).then(function (result) {
     var byId = {};
-    (((data || {}).nftTiers || {}).items || []).forEach(function (row) { byId[Number(row.tierId)] = row; });
+    (result.items || []).forEach(function (row) { byId[Number(row.tierId)] = row; });
     return byId;
   }).catch(function () { return {}; }), INDEXED_STATS_TIMEOUT_MS, {});
   return _tierMetadataCache[key];
@@ -832,7 +868,7 @@ async function fetchProjectTiersUncached(project) {
   var resolver = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tokenUriResolverOf', args: [hook] });
   if (resolver && /^0x0+$/.test(resolver)) resolver = null;
   var shopReads = await Promise.all([
-    client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] }),
+    readAllActiveTiers(client, store, hook),
     client.readContract({ address: store, abi: TIER721_CONFIG_FLAGS_ABI, functionName: 'flagsOf', args: [hook] }).catch(function () { return null; }),
   ]);
   var raw = shopReads[0], configFlags = shopReads[1];
@@ -1277,7 +1313,7 @@ function renderShopSection(project, shop, cart) {
   var head = el('div', 'shop-card-head');
   var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; head.appendChild(title);
   // Top-right "+ Add items" for the owner/operator (shown once the 721 hook resolves; gated on submit).
-  var headAdd = el('a', 'operator-cta shop-head-add'); headAdd.href = '#'; headAdd.textContent = '+ Add items';
+  var headAdd = el('button', 'operator-cta shop-head-add'); headAdd.textContent = '+ Add items';
   headAdd.title = 'Add NFT items for sale (revnet operator only)'; headAdd.style.display = 'none';
   head.appendChild(headAdd);
   card.appendChild(head);
@@ -1592,7 +1628,7 @@ function renderCustomerYou(project, mediaP) {
       // the 721 hook (shop.itemsCashOut). Revnets are token-based → false; a custom shop with item cash out off
       // → false, even though its ruleset useDataHookForCashOut is true (that just consults the deployer).
       if (shop && shop.itemsCashOut) {
-        var redeem = el('a', 'operator-cta shop-redeem-link'); redeem.href = '#'; redeem.textContent = 'Redeem items for surplus →';
+        var redeem = el('button', 'operator-cta shop-redeem-link'); redeem.textContent = 'Redeem items for surplus →';
         redeem.addEventListener('click', function (e) {
           e.preventDefault();
           var h = {}; var content = buildRedeemItemsModal(project, function () { if (h.close) h.close(); });
@@ -1632,23 +1668,36 @@ function renderCustomerAll(project, mediaP) {
     box.appendChild(summary);
 
     // Ranked customers — address (→ everything they own) + a strip of item thumbnails (→ that item's owners).
-    custKeys.slice(0, 100).forEach(function (k) {
-      var mints = byCust[k];
-      var row = el('div', 'shop-cust-row');
-      var who = el('span', 'shop-cust-who shop-cust-link'); who.appendChild(addressNode(mints[0].beneficiary, mints[0]._chainId || project.chainId));
-      who.addEventListener('click', function (e) { if (e.target.closest('a')) return; openAddressItemsModal(project, meta, mints[0].beneficiary, mints); });
-      row.appendChild(who);
-      var strip = el('span', 'shop-cust-thumbs');
-      tallyItems(mints, names).forEach(function (t) {
-        var cell = el('span', 'shop-cust-thumb-cell shop-cust-link'); cell.title = (t.count > 1 ? t.count + '× ' : '') + t.label + ' — see owners';
-        cell.appendChild(shopItemThumb(media, t.tierId));
-        if (t.count > 1) { var b = el('span', 'shop-cust-thumb-badge'); b.textContent = '×' + t.count; cell.appendChild(b); }
-        cell.addEventListener('click', function () { openTierHoldersModal(project, media, t.tierId, t.label, byTier[t.tierId] || []); });
-        strip.appendChild(cell);
+    var shown = 0;
+    function appendCustomers() {
+      var next = Math.min(shown + 100, custKeys.length);
+      custKeys.slice(shown, next).forEach(function (k) {
+        var mints = byCust[k];
+        var row = el('div', 'shop-cust-row');
+        var who = el('span', 'shop-cust-who shop-cust-link'); who.appendChild(addressNode(mints[0].beneficiary, mints[0]._chainId || project.chainId));
+        who.addEventListener('click', function (e) { if (e.target.closest('a')) return; openAddressItemsModal(project, meta, mints[0].beneficiary, mints); });
+        row.appendChild(who);
+        var strip = el('span', 'shop-cust-thumbs');
+        tallyItems(mints, names).forEach(function (t) {
+          var cell = el('span', 'shop-cust-thumb-cell shop-cust-link'); cell.title = (t.count > 1 ? t.count + '× ' : '') + t.label + ' — see owners';
+          cell.appendChild(shopItemThumb(media, t.tierId));
+          if (t.count > 1) { var b = el('span', 'shop-cust-thumb-badge'); b.textContent = '×' + t.count; cell.appendChild(b); }
+          cell.addEventListener('click', function () { openTierHoldersModal(project, media, t.tierId, t.label, byTier[t.tierId] || []); });
+          strip.appendChild(cell);
+        });
+        row.appendChild(strip);
+        box.appendChild(row);
       });
-      row.appendChild(strip);
-      box.appendChild(row);
-    });
+      shown = next;
+      if (shown < custKeys.length) {
+        var more = el('button', 'operator-cta');
+        more.type = 'button';
+        more.textContent = 'Load more customers (' + (custKeys.length - shown) + ' remaining)';
+        more.addEventListener('click', function () { more.remove(); appendCustomers(); });
+        box.appendChild(more);
+      }
+    }
+    appendCustomers();
   }).catch(function () { if (box.isConnected) { box.innerHTML = ''; box.textContent = 'Could not load customers.'; } });
   return box;
 }
@@ -1796,7 +1845,7 @@ function openAddTierModal(project, shop) {
   var imgFile = document.createElement('input'); imgFile.type = 'file'; imgFile.className = 'operator-edit-logo-file';
   // Any file type: image / gif / video / audio / pdf / markdown / text …
   imgFile.accept = 'image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown';
-  var mediaClear = el('a', 'operator-edit-logo-clear'); mediaClear.href = '#'; mediaClear.textContent = '✕'; mediaClear.title = 'Remove file'; mediaClear.style.display = 'none';
+  var mediaClear = el('button', 'operator-edit-logo-clear'); mediaClear.textContent = '✕'; mediaClear.title = 'Remove file'; mediaClear.style.display = 'none';
   var mediaMsg = el('div', 'operator-edit-mediamsg'); mediaMsg.style.display = 'none';
   var selectedMedia = null;
   var previewObjectUrl = '';
@@ -1836,7 +1885,7 @@ function openAddTierModal(project, shop) {
     var over = document.createTextNode('This file is ' + formatFileSize(f.size) + ' — over the ' + MAX_MEDIA_MB + ' MB max. ');
     mediaMsg.appendChild(over);
     if (mediaTypeForFile(f).indexOf('image') === 0) {
-      var comp = el('a', 'operator-cta'); comp.href = '#'; comp.textContent = 'Compress to fit';
+      var comp = el('button', 'operator-cta'); comp.textContent = 'Compress to fit';
       comp.addEventListener('click', function (e) {
         e.preventDefault();
         mediaMsg.className = 'operator-edit-mediamsg'; mediaMsg.textContent = 'Compressing…';
@@ -1884,7 +1933,7 @@ function openAddTierModal(project, shop) {
     var pct = el('input', 'splits-edit-pct'); pct.type = 'number'; pct.step = 'any'; pct.min = '0'; pct.placeholder = '10';
     var to = el('span', 'tier-split-to'); to.textContent = '% to';
     var recip = el('input', 'splits-edit-addr tier-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
-    var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕';
+    var rm = el('button', 'splits-edit-rm'); rm.textContent = '✕';
     line.appendChild(pct); line.appendChild(to);
     // Resolve text follows the same field-aligned, neutral treatment as ENS address hints.
     var recipCol = el('div', 'create-recip-box'); recipCol.appendChild(recip);
@@ -1965,7 +2014,7 @@ function openAddTierModal(project, shop) {
     };
     splitRowsBox.appendChild(row); splitRows.push(rec);
   }
-  var addSplit = el('a', 'operator-cta splits-edit-add'); addSplit.href = '#'; addSplit.textContent = '+ Add recipient';
+  var addSplit = el('button', 'operator-cta splits-edit-add'); addSplit.textContent = '+ Add recipient';
   addSplit.addEventListener('click', function (e) { e.preventDefault(); addTierSplitRow(); }); splitWrap.appendChild(addSplit);
   // Only surfaced while a split is being configured AND credit purchases are on — the one combination where
   // the split silently doesn't fire (a credit buy brings in no new payment to divide).
@@ -2042,7 +2091,7 @@ function openAddTierModal(project, shop) {
     var row = el('div', 'operator-cat-namerow');
     var idTag = el('span', 'cat-id');
     var inp = el('input', 'splits-edit-addr'); inp.type = 'text'; inp.placeholder = 'category name';
-    var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕';
+    var rm = el('button', 'splits-edit-rm'); rm.textContent = '✕';
     rm.addEventListener('click', function (e) {
       e.preventDefault();
       catInputs = catInputs.filter(function (x) { return x !== inp; });
@@ -2054,10 +2103,10 @@ function openAddTierModal(project, shop) {
     renumberCatRows();
   }
   addCatNameRow();
-  var addAnother = el('a', 'operator-cta operator-cat-another'); addAnother.href = '#'; addAnother.textContent = '+ Add another';
+  var addAnother = el('button', 'operator-cta operator-cat-another'); addAnother.textContent = '+ Add another';
   addAnother.addEventListener('click', function (e) { e.preventDefault(); addCatNameRow(); }); addCatBox.appendChild(addAnother);
   var addCatActions = el('div', 'operator-cat-actions');
-  var addCatSave = el('a', 'operator-cta'); addCatSave.href = '#'; addCatSave.textContent = 'Save categories'; addCatActions.appendChild(addCatSave);
+  var addCatSave = el('button', 'operator-cta'); addCatSave.textContent = 'Save categories'; addCatActions.appendChild(addCatSave);
   addCatBox.appendChild(addCatActions);
   var addCatStatus = el('div', 'operator-edit-status'); addCatBox.appendChild(addCatStatus);
   content.appendChild(addCatBox);
@@ -2081,7 +2130,7 @@ function openAddTierModal(project, shop) {
   });
 
   // Extra options — reserved mints, tier-level splits, governance, flags.
-  var advToggle = el('a', 'operator-cta operator-adv-toggle'); advToggle.href = '#'; advToggle.textContent = 'Extra options ▾';
+  var advToggle = el('button', 'operator-cta operator-adv-toggle'); advToggle.textContent = 'Extra options ▾';
   content.appendChild(advToggle);
   var adv = el('div', 'operator-edit-adv'); adv.style.display = 'none'; content.appendChild(adv);
   advToggle.addEventListener('click', function (e) { e.preventDefault(); var open = adv.style.display === 'none'; adv.style.display = open ? 'block' : 'none'; advToggle.textContent = 'Extra options ' + (open ? '▴' : '▾'); });
@@ -2148,7 +2197,7 @@ function openAddTierModal(project, shop) {
 
   // "+ Add another item" on its own line, divided from the current item's fields above; sits above the chain
   // selector (the chains apply to every staged item).
-  var addAnother = el('a', 'operator-cta tier-add-another'); addAnother.href = '#'; addAnother.textContent = '+ Add another item';
+  var addAnother = el('button', 'operator-cta tier-add-another'); addAnother.textContent = '+ Add another item';
   content.appendChild(addAnother);
   var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '24px'; clbl.textContent = 'On'; content.appendChild(clbl);
   var chainBox = el('div', 'splits-edit-chains');
@@ -2219,7 +2268,7 @@ function openAddTierModal(project, shop) {
     staged.forEach(function (f, i) {
       var r = el('div', 'tier-staged-row');
       var nm = el('span'); nm.textContent = (i + 1) + '. ' + ((f.name || '').trim() || 'Untitled') + ' — ' + (f.price || '0') + ' ' + priceUnit; r.appendChild(nm);
-      var x = el('a', 'splits-edit-rm'); x.href = '#'; x.textContent = '✕'; x.addEventListener('click', function (e) { e.preventDefault(); staged.splice(i, 1); renderStaged(); }); r.appendChild(x);
+      var x = el('button', 'splits-edit-rm'); x.textContent = '✕'; x.addEventListener('click', function (e) { e.preventDefault(); staged.splice(i, 1); renderStaged(); }); r.appendChild(x);
       stagedBox.appendChild(r);
     });
   }
@@ -2229,7 +2278,7 @@ function openAddTierModal(project, shop) {
   var actions = el('div', 'operator-edit-actions');
   var retryRelayr = document.createElement('button'); retryRelayr.type = 'button'; retryRelayr.className = 'operator-cta relayr-pending-action'; retryRelayr.textContent = 'Check Relayr status'; retryRelayr.style.display = 'none'; actions.appendChild(retryRelayr);
   var clearRelayr = document.createElement('button'); clearRelayr.type = 'button'; clearRelayr.className = 'relayr-pending-clear'; clearRelayr.textContent = 'Clear saved receipt'; clearRelayr.style.display = 'none'; actions.appendChild(clearRelayr);
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Add items for sale'; actions.appendChild(submit);
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = 'Add items for sale'; actions.appendChild(submit);
   content.appendChild(actions);
 
   var modal = openModal('Add items for sale', content);
@@ -2650,8 +2699,7 @@ function readTierSupplyAcrossChains(project, tierId) {
         if (!info || !info.hook) return { chainId: cid, name: ch.name, none: true };
         var hook = info.hook;
         return client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }).then(function (store) {
-          return client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] }).then(function (raw) {
-            var t = (raw || []).filter(function (x) { return Number(x.id) === tierId; })[0];
+          return readActiveTier(client, store, hook, tierId).then(function (t) {
             if (!t) return { chainId: cid, name: ch.name, none: true };
             return { chainId: cid, name: ch.name, remaining: Number(t.remainingSupply), initial: Number(t.initialSupply) };
           });
@@ -2798,8 +2846,7 @@ async function resolveHookMap(project, chains, tierId) {
     if (!store || /^0x0+$/.test(store)) throw new Error('The 721 store could not be verified on ' + (chain.name || chain.id) + '.');
     hookMap[chain.id] = info.hook;
     if (tierId != null) {
-      var all = await clientFor(chain.id).readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [info.hook, [], false, 0n, 200n] });
-      var tier = (all || []).filter(function (candidate) { return Number(candidate.id) === tierId; })[0];
+      var tier = await readActiveTier(clientFor(chain.id), store, info.hook, tierId);
       if (!tier) throw new Error('Item #' + tierId + ' is not live on ' + (chain.name || chain.id) + '.');
       tierMap[chain.id] = tier;
     }
@@ -4332,8 +4379,30 @@ async function readAllRulesets(chainId, projectId) {
       if (!seen[id]) { seen[id] = true; out.push(page[i]); }
     }
     var next = toBigInt(page[page.length - 1].basedOnId || 0);
-    if (page.length < 100 || next === 0n) break;
-    if (out.length >= 1000 || seen[String(next)]) throw new Error('Ruleset history is too large or cyclic to verify safely.');
+    if (next === 0n) break;
+    if (seen[String(next)]) throw new Error('Ruleset history returned a cyclic cursor.');
+    startingId = next;
+  }
+  return out;
+}
+
+async function readAllRulesetsWithMetadata(chainId, controller, projectId) {
+  var out = [], startingId = 0n, seen = {};
+  while (true) {
+    var page = await clientFor(chainId).readContract({
+      address: controller,
+      abi: allRulesetsWithMetadataAbi,
+      functionName: 'allRulesetsOf',
+      args: [BigInt(projectId), startingId, 100n],
+    });
+    if (!page || !page.length) break;
+    out = out.concat(page);
+    var last = page[page.length - 1];
+    var ruleset = last && (last.ruleset || last[0]);
+    var next = toBigInt(ruleset && ruleset.basedOnId || 0);
+    if (next === 0n) break;
+    if (seen[String(next)]) throw new Error('Ruleset history returned a cyclic cursor.');
+    seen[String(next)] = true;
     startingId = next;
   }
   return out;
@@ -5272,12 +5341,12 @@ async function bendystrawRevnetOperatorOf(projectId, chainId) {
   // Disambiguate using authoritative per-row data: the live operator is the flagged holder that still HOLDS
   // permissions. The prior operator's row carries `permissions: []`. Once the indexer clears the stale flag
   // this filter collapses to a single row and is a no-op.
-  var data = await bendystrawQuery(BENDYSTRAW_PROJECT_OPERATOR_QUERY, {
+  var data = await fetchBendystrawCollectionPages(BENDYSTRAW_PROJECT_OPERATOR_QUERY, 'permissionHolders', {
     chainId: Number(chainId),
     projectId: Number(projectId),
     version: BENDYSTRAW_VERSION,
-  });
-  var rows = (data && data.permissionHolders && data.permissionHolders.items) || [];
+  }, 250);
+  var rows = data.items || [];
   var live = rows.filter(function (r) { return r && r.permissions && r.permissions.length > 0; });
   var pick = (live.length ? live[0] : rows[0]) || null;
   return addressOrNull(pick && pick.operator);
@@ -8003,7 +8072,7 @@ function renderAboutCard(project) {
   card.appendChild(body);
 
   var foot = el('div', 'detail-about-foot');
-  var edit = el('a', 'operator-cta'); edit.textContent = 'Edit'; edit.href = '#';
+  var edit = el('button', 'operator-cta'); edit.textContent = 'Edit';
   edit.title = 'Edit the project — logo, tagline, description, links (revnet operator only)';
   edit.addEventListener('click', function (e) { e.preventDefault(); openEditProjectModal(project); });
   foot.appendChild(edit);
@@ -8144,7 +8213,7 @@ function renderTokenPanel(project) {
   // Always-visible CTA, matching the other owner/operator actions ("Queue ruleset", splits Edit):
   // the permission requirement is stated inside the modal (operator-gate note), not by hiding the entry point.
   var foot = el('div', 'detail-about-foot');
-  var edit = el('a', 'operator-cta'); edit.textContent = capabilities.hasErc20 ? 'Edit' : 'Deploy ERC-20'; edit.href = '#';
+  var edit = el('button', 'operator-cta'); edit.textContent = capabilities.hasErc20 ? 'Edit' : 'Deploy ERC-20';
   edit.title = capabilities.hasErc20 ? 'Edit the token name & symbol' : 'Deploy a transferable ERC-20 for this project';
   edit.addEventListener('click', function (e) { e.preventDefault(); openEditTokenModal(project); });
   foot.appendChild(edit);
@@ -8321,7 +8390,7 @@ function openTransferAuthorityModal(project, opts) {
   var authorityValueOf = attachAddressRecognition(addrInput, addrHint, homeChainId, { label: isRev ? 'New revnet operator' : 'New project owner' });
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = isRev ? 'Transfer revnet operator' : 'Transfer project ownership';
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = isRev ? 'Transfer revnet operator' : 'Transfer project ownership';
   actions.appendChild(submit); content.appendChild(actions);
   var modal = openModal(isRev ? 'Transfer revnet operator' : 'Transfer project ownership', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
@@ -8424,7 +8493,7 @@ function openEditProjectModal(project) {
     var row = el('div', 'splits-edit-row');
     var idTag = el('span', 'cat-id'); idTag.textContent = id + ' is'; row.appendChild(idTag);
     var nameIn = el('input', 'splits-edit-addr'); nameIn.type = 'text'; nameIn.placeholder = 'category name'; nameIn.value = name || '';
-    var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
+    var rm = el('button', 'splits-edit-rm'); rm.textContent = '✕'; rm.title = 'Remove';
     var rec = { id: id, name: nameIn };
     nameIn.addEventListener('input', function () { dirty.storeCategories = true; });
     rm.addEventListener('click', function (e) { e.preventDefault(); dirty.storeCategories = true; catRows = catRows.filter(function (x) { return x !== rec; }); row.remove(); });
@@ -8433,7 +8502,7 @@ function openEditProjectModal(project) {
   }
   Object.keys(project.storeCategories || {}).map(Number).filter(function (n) { return n > 0; }).sort(function (a, b) { return a - b; })
     .forEach(function (n) { addCatRow(n, project.storeCategories[n]); });
-  var addCat = el('a', 'operator-cta splits-edit-add'); addCat.href = '#'; addCat.textContent = '+ Add category';
+  var addCat = el('button', 'operator-cta splits-edit-add'); addCat.textContent = '+ Add category';
   addCat.addEventListener('click', function (e) { e.preventDefault(); dirty.storeCategories = true; addCatRow(nextCatId(), ''); }); content.appendChild(addCat);
 
   // Advanced — every live-metadata key this form doesn't manage, as an open-ended JSON editor. Operators
@@ -8505,7 +8574,7 @@ function openEditProjectModal(project) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Save changes';
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = 'Save changes';
   actions.appendChild(submit);
   content.appendChild(actions);
 
@@ -9134,7 +9203,7 @@ function openEditTokenModal(project) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = deployed ? 'Save token' : 'Deploy token';
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = deployed ? 'Save token' : 'Deploy token';
   actions.appendChild(submit);
   content.appendChild(actions);
 
@@ -9428,7 +9497,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — '));
           // Deploy the SAME-address Safe here by replaying its original creation (works even where the Safe app has
           // no UI, e.g. Arbitrum Sepolia). On success, re-check the chain so it's queue-able without reopening.
-          var dep = el('a', 'operator-cta'); dep.href = '#'; dep.textContent = 'deploy it here (same address)';
+          var dep = el('button', 'operator-cta'); dep.textContent = 'deploy it here (same address)';
           dep.addEventListener('click', function (e) {
             e.preventDefault();
             st.innerHTML = ''; st.appendChild(document.createTextNode('Reading the Safe’s deployment config…'));
@@ -10107,6 +10176,16 @@ export function renderActivityRow(row, project) {
 export function activityRowFromEvent(event, project) {
   var sym = project.tokenSymbol || 'tokens';
   var chainId = Number(event.chainId);
+  if (event._accountReceipt) {
+    var received = event._accountReceipt;
+    return {
+      type: 'issuance', direction: 'in', chainId: chainId,
+      txHash: received.txHash || event.txHash, timestamp: Number(event.timestamp),
+      account: received.beneficiary || event.from, from: received.from || event.from,
+      baseAmount: '', tokenAmount: formatCompactTokenAmount(toBigInt(received.tokenCount)),
+      action: 'received', memo: '',
+    };
+  }
   if (event.payEvent) {
     var pay = event.payEvent;
     var minted = toBigInt(pay.newlyIssuedTokenCount);
@@ -10505,7 +10584,9 @@ function renderPastRulesetsCard(project) {
     loaded = true;
     body.textContent = 'Loading ruleset history…';
     var pid = pidOn(project, project.chainId);
-    controllerRead(project.chainId, pid, allRulesetsWithMetadataAbi, 'allRulesetsOf', [pid, 0n, 100n]).then(function (list) {
+    controllerAddressFor(project.chainId, pid).then(function (controller) {
+      return readAllRulesetsWithMetadata(project.chainId, controller, pid);
+    }).then(function (list) {
       body.innerHTML = '';
       var rows = pastRulesetRows(list);
       if (!rows.length) { body.textContent = 'No rulesets found onchain.'; return; }
@@ -10735,7 +10816,7 @@ function renderRulesetsFundsSection(project) {
     // Subtle "Edit" CTA under a splits section (operator-gated inside the modal).
     function splitEditLink(col, onClick) {
       var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '6px';
-      var a = el('a', 'operator-cta'); a.href = '#'; a.textContent = 'Edit';
+      var a = el('button', 'operator-cta'); a.textContent = 'Edit';
       a.addEventListener('click', function (e) { e.preventDefault(); onClick(); });
       foot.appendChild(a); col.appendChild(foot);
       return foot;
@@ -10779,7 +10860,7 @@ function renderRulesetsFundsSection(project) {
         var psSh = el('div', 'rf-section'); psSh.textContent = kind.symbol + ' PAYOUT SPLITS'; faContainer.appendChild(psSh);
         var psBox = el('div'); psBox.appendChild(kvRow('Recipients', '…')); faContainer.appendChild(psBox);
         var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '6px';
-        var editA = el('a', 'operator-cta'); editA.href = '#'; editA.textContent = 'Edit'; foot.appendChild(editA);
+        var editA = el('button', 'operator-cta'); editA.textContent = 'Edit'; foot.appendChild(editA);
         if (offset === 0) faContainer.appendChild(foot);
         splitsLoader.fundsAccess(viewChain, v.r.id, kind).then(function (fa) {
           if (!fa) { secHead.remove(); faPayout.remove(); faAllow.remove(); psSh.remove(); psBox.remove(); foot.remove(); return; }
@@ -11480,9 +11561,6 @@ async function applyDraftShop(state, project, sources, warnings) {
   if (knownShops.some(function (known) { return !known; })) {
     throw new Error('A shop hook is not a verified 721 instance from a known deployer in the Address Registry.');
   }
-  // The shared display query is intentionally capped. Refuse to clone a possibly truncated shop instead of
-  // exporting a draft which could omit tier #201 or later.
-  if (home.tiers.length >= 200) throw new Error('This shop has at least 200 active items; the .jb exporter cannot verify that every item was enumerated.');
   shops.slice(1).forEach(function (shop) {
     if (Number(shop.pricing.currency) !== Number(home.pricing.currency) || Number(shop.pricing.decimals) !== Number(home.pricing.decimals)
       || draftFingerprint(shop.tiers.map(draftTierFingerprint)) !== draftFingerprint(home.tiers.map(draftTierFingerprint))) {
@@ -11952,7 +12030,7 @@ function renderExtrasSection(project) {
 
   var status = el('div', 'operator-edit-status'); body.appendChild(status);
   var actions = el('div', 'operator-edit-actions extras-actions');
-  var deploy = el('a', 'operator-cta operator-edit-submit'); deploy.href = '#'; deploy.textContent = 'Deploy payer address';
+  var deploy = el('button', 'operator-cta operator-edit-submit'); deploy.textContent = 'Deploy payer address';
   actions.appendChild(deploy);
   body.appendChild(actions);
   var payerList = renderProjectPayerAddresses(project);
@@ -12186,7 +12264,7 @@ function renderAccountCard(project) {
         note.appendChild(document.createTextNode('Same Safe address — deploy it to activate here.')); kv.appendChild(note);
         g.chains.forEach(function (ch) {
           var drow = el('div', 'account-kvrow');
-          var db = el('a', 'operator-cta'); db.href = '#'; db.textContent = 'Deploy Safe on ' + ch.name;
+          var db = el('button', 'operator-cta'); db.textContent = 'Deploy Safe on ' + ch.name;
           var stat = el('span'); stat.style.marginLeft = '8px'; stat.style.opacity = '0.85';
           db.addEventListener('click', function (e) {
             e.preventDefault(); stat.textContent = 'reading config…';
@@ -12205,7 +12283,7 @@ function renderAccountCard(project) {
       block.appendChild(kv);
       if (r.owner) {
         var actions = el('div', 'account-actions');
-        var xfer = el('a', 'operator-cta'); xfer.href = '#'; xfer.textContent = isRev ? 'Transfer operator' : 'Transfer ownership';
+        var xfer = el('button', 'operator-cta'); xfer.textContent = isRev ? 'Transfer operator' : 'Transfer ownership';
         xfer.title = (isRev ? 'Transfer the operator role on ' : 'Transfer project ownership on ') + g.chains.map(function (c) { return c.name; }).join(', ');
         xfer.addEventListener('click', function (e) {
           e.preventDefault();
@@ -12634,7 +12712,7 @@ export function renderAdminTab() {
   var scope = el('div', 'admin-blurb');
   scope.textContent = 'These powers are scoped. The admin cannot queue rulesets, mint or burn a project’s tokens, send its payouts, spend its surplus, change its controller or terminals, or otherwise move any project’s funds — those stay under each project’s own owner and rules. The admin curates shared infrastructure and allowlists; it cannot rug a project.';
   head.appendChild(scope);
-  var audit = el('a', 'admin-audit-link'); audit.href = '#'; audit.textContent = '[copy audit admin powers prompt]';
+  var audit = el('button', 'admin-audit-link'); audit.textContent = '[copy audit admin powers prompt]';
   audit.addEventListener('click', function (e) {
     e.preventDefault();
     copyText(adminAuditPrompt()).then(function () { audit.textContent = '[copied to clipboard]'; setTimeout(function () { audit.textContent = '[copy audit admin powers prompt]'; }, 2000); }).catch(function () {});
@@ -12707,7 +12785,7 @@ function renderAdminPowersCard(adminAddr, chains, homeChainId) {
     if (adminAddr && o.actions && o.actions.length) {
       var acts = el('div', 'admin-actions');
       o.actions.forEach(function (a) {
-        var btn = el('a', 'operator-cta admin-act'); btn.href = '#'; btn.textContent = a.title;
+        var btn = el('button', 'operator-cta admin-act'); btn.textContent = a.title;
         btn.addEventListener('click', function (e) { e.preventDefault(); openAdminPowerModal(adminAddr, chains, homeChainId, o.contract, a); });
         acts.appendChild(btn);
       });
@@ -12803,7 +12881,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = action.title; actions.appendChild(submit);
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = action.title; actions.appendChild(submit);
   var gate = action.danger ? appendDangerGate(content, action.danger, submit, 'I’ve verified the values above and want to propose this admin action.') : null;
   content.appendChild(actions);
   var modal = openModal(action.title, content);
@@ -12868,7 +12946,7 @@ function renderEditsCard(project) {
     var lab = el('span', 'powers-label'); lab.textContent = r.label; head.appendChild(lab);
     row.appendChild(head);
     var desc = el('div', 'powers-desc'); desc.textContent = r.desc; row.appendChild(desc);
-    var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = r.cta;
+    var act = el('button', 'operator-cta powers-act'); act.textContent = r.cta;
     act.addEventListener('click', function (e) { e.preventDefault(); r.open(project); });
     row.appendChild(act);
     card.appendChild(row);
@@ -12893,7 +12971,7 @@ function renderPowersCard(project) {
     var desc = el('div', 'powers-desc'); desc.textContent = p.desc; row.appendChild(desc);
     if (on && p.danger) { var w = el('div', 'powers-warn'); w.textContent = p.danger; row.appendChild(w); }
     if (on && p.open) {
-      var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = p.actionLabel;
+      var act = el('button', 'operator-cta powers-act'); act.textContent = p.actionLabel;
       act.addEventListener('click', function (e) { e.preventDefault(); p.open(project); });
       row.appendChild(act);
     }
@@ -13087,7 +13165,7 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
     });
     wrap.appendChild(table);
     var foot = el('div', 'operator-chain-address-foot');
-    var same = el('a', 'operator-cta'); same.href = '#'; same.textContent = 'Use same on all chains';
+    var same = el('button', 'operator-cta'); same.textContent = 'Use same on all chains';
     same.addEventListener('click', function (e) {
       e.preventDefault();
       open = false;
@@ -13099,7 +13177,7 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
     foot.appendChild(same); wrap.appendChild(foot);
   }
   function collapsed() {
-    var link = el('a', 'operator-cta operator-chain-address-toggle'); link.href = '#'; link.textContent = 'Set per chain';
+    var link = el('button', 'operator-cta operator-chain-address-toggle'); link.textContent = 'Set per chain';
     link.title = 'Set a different address on each selected chain';
     link.addEventListener('click', function (e) { e.preventDefault(); openRows(); });
     wrap.appendChild(link);
@@ -13162,7 +13240,7 @@ export function renderBuybackRouterCard(project) {
         else pcur.textContent = 'Current pool: ' + rows.map(function (r) { return r.name + ' — ' + (r.value || 'unknown'); }).join(' | ');
       });
     }
-    var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = action.title;
+    var act = el('button', 'operator-cta powers-act'); act.textContent = action.title;
     act.addEventListener('click', function (e) { e.preventDefault(); openPowerModal(project, action); });
     row.appendChild(act);
     card.appendChild(row);
@@ -13177,13 +13255,13 @@ async function fetchPermissionOperators(project) {
   var deployments = projectDeployments(project);
   if (!deployments.length) return [];
   var pages = await Promise.all(deployments.map(function (deployment) {
-    return bendystrawQuery(BENDYSTRAW_PERMISSION_HOLDERS_QUERY, {
+    return fetchBendystrawCollectionPages(BENDYSTRAW_PERMISSION_HOLDERS_QUERY, 'permissionHolders', {
       projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION,
-    }).catch(function () { return null; });
+    }, 250);
   }));
   var items = [];
-  pages.forEach(function (data) {
-    items = items.concat((data && data.permissionHolders && data.permissionHolders.items) || []);
+  pages.forEach(function (page) {
+    items = items.concat(page.items || []);
   });
   var byOp = {}, order = [];
   items.forEach(function (it) {
@@ -13238,7 +13316,7 @@ function renderPermissionsCard(project) {
         });
         row.appendChild(list);
         if (!isRev) {
-          var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = 'Edit permissions';
+          var act = el('button', 'operator-cta powers-act'); act.textContent = 'Edit permissions';
           act.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, g.operator, g.permsUnion); });
           row.appendChild(act);
         }
@@ -13246,7 +13324,7 @@ function renderPermissionsCard(project) {
       });
     }
     if (!isRev) {
-      var add = el('a', 'operator-cta powers-act'); add.href = '#'; add.textContent = '+ Add revnet operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
+      var add = el('button', 'operator-cta powers-act'); add.textContent = '+ Add revnet operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
       add.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, null, []); });
       body.appendChild(add);
     }
@@ -13305,7 +13383,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = editing ? 'Update permissions' : 'Add operator'; actions.appendChild(submit);
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = editing ? 'Update permissions' : 'Add operator'; actions.appendChild(submit);
   var gate = appendDangerGate(content, 'Granting permissions lets the revnet operator act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious revnet operator can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the revnet operator address and the permissions I’m granting.');
   content.appendChild(actions);
   var modal = openModal(editing ? 'Edit permissions' : 'Add operator', content);
@@ -13668,7 +13746,7 @@ function openPowerModal(project, action) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = action.title; actions.appendChild(submit);
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = action.title; actions.appendChild(submit);
   // Irreversible/dangerous action → require an explicit confirmation before the submit will fire.
   var gate = action.danger ? appendDangerGate(content, action.danger, submit) : null;
   content.appendChild(actions);
@@ -13839,7 +13917,7 @@ function openAddAccountingContextModal(project) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Add accounting token'; actions.appendChild(submit);
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = 'Add accounting token'; actions.appendChild(submit);
   var gate = appendDangerGate(content, 'Irreversible: once added, the terminal accepts this token forever — accounting tokens cannot be removed. Verify the token, decimals, and chains carefully before proceeding.', submit);
   content.appendChild(actions);
   var modal = openModal('Add accounting token', content);
@@ -14645,7 +14723,7 @@ function buildFundsTokenBlock(project, kind, showHead, onBalance) {
   var fmt = function (v) { return v == null ? '—' : formatBalance(v, kind.decimals, kind.symbol); };
 
   function rulesetLink(text) {
-    var a = el('a', 'rf-ruleset-link'); a.href = '#'; a.textContent = text;
+    var a = el('button', 'rf-ruleset-link'); a.textContent = text;
     a.addEventListener('click', function (e) { e.preventDefault(); if (_activeDetail && _activeDetail.showTab) { _activeDetail.showTab('Rulesets'); routerSetHash(projectHash(project, 'Rulesets')); } });
     return a;
   }
@@ -15929,7 +16007,7 @@ function renderOwnersSection(project, opts) {
     'Splits': function () {
       var reservedDistBox = el('div', 'detail-card-body');
       appendBendystrawHistory(reservedDistBox,
-        function () { return fetchProjectEventRows(BENDYSTRAW_RESERVED_DIST_QUERY, 'sendReservedTokensToSplitsEvents', project, 25); },
+        function () { return fetchProjectEventRows(BENDYSTRAW_RESERVED_DIST_QUERY, 'sendReservedTokensToSplitsEvents', project); },
         function (r) {
           return historyRow(Number(r.chainId), r.txHash, Number(r.timestamp),
             formatCompactTokenAmount(toBigInt(r.tokenCount)) + ' ' + (project.tokenSymbol || 'tokens'));
@@ -15950,7 +16028,7 @@ function renderOwnersSection(project, opts) {
     'Loans': function () {
       var loansBox = el('div', 'detail-card-body');
       loansBox.textContent = 'Loading from Bendystraw…';
-      fetchProjectEventRows(BENDYSTRAW_LOANS_QUERY, 'loans', project, 50).then(function (rows) {
+      fetchProjectEventRows(BENDYSTRAW_LOANS_QUERY, 'loans', project).then(function (rows) {
         loansBox.innerHTML = '';
         if (!rows.length) { loansBox.className = 'detail-card-body owners-empty'; loansBox.textContent = 'No active loans indexed.'; return; }
         loansBox.className = '';
@@ -16019,13 +16097,13 @@ export var BENDYSTRAW_PROJECT_QUERY = 'query($projectId: Float!, $chainId: Float
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
 var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($id: String!) { '
   + 'suckerGroup(id: $id) { volume volumeUsd paymentsCount contributorsCount balance tokenSupply } }';
-var BENDYSTRAW_PROJECT_OPERATOR_QUERY = 'query($chainId: Int!, $projectId: Int!, $version: Int!) { '
-  + 'permissionHolders(where: { chainId: $chainId, projectId: $projectId, version: $version, isRevnetOperator: true }, limit: 10) { '
-  + 'items { operator permissions } } }';
+var BENDYSTRAW_PROJECT_OPERATOR_QUERY = 'query($chainId: Int!, $projectId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'permissionHolders(where: { chainId: $chainId, projectId: $projectId, version: $version, isRevnetOperator: true }, limit: $limit, offset: $offset) { '
+  + 'totalCount items { operator permissions } } }';
 // Every operator that holds permissions on this project, across all chains (drives the Permissions card).
-var BENDYSTRAW_PERMISSION_HOLDERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) { '
-  + 'permissionHolders(where: { projectId: $projectId, version: $version, chainId: $chainId }, limit: 100) { '
-  + 'items { chainId account operator permissions isRevnetOperator } } }';
+var BENDYSTRAW_PERMISSION_HOLDERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'permissionHolders(where: { projectId: $projectId, version: $version, chainId: $chainId }, limit: $limit, offset: $offset) { '
+  + 'items { chainId account operator permissions isRevnetOperator } totalCount } }';
 var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'projectPayers(where: { projectId: $projectId, version: $version, chainId: $chainId }, '
   + 'orderBy: "totalFacilitatedUsd", orderDirection: "desc", limit: $limit, offset: $offset) { '
@@ -16157,7 +16235,7 @@ async function fetchBendystrawAutoIssuePages(query, path, projectId, chainId) {
   var items = [];
   var totalCount = 0;
   var offset = 0;
-  while (offset < AUTO_ISSUE_MAX_EVENTS) {
+  while (true) {
     var data = await bendystrawQuery(query, {
       projectId: Number(projectId),
       chainId: Number(chainId),
@@ -16171,7 +16249,7 @@ async function fetchBendystrawAutoIssuePages(query, path, projectId, chainId) {
     items = items.concat(page.map(function (item) {
       return Object.assign({ chainId: Number(chainId) }, item);
     }));
-    if (!page.length || items.length >= totalCount || items.length >= AUTO_ISSUE_MAX_EVENTS) break;
+    if (!page.length || items.length >= totalCount) break;
     offset += page.length;
   }
   return items;
@@ -16181,19 +16259,26 @@ async function fetchBendystrawCollectionPages(query, path, variables, pageSize, 
   var items = [];
   var totalCount = 0;
   var offset = 0;
-  while (offset < maxItems) {
+  while (maxItems == null || offset < maxItems) {
+    var limit = maxItems == null
+      ? pageSize
+      : Math.min(pageSize, maxItems - offset);
     var data = await bendystrawQuery(query, Object.assign({}, variables, {
-      limit: pageSize,
+      limit: limit,
       offset: offset,
     }));
     var result = data && data[path];
     var page = (result && result.items) || [];
     if (result && result.totalCount != null) totalCount = Number(result.totalCount) || 0;
     items = items.concat(page);
-    if (!page.length || items.length >= totalCount || items.length >= maxItems) break;
+    if (!page.length || items.length >= totalCount || (maxItems != null && items.length >= maxItems)) break;
     offset += page.length;
   }
-  return { items: items, totalCount: totalCount || items.length };
+  return {
+    items: items,
+    totalCount: totalCount || items.length,
+    capped: maxItems != null && items.length < totalCount,
+  };
 }
 
 async function fetchIndexedAutoIssuanceRows(project, chainIds) {
@@ -16496,12 +16581,12 @@ async function fetchPriceFloorHistory(project, stages) {
     fetchBendystrawCollectionPages(BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
       suckerGroupId: groupId,
       version: BENDYSTRAW_VERSION,
-    }, PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS),
+    }, PRICE_HISTORY_PAGE_SIZE),
     fetchBendystrawCollectionPages(BENDYSTRAW_CASH_OUT_TAX_SNAPSHOTS_QUERY, 'cashOutTaxSnapshots', {
       suckerGroupId: groupId,
       version: BENDYSTRAW_VERSION,
       chainIds: chainIds,
-    }, PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS),
+    }, PRICE_HISTORY_PAGE_SIZE),
   ]);
   var moments = res[0].items || [];
   var taxes = (res[1].items || []).sort(function (a, b) { return Number(a.start) - Number(b.start); });
@@ -16532,7 +16617,13 @@ async function fetchPriceFloorHistory(project, stages) {
     });
     previous = observation;
   });
-  return out.sort(function (a, b) { return a.timestamp - b.timestamp; });
+  out.sort(function (a, b) { return a.timestamp - b.timestamp; });
+  return downsampleTimeSeries(
+    out,
+    PRICE_HISTORY_MAX_POINTS,
+    function (point) { return point.timestamp; },
+    function (point) { return point.value; }
+  );
 }
 
 // The cash-out price approached after arbitrarily many payments at the
@@ -16613,15 +16704,15 @@ async function fetchSwapHistory(project) {
   };
   var pages = await Promise.all([
     fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', variables,
-      PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS)
+      PRICE_HISTORY_PAGE_SIZE)
       .catch(function () {
         // Keep existing realized-average history visible during a coordinated
         // Bendystraw/frontend rollout where the new fields are not live yet.
         return fetchBendystrawCollectionPages(BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY, 'swapEvents', variables,
-          PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS);
+          PRICE_HISTORY_PAGE_SIZE);
       }),
     fetchBendystrawCollectionPages(BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY, 'buybackPoolEvents', variables,
-      PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS)
+      PRICE_HISTORY_PAGE_SIZE)
       .catch(function () { return { items: [], totalCount: 0 }; }),
   ]);
 
@@ -16651,7 +16742,20 @@ async function fetchSwapHistory(project) {
     if (price && price > 0) series.push({ timestamp: Number(sw.timestamp), value: price });
   });
   series.sort(function (a, b) { return a.timestamp - b.timestamp; });
-  return { series: series, buyVolume: buyVolume, sellVolume: sellVolume, count: count, pair: pair };
+  series = downsampleTimeSeries(
+    series,
+    PRICE_HISTORY_MAX_POINTS,
+    function (point) { return point.timestamp; },
+    function (point) { return point.value; }
+  );
+  return {
+    series: series,
+    buyVolume: buyVolume,
+    sellVolume: sellVolume,
+    count: count,
+    pair: pair,
+    sampled: series.length < (pages[0].totalCount || 0) + (pages[1].totalCount || 0),
+  };
 }
 
 // Indexed project stats (volume / payments / contributors) from Bendystraw. Prefers the
@@ -16687,26 +16791,22 @@ async function fetchProjectIndexedStats(id, chainId) {
 
 // Fetch a recent slice of a per-project Bendystraw event collection (across the project's chains).
 // Returns [] on any failure — never throws.
-async function fetchProjectEventRows(query, path, project, maxItems) {
+async function fetchProjectEventRows(query, path, project) {
   var deployments = projectDeployments(project);
   if (!deployments.length) return [];
-  try {
-    var pages = await Promise.all(deployments.map(function (deployment) {
-      return fetchBendystrawCollectionPages(query, path, {
-        projectId: deployment.projectId,
-        chainId: deployment.chainId,
-        version: BENDYSTRAW_VERSION,
-      }, maxItems, maxItems);
-    }));
-    var rows = [];
-    pages.forEach(function (page) { rows = rows.concat(page.items || []); });
-    rows.sort(function (a, b) {
-      return Number(b.timestamp || b.createdAt || 0) - Number(a.timestamp || a.createdAt || 0);
-    });
-    return rows.slice(0, maxItems);
-  } catch (e) {
-    return [];
-  }
+  var pages = await Promise.all(deployments.map(function (deployment) {
+    return fetchBendystrawCollectionPages(query, path, {
+      projectId: deployment.projectId,
+      chainId: deployment.chainId,
+      version: BENDYSTRAW_VERSION,
+    }, 250);
+  }));
+  var rows = [];
+  pages.forEach(function (page) { rows = rows.concat(page.items || []); });
+  rows.sort(function (a, b) {
+    return Number(b.timestamp || b.createdAt || 0) - Number(a.timestamp || a.createdAt || 0);
+  });
+  return rows;
 }
 
 async function fetchProjectPayerRows(project) {
@@ -16717,7 +16817,7 @@ async function fetchProjectPayerRows(project) {
       projectId: deployment.projectId,
       chainId: deployment.chainId,
       version: BENDYSTRAW_VERSION,
-    }, 50, 250);
+    }, 250);
   }));
   var rows = [];
   pages.forEach(function (page) { rows = rows.concat(page.items || []); });
@@ -16727,7 +16827,7 @@ async function fetchProjectPayerRows(project) {
     if (ausd !== busd) return ausd < busd ? 1 : -1;
     // Raw totals can mix token units and are not a valid tie-breaker.
     return Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0);
-  }).slice(0, 250);
+  });
 }
 
 // Fill a box with a lazily-loaded history list. rowFn(row) -> DOM node. Handles loading/empty/error.
@@ -16782,9 +16882,16 @@ export function calculateFloorPrice(balance, tokenSupply, cashOutTax, balanceDec
   var tax = toBigInt(cashOutTax || 0);
   if (tax < 0n) tax = 0n;
   if (tax > 10000n) tax = 10000n;
-  // Exact integer form of balance × share × ((1-tax) + tax×share), where share = 1 token / supply.
-  var factor = (10000n - tax) * s + tax * x;
-  var y = o * x * factor / (s * s * 10000n);
+  // Mirror JBCashOuts.cashOutFrom's sentinel cases and staged integer divisions.
+  // Combining this into one fraction would not preserve the contract's rounding.
+  if (tax === 10000n) return 0;
+  if (x >= s) {
+    try { return Number(formatAmount(o, balanceDecimals == null ? 18 : Number(balanceDecimals))); } catch (_) { return 0; }
+  }
+  var base = o * x / s;
+  var y = tax === 0n
+    ? base
+    : base * (10000n - tax + tax * x / s) / 10000n;
   var value;
   try { value = Number(formatAmount(y, balanceDecimals == null ? 18 : Number(balanceDecimals))); } catch (_) { return 0; }
   return isFinite(value) && value > 0 ? value : 0;
@@ -16815,12 +16922,12 @@ async function fetchProjectActivity(project) {
   if (groupId) {
     queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_QUERY, 'activityEvents', {
       suckerGroupId: groupId, version: BENDYSTRAW_VERSION, chainIds: chainIds,
-    }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS));
+    }, 250));
   }
   deployments.forEach(function (deployment) {
     queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
       projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION,
-    }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS));
+    }, 250));
   });
 
   var results = await Promise.all(queries);
@@ -16852,24 +16959,24 @@ async function fetchProjectActivity(project) {
 // remaining ruleset we recover the queuer (`caller`) and tx from the index's `rulesetQueuedEvent` (PR #14) —
 // this replaced a per-ruleset block-estimate + ±25k eth_getLogs scan per chain (RPC-capped, slow). Found →
 // attributed row (actor + tx link); not indexed → a `system` fallback row (no actor/tx), same as before.
-var RULESET_QUEUED_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) {'
-  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: 200) {'
-  + ' items { chainId rulesetId from txHash } } }';
+var RULESET_QUEUED_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) {'
+  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: $limit, offset: $offset) {'
+  + ' totalCount items { chainId rulesetId from txHash } } }';
 // Fully-indexed variant (bendystraw PR #15: basedOnId + cycleNumber on the event) — lets us drop the allOf read.
-var RULESET_QUEUED_FULL_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) {'
-  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: 200) {'
-  + ' items { chainId rulesetId from txHash basedOnId cycleNumber } } }';
+var RULESET_QUEUED_FULL_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) {'
+  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: $limit, offset: $offset) {'
+  + ' totalCount items { chainId rulesetId from txHash basedOnId cycleNumber } } }';
 async function fetchRulesetQueuedEvents(query, deployments) {
   var pages = await Promise.all(deployments.map(function (deployment) {
-    return bendystrawQuery(query, {
+    return fetchBendystrawCollectionPages(query, 'rulesetQueuedEvents', {
       projectId: deployment.projectId,
       chainId: deployment.chainId,
       version: BENDYSTRAW_VERSION,
-    });
+    }, 250);
   }));
   var items = [];
-  pages.forEach(function (data) {
-    items = items.concat((data && data.rulesetQueuedEvents && data.rulesetQueuedEvents.items) || []);
+  pages.forEach(function (page) {
+    items = items.concat(page.items || []);
   });
   return items;
 }
@@ -17079,7 +17186,7 @@ async function fetchBendystrawParticipantPages(query, variables) {
   var totalCount = null;
   var offset = 0;
   var exhausted = false;
-  while (offset < OWNERS_MAX_PARTICIPANTS) {
+  while (true) {
     var data = await bendystrawQuery(query, Object.assign({}, variables, {
       limit: OWNERS_PAGE_SIZE,
       offset: offset,
@@ -17091,11 +17198,14 @@ async function fetchBendystrawParticipantPages(query, variables) {
       if (Number.isFinite(parsedTotal) && parsedTotal >= 0) totalCount = parsedTotal;
     }
     items = items.concat(page);
-    if (!page.length || page.length < OWNERS_PAGE_SIZE || (totalCount != null && items.length >= totalCount)) {
+    if (
+      !page.length
+      || (totalCount != null && items.length >= totalCount)
+      || (totalCount == null && page.length < OWNERS_PAGE_SIZE)
+    ) {
       exhausted = true;
       break;
     }
-    if (items.length >= OWNERS_MAX_PARTICIPANTS) break;
     offset += page.length;
   }
   var knownTotal = totalCount == null ? items.length : totalCount;
@@ -17901,7 +18011,7 @@ function renderOwnersSplits(project, opts) {
   // Custom-project "Reserved" view edits reserved recipients from the Rulesets card instead, so no CTA here.
   if (!reserved) {
     var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '20px';
-    var edit = el('a', 'operator-cta'); edit.textContent = 'Edit splits'; edit.href = '#';
+    var edit = el('button', 'operator-cta'); edit.textContent = 'Edit splits';
     edit.title = 'Edit the current stage’s split recipients (revnet operator only)';
     edit.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project); });
     foot.appendChild(edit);
@@ -17923,7 +18033,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   var pct = el('input', 'splits-edit-pct'); pct.type = 'number'; pct.placeholder = '10'; pct.step = 'any'; pct.min = '0';
   var sign = el('span', 'splits-edit-pctsign'); sign.textContent = '%';
   var toEl = el('span', 'splits-edit-to'); toEl.textContent = 'to';
-  var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
+  var rm = el('button', 'splits-edit-rm'); rm.textContent = '✕'; rm.title = 'Remove';
 
   var col = el('div', 'create-split-picker');
   var head = el('div', 'create-split-pickerhead');
@@ -18230,7 +18340,7 @@ function openQueueRulesetModal(project) {
   var body = el('div'); body.appendChild(skel('100%', '120px')); content.appendChild(body);
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Queue ruleset'; actions.appendChild(submit);
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = 'Queue ruleset'; actions.appendChild(submit);
   content.appendChild(actions);
   var modal = openModal('Queue ruleset', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
@@ -18382,9 +18492,7 @@ function openQueueRulesetModal(project) {
     try {
       var chainId = project.chainId;
       var controller = await controllerAddressFor(chainId, pid);
-      var history = await clientFor(chainId).readContract({
-        address: controller, abi: allRulesetsWithMetadataAbi, functionName: 'allRulesetsOf', args: [pid, 0n, 100n],
-      });
+      var history = await readAllRulesetsWithMetadata(chainId, controller, pid);
       var seen = {};
       for (var i = 0; i < (history || []).length; i++) {
         var entry = history[i];
@@ -19110,7 +19218,7 @@ function openEditSplitsModal(project, opts) {
     // Recipients are still editable at a 0% rate — they just receive nothing until a ruleset reserves.
     var zeroNote = el('div', 'splits-edit-hint splits-edit-hint--prose warn'); zeroNote.style.marginTop = '6px';
     zeroNote.appendChild(document.createTextNode('The current ruleset reserves 0% of issuance — these recipients receive nothing until a ruleset reserves tokens. '));
-    var rateLink = el('a', ''); rateLink.href = '#'; rateLink.textContent = 'Queue a ruleset with a reserved rate';
+    var rateLink = el('button', ''); rateLink.textContent = 'Queue a ruleset with a reserved rate';
     rateLink.addEventListener('click', function (e) { e.preventDefault(); modal.close(); openQueueRulesetModal(project); });
     zeroNote.appendChild(rateLink);
     zeroNote.appendChild(document.createTextNode('.'));
@@ -19120,7 +19228,7 @@ function openEditSplitsModal(project, opts) {
     // lives on the ruleset, not in this split group).
     var stopNote = el('div', 'splits-edit-hint splits-edit-hint--prose'); stopNote.style.marginTop = '6px';
     stopNote.appendChild(document.createTextNode('These recipients only divide the tokens this ruleset already reserves. To stop reserving tokens entirely, '));
-    var queueLink = el('a', ''); queueLink.href = '#'; queueLink.textContent = 'queue a new ruleset with a 0% reserved rate';
+    var queueLink = el('button', ''); queueLink.textContent = 'queue a new ruleset with a 0% reserved rate';
     queueLink.addEventListener('click', function (e) { e.preventDefault(); modal.close(); openQueueRulesetModal(project); });
     stopNote.appendChild(queueLink);
     stopNote.appendChild(document.createTextNode(' (remove every reserved recipient there — the rate is the sum of its rows).'));
@@ -19193,7 +19301,7 @@ function openEditSplitsModal(project, opts) {
   if (!rows.length) addSplitRecipientRow(rowsBox, rows, mkRowOpts());
   onRowChange();
 
-  var addLink = el('a', 'operator-cta splits-edit-add'); addLink.href = '#'; addLink.textContent = '+ Add recipient';
+  var addLink = el('button', 'operator-cta splits-edit-add'); addLink.textContent = '+ Add recipient';
   addLink.addEventListener('click', function (e) { e.preventDefault(); addSplitRecipientRow(rowsBox, rows, mkRowOpts()); onRowChange(); });
   content.insertBefore(addLink, totalLine); // "+ Add recipient" sits above the total
 
@@ -19213,7 +19321,7 @@ function openEditSplitsModal(project, opts) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Save splits';
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = 'Save splits';
   actions.appendChild(submit);
   content.appendChild(actions);
 
@@ -19908,7 +20016,7 @@ function renderYouCard(project, opts) {
       if (!noLoans) {
         var myLoansWrap = el('div', 'you-loans');
         body.appendChild(myLoansWrap);
-        fetchProjectEventRows(BENDYSTRAW_LOANS_QUERY, 'loans', project, 100).then(function (allLoans) {
+        fetchProjectEventRows(BENDYSTRAW_LOANS_QUERY, 'loans', project).then(function (allLoans) {
           if (seq !== loadSeq || !myLoansWrap.isConnected) return;
           var mine = (allLoans || []).filter(function (l) { return String(l.owner || '').toLowerCase() === acct.toLowerCase(); });
           if (!mine.length) return;
@@ -19917,7 +20025,10 @@ function renderYouCard(project, opts) {
             var h = {}; var content = buildRepayModal(project, loan, function () { if (h.close) h.close(); });
             h.close = openModal('Repay loan #' + String(loan.id), content).close;
           } }));
-        }).catch(function () {});
+        }).catch(function () {
+          if (seq !== loadSeq || !myLoansWrap.isConnected) return;
+          myLoansWrap.textContent = 'Could not load your loans from Bendystraw.';
+        });
       }
     }).catch(function () {
       if (seq !== loadSeq || !body.isConnected) return;
@@ -22152,9 +22263,25 @@ function snapshotAge(ts) {
 // view (`peerChainAccountsOf`) — NOT individual suckers — because a transitively-gossiped record can live on
 // a different sucker than the direct A↔B one (e.g. Ethereum gossiped to Arbitrum lands on Arbitrum's Base
 // sucker). The registry folds every sucker's direct + virtually-known records, so it sees the full picture.
-var ACCOUNTING_SYNC_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) {'
-  + ' accountingSyncEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: 100, orderBy: "timestamp", orderDirection: "desc") {'
-  + ' items { chainId peerChainId sourceTimestampSeconds } } }';
+var ACCOUNTING_SYNC_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) {'
+  + ' accountingSyncEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: $limit, offset: $offset, orderBy: "timestamp", orderDirection: "desc") {'
+  + ' totalCount items { chainId peerChainId sourceTimestampSeconds } } }';
+async function fetchAllAccountingSyncEvents(variables) {
+  var items = [], totalCount = 0;
+  do {
+    var data = await bendystrawQuery(ACCOUNTING_SYNC_QUERY, Object.assign({}, variables, {
+      limit: 250, offset: items.length,
+    }));
+    var result = data && data.accountingSyncEvents;
+    var page = (result && result.items) || [];
+    var nextTotal = result && result.totalCount != null ? Number(result.totalCount) : items.length + page.length;
+    if (items.length && nextTotal !== totalCount) throw new Error('Accounting sync activity changed while loading.');
+    if (!page.length && items.length < nextTotal) throw new Error('Accounting sync activity ended before its reported total.');
+    totalCount = nextTotal;
+    items = items.concat(page);
+  } while (items.length < totalCount);
+  return items;
+}
 function fetchCrossChainKnowledge(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
   if (chains.length < 2) return Promise.resolve([]);
@@ -22162,10 +22289,12 @@ function fetchCrossChainKnowledge(project) {
   // In-flight sync pushes from the index (bendystraw PR #11): destChain|srcChain → latest SENT unix seconds. Lets
   // a row show "Syncing…" for a push ANY user triggered (the localStorage marker only covers this user's own).
   var sentByKeyP = Promise.all(projectDeployments(project).map(function (deployment) {
-    return bendystrawQuery(ACCOUNTING_SYNC_QUERY, { projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION });
+    return fetchAllAccountingSyncEvents({
+      projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION,
+    });
   })).then(function (pages) {
     var m = {};
-    pages.forEach(function (d) { ((d && d.accountingSyncEvents && d.accountingSyncEvents.items) || []).forEach(function (e) { var k = e.peerChainId + '|' + e.chainId, ts = Number(e.sourceTimestampSeconds); if (!(m[k] >= ts)) m[k] = ts; }); });
+    pages.forEach(function (items) { items.forEach(function (e) { var k = e.peerChainId + '|' + e.chainId, ts = Number(e.sourceTimestampSeconds); if (!(m[k] >= ts)) m[k] = ts; }); });
     return m;
   })
     .catch(function () { return {}; });

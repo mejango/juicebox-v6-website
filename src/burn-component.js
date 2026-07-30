@@ -37,6 +37,12 @@ var totalBalanceOfAbi = [{
   outputs: [{ name: '', type: 'uint256' }],
 }];
 
+var controllerOfAbi = [{
+  type: 'function', name: 'controllerOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }],
+  outputs: [{ name: '', type: 'address' }],
+}];
+
 export function renderBurnComponent() {
   var defaults = parseHashDefaults('burn');
 
@@ -190,7 +196,7 @@ export function renderBurnComponent() {
     }).catch(function() {});
   }
 
-  function executeBurn() {
+  async function executeBurn() {
     state.error = null;
     state.txStatus = null;
 
@@ -211,11 +217,70 @@ export function renderBurnComponent() {
     var holder = getAccount();
     if (!holder) { state.error = 'Connect wallet first'; updateUI(); return; }
 
-    var controllerAddr = getAddress('JBController', state.selectedChain);
-    if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
+    var tokensAddr = getAddress('JBTokens', state.selectedChain);
+    var directoryAddr = getAddress('JBDirectory', state.selectedChain);
+    if (!tokensAddr || !directoryAddr) {
+      state.error = 'Protocol contracts are unavailable for this chain'; updateUI(); return;
+    }
+    var freshBalance, controllerAddr;
+    try {
+      freshBalance = await executeRead({
+        chainId: state.selectedChain,
+        address: tokensAddr,
+        abi: totalBalanceOfAbi,
+        functionName: 'totalBalanceOf',
+        args: [holder, BigInt(state.projectId)],
+      });
+      if (tokenCount > freshBalance) {
+        state.balance = freshBalance;
+        state.error = 'Your balance changed. Review the amount before burning.';
+        updateUI();
+        return;
+      }
+      controllerAddr = await executeRead({
+        chainId: state.selectedChain,
+        address: directoryAddr,
+        abi: controllerOfAbi,
+        functionName: 'controllerOf',
+        args: [BigInt(state.projectId)],
+      });
+    } catch (e) {
+      state.error = 'Could not verify the current balance and project controller.';
+      updateUI();
+      return;
+    }
+    if (!controllerAddr || /^0x0{40}$/i.test(controllerAddr)) {
+      state.error = 'The project has no active controller.'; updateUI(); return;
+    }
 
     executeTransaction({
       ...buildBurnArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, holder: holder, projectId: state.projectId, tokenCount: tokenCount, memo: state.memo || '' }),
+      reverify: async function () {
+        var latestBalance = await executeRead({
+          chainId: state.selectedChain,
+          address: tokensAddr,
+          abi: totalBalanceOfAbi,
+          functionName: 'totalBalanceOf',
+          args: [holder, BigInt(state.projectId)],
+        });
+        if (tokenCount > latestBalance) {
+          throw new Error('Your balance changed. Review the amount before burning.');
+        }
+        var latestController = await executeRead({
+          chainId: state.selectedChain,
+          address: directoryAddr,
+          abi: controllerOfAbi,
+          functionName: 'controllerOf',
+          args: [BigInt(state.projectId)],
+        });
+        if (
+          !latestController
+          || /^0x0{40}$/i.test(latestController)
+          || latestController.toLowerCase() !== controllerAddr.toLowerCase()
+        ) {
+          throw new Error('The project controller changed. Review again.');
+        }
+      },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

@@ -113,6 +113,7 @@ var tokenOfAbi = [{
 
 export function el(tag, className) {
   var e = document.createElement(tag);
+  if (tag === 'button') e.type = 'button';
   if (className) e.className = className;
   return e;
 }
@@ -319,9 +320,9 @@ export function createProjectAndChainInput(state, onProjectUpdate, onChainChange
 
   var chainWrap = el('div', 'project-chain-wrap');
 
-  var summary = document.createElement('a');
+  var summary = document.createElement('button');
+  summary.type = 'button';
   summary.className = 'project-chain-summary';
-  summary.href = '#';
   summary.textContent = (state._showChainPicker ? '▾' : '▸') + ' on ' + summaryName;
   chainWrap.appendChild(summary);
 
@@ -624,7 +625,7 @@ function auditLinksFromPayload(payload) {
 function appendAuditPromptLink(container, payload) {
   var DEFAULT = '[copy tx audit prompt]';
   var wrap = el('div', 'tx-audit-prompt');
-  var link = el('a', 'tx-audit-link'); link.href = '#'; link.textContent = DEFAULT;
+  var link = el('button', 'tx-audit-link'); link.textContent = DEFAULT;
   link.addEventListener('click', function (e) {
     e.preventDefault();
     var text = buildTxAuditPrompt(payload);
@@ -1186,7 +1187,7 @@ export function confirmTransactionModal(payload, opts) {
 }
 
 export function executeTransaction(opts) {
-  // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, onStatus, onSuccess, onError, skipConfirm, label }
+  // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, reverify, onStatus, onSuccess, onError, skipConfirm, label }
   if (getViewAs()) { (opts.onError || function () {})(VIEW_AS_TX_ERROR); return; }
   var wallet = getWalletClient();
   if (!wallet) { opts.onError('Connect wallet to transact'); return; }
@@ -1240,21 +1241,32 @@ export function executeTransaction(opts) {
   });
 
   function sendNow() {
+  function reverifyReviewedState() {
+    if (!opts.reverify) return Promise.resolve();
+    return Promise.resolve(opts.reverify()).then(function () {
+      var current = getAccount();
+      if (!current || current.toLowerCase() !== account.toLowerCase()) {
+        throw new Error('Connected account changed. Review the transaction again.');
+      }
+    });
+  }
   // Safe App: propose to the Safe's queue instead of sending directly. Any ERC-20 approval is batched with
   // the main call into ONE atomic Safe transaction (the Safe simulates + executes it on its side). There's no
   // mined tx hash to wait on — the owners sign & execute in Safe{Wallet}.
   if (isSafeConnected()) {
     var current0 = getAccount();
     if (!current0 || current0.toLowerCase() !== account.toLowerCase()) { cbs.onError('Connected account changed. Review the transaction again.'); return; }
-    var txs = [];
-    var isNativeApprovalToken = opts.tokenAddr && (opts.tokenAddr.toLowerCase() === NATIVE_TOKEN.toLowerCase() || opts.tokenAddr === ZERO_ADDRESS);
-    if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount && !isNativeApprovalToken) {
-      txs.push({ to: opts.tokenAddr, value: '0', data: encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [opts.spenderAddr, BigInt(opts.approvalAmount)] }) });
-    }
-    txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
-    cbs.onStatus('Proposing to your Safe…', 'pending');
-    proposeSafeTransactions(txs).then(function (safeTxHash) {
-      cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
+    reverifyReviewedState().then(function () {
+      var txs = [];
+      var isNativeApprovalToken = opts.tokenAddr && (opts.tokenAddr.toLowerCase() === NATIVE_TOKEN.toLowerCase() || opts.tokenAddr === ZERO_ADDRESS);
+      if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount && !isNativeApprovalToken) {
+        txs.push({ to: opts.tokenAddr, value: '0', data: encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [opts.spenderAddr, BigInt(opts.approvalAmount)] }) });
+      }
+      txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
+      cbs.onStatus('Proposing to your Safe…', 'pending');
+      return proposeSafeTransactions(txs).then(function (safeTxHash) {
+        cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
+      });
     }).catch(function (err) {
       cbs.onError(errMessage(err, 'Could not propose the transaction to your Safe.'));
     });
@@ -1271,6 +1283,8 @@ export function executeTransaction(opts) {
   }).then(function() {
     var current = getAccount();
     if (!current || current.toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+    return reverifyReviewedState();
+  }).then(function() {
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
       return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, cbs.onStatus);
     }

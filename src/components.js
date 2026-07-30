@@ -199,10 +199,10 @@ export function renderStyleEditor(target, onClose) {
   panel.appendChild(grid);
 
   // Reset link
-  var resetLink = document.createElement('a');
+  var resetLink = document.createElement('button');
+  resetLink.type = 'button';
   resetLink.className = 'style-editor-reset';
   resetLink.textContent = '[reset]';
-  resetLink.href = '#';
   resetLink.addEventListener('click', function(e) {
     e.preventDefault();
     for (var k in customVars) {

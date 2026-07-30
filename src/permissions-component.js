@@ -127,9 +127,9 @@ export function renderPermissionsComponent() {
     pidSection.appendChild(pidLabel);
 
     var chainWrap = el('div', 'project-chain-wrap');
-    var summary = document.createElement('a');
+    var summary = document.createElement('button');
+    summary.type = 'button';
     summary.className = 'project-chain-summary';
-    summary.href = '#';
     summary.textContent = (state._showChainPicker ? '▾' : '▸') + ' on ' + currentChainName;
     chainWrap.appendChild(summary);
 

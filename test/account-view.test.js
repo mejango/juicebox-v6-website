@@ -289,7 +289,7 @@ describe('renderAccountView', () => {
     // Click through the mapped legacy sections: Projects (owned) and Roles (operated).
     btns.find(b => b.dataset.tab === 'projects').click();
     expect(tab.textContent).toContain('Owned projects');
-    await vi.waitFor(() => expect(tab.textContent).toMatch(/No V6 projects owned by this account/));
+    await vi.waitFor(() => expect(tab.textContent).toMatch(/Could not load owned projects from Bendystraw/));
     btns.find(b => b.dataset.tab === 'roles').click();
     expect(tab.textContent).toContain('Operated projects');
     await vi.waitFor(() => expect(tab.textContent).toMatch(/Could not read permissions from Bendystraw/));

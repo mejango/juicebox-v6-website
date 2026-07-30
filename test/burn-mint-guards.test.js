@@ -71,7 +71,11 @@ async function flush() {
 }
 
 beforeEach(() => {
-  h.executeRead = vi.fn(() => Promise.resolve(parseEther('5')));
+  h.executeRead = vi.fn((request) => Promise.resolve(
+    request.functionName === 'controllerOf'
+      ? '0x3333333333333333333333333333333333333333'
+      : parseEther('5')
+  ));
   h.executeTransaction = vi.fn();
   h.viewAs = null;
   document.body.innerHTML = '';
@@ -125,8 +129,13 @@ describe('burn component', () => {
     const root = await mountBurn();
     setAmount(root, '100', '5');
     transactButton(root).click();
-    expect(h.executeTransaction).toHaveBeenCalledTimes(1);
-    expect(h.executeTransaction.mock.calls[0][0].args[2]).toBe(parseEther('5'));
+    await vi.waitFor(() => expect(h.executeTransaction).toHaveBeenCalledTimes(1));
+    const request = h.executeTransaction.mock.calls[0][0];
+    expect(request.args[2]).toBe(parseEther('5'));
+    expect(request.reverify).toBeTypeOf('function');
+    const readsBeforeReverify = h.executeRead.mock.calls.length;
+    await expect(request.reverify()).resolves.toBeUndefined();
+    expect(h.executeRead.mock.calls.length).toBe(readsBeforeReverify + 2);
   });
 });
 

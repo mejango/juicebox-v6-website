@@ -778,17 +778,17 @@ function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, 
         selectorWrap.appendChild(viewSelect);
 
         // Style toggle next to pretty/raw dropdown
-        var styleToggle = document.createElement('a');
+        var styleToggle = document.createElement('button');
+        styleToggle.type = 'button';
         styleToggle.className = 'style-toggle-btn';
         styleToggle.textContent = '[style]';
-        styleToggle.href = '#';
         selectorWrap.appendChild(styleToggle);
 
         if (compGetEmbedParams) {
-          var copyEmbedBtn = document.createElement('a');
+          var copyEmbedBtn = document.createElement('button');
+          copyEmbedBtn.type = 'button';
           copyEmbedBtn.className = 'style-toggle-btn';
           copyEmbedBtn.textContent = '[embed]';
-          copyEmbedBtn.href = '#';
           copyEmbedBtn.addEventListener('click', function(e) {
             e.preventDefault();
             var src = buildEmbedUrl(compPrefix, compGetEmbedParams());
@@ -801,10 +801,10 @@ function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, 
           selectorWrap.appendChild(copyEmbedBtn);
         }
 
-        var copyPromptLink = document.createElement('a');
+        var copyPromptLink = document.createElement('button');
+        copyPromptLink.type = 'button';
         copyPromptLink.className = 'fn-copy-prompt';
         copyPromptLink.textContent = '[ask your LLM]';
-        copyPromptLink.href = '#';
         copyPromptLink.addEventListener('click', function(e) {
           e.preventDefault();
           var fnNs = natspec[contractName] ? natspec[contractName][fn.name] : null;

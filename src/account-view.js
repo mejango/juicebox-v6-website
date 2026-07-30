@@ -22,40 +22,144 @@ import { renderRelayrReceiptInto } from './relayr-ui.js';
 var VERSION = 6;
 var ACTIVITY_PAGE = 25;
 
-// Account-scoped activity: same event union + item fields as the project feed, filtered by the
-// top-level `from` column, paged with Ponder's cursor (`after`).
-var ACCOUNT_ACTIVITY_QUERY = 'query($from: String!, $version: Int!, $limit: Int!, $after: String) { '
+// Account-scoped activity: actions sent by the account plus beneficiary-only
+// receipts. Every root is offset-paged so recipient history is not capped at
+// the first page.
+var ACCOUNT_ACTIVITY_QUERY = 'query($from: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'activityEvents(where: { from: $from, version: $version, ' + BENDYSTRAW_ACTIVITY_OR + ' }, '
-  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, after: $after) { '
-  + BENDYSTRAW_ACTIVITY_ITEM_FIELDS + ' pageInfo { endCursor hasNextPage } } }';
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
+  + 'totalCount ' + BENDYSTRAW_ACTIVITY_ITEM_FIELDS + ' } '
+  + 'beneficiaryPayEvents: payEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from beneficiary amount amountUsd memo newlyIssuedTokenCount } } '
+  + 'beneficiaryCashOutEvents: cashOutTokensEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from holder beneficiary cashOutCount reclaimAmount reclaimAmountUsd } } '
+  + 'beneficiaryMintEvents: mintTokensEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from beneficiary beneficiaryTokenCount } } '
+  + 'beneficiaryManualMintEvents: manualMintTokensEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from beneficiary beneficiaryTokenCount } } '
+  + 'beneficiaryAutoIssueEvents: autoIssueEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from beneficiary count stageId } } }';
+var ACCOUNT_ACTIVITY_ROOTS = [
+  'activityEvents',
+  'beneficiaryPayEvents',
+  'beneficiaryCashOutEvents',
+  'beneficiaryMintEvents',
+  'beneficiaryManualMintEvents',
+  'beneficiaryAutoIssueEvents',
+];
+
+function accountActivityRows(data) {
+  var rows = ((data && data.activityEvents && data.activityEvents.items) || []).slice();
+  function add(root, field, map) {
+    var items = (data && data[root] && data[root].items) || [];
+    items.forEach(function (item) {
+      var event = {
+        id: root + ':' + item.id,
+        chainId: item.chainId,
+        projectId: item.projectId,
+        timestamp: item.timestamp,
+        txHash: item.txHash,
+        from: item.from,
+      };
+      event[field] = map ? map(item) : item;
+      rows.push(event);
+    });
+  }
+  add('beneficiaryPayEvents', 'payEvent');
+  add('beneficiaryCashOutEvents', 'cashOutTokensEvent');
+  add('beneficiaryMintEvents', '_accountReceipt', function (item) {
+    return { beneficiary: item.beneficiary, tokenCount: item.beneficiaryTokenCount, from: item.from, txHash: item.txHash };
+  });
+  add('beneficiaryManualMintEvents', '_accountReceipt', function (item) {
+    return { beneficiary: item.beneficiary, tokenCount: item.beneficiaryTokenCount, from: item.from, txHash: item.txHash };
+  });
+  add('beneficiaryAutoIssueEvents', 'autoIssueEvent');
+  rows.sort(function (a, b) { return Number(b.timestamp) - Number(a.timestamp); });
+  return rows;
+}
+
+async function fetchAccountActivityWindow(address) {
+  var merged = {};
+  ACCOUNT_ACTIVITY_ROOTS.forEach(function (root) {
+    merged[root] = { items: [], totalCount: 0 };
+  });
+  var offset = 0;
+  while (true) {
+    var limit = 250;
+    var data = await bendystrawQuery(ACCOUNT_ACTIVITY_QUERY, {
+      from: address.toLowerCase(), version: VERSION, limit: limit, offset: offset,
+    });
+    ACCOUNT_ACTIVITY_ROOTS.forEach(function (root) {
+      var source = data && data[root];
+      var nextTotal = source && source.totalCount != null
+        ? Number(source.totalCount)
+        : merged[root].items.length + ((source && source.items && source.items.length) || 0);
+      if (offset > 0 && nextTotal !== merged[root].totalCount) {
+        throw new Error('Account activity changed while loading');
+      }
+      if ((!source || !source.items || !source.items.length) && offset < nextTotal) {
+        throw new Error('Account activity ended before its reported total');
+      }
+      merged[root].items = merged[root].items.concat((source && source.items) || []);
+      merged[root].totalCount = nextTotal;
+    });
+    offset += limit;
+    if (ACCOUNT_ACTIVITY_ROOTS.every(function (root) {
+      return merged[root].items.length >= merged[root].totalCount;
+    })) break;
+  }
+  var items = accountActivityRows(merged);
+  return { items: items, totalCount: items.length };
+}
 // Minimal per-project stub data the activity interpreter reads: display name plus the deployed
 // ERC-20's symbol/address (bendystraw's project.tokenSymbol is the ACCOUNTING token, not the
 // project's ERC-20 — the nested deploy event carries the real one).
-var ACCOUNT_PROJECT_STUBS_QUERY = 'query($chainId: Int!, $version: Int!, $projectIds: [Int!]) { '
-  + 'projects(where: { chainId: $chainId, version: $version, projectId_in: $projectIds }, limit: 100) { '
-  + 'items { chainId projectId name handle deployErc20Events(limit: 1) { items { symbol token } } } } }';
-var ACCOUNT_OWNED_QUERY = 'query($owner: String!, $version: Int!) { '
-  + 'projects(where: { owner: $owner, version: $version }, limit: 100) { '
-  + 'items { chainId projectId name handle } } }';
-var ACCOUNT_SAFE_OWNED_QUERY = 'query($owners: [String!], $chainId: Int!, $version: Int!) { '
-  + 'projects(where: { owner_in: $owners, chainId: $chainId, version: $version }, limit: 100) { '
-  + 'items { chainId projectId name handle owner } } }';
-var ACCOUNT_OPERATED_QUERY = 'query($operator: String!, $version: Int!) { '
-  + 'permissionHolders(where: { operator: $operator, version: $version }, limit: 200) { '
-  + 'items { chainId projectId account operator permissions isRevnetOperator } } }';
+var ACCOUNT_PROJECT_STUBS_QUERY = 'query($chainId: Int!, $version: Int!, $projectIds: [Int!], $limit: Int!, $offset: Int!) { '
+  + 'projects(where: { chainId: $chainId, version: $version, projectId_in: $projectIds }, limit: $limit, offset: $offset) { '
+  + 'totalCount items { chainId projectId name handle deployErc20Events(limit: 1) { items { symbol token } } } } }';
+var ACCOUNT_OWNED_QUERY = 'query($owner: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'projects(where: { owner: $owner, version: $version }, limit: $limit, offset: $offset) { '
+  + 'totalCount items { chainId projectId name handle } } }';
+var ACCOUNT_SAFE_OWNED_QUERY = 'query($owners: [String!], $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'projects(where: { owner_in: $owners, chainId: $chainId, version: $version }, limit: $limit, offset: $offset) { '
+  + 'totalCount items { chainId projectId name handle owner } } }';
+var ACCOUNT_OPERATED_QUERY = 'query($operator: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'permissionHolders(where: { operator: $operator, version: $version }, limit: $limit, offset: $offset) { '
+  + 'totalCount items { chainId projectId account operator permissions isRevnetOperator } } }';
 // Holdings: per-project token balances. Version-pinned like every other account query — this whole
 // site is V6-only, so V4/V5 participant rows must never appear. creditBalance/erc20Balance carry the
 // unclaimed-credits vs claimed-ERC-20 split; totalCount makes single-page truncation honest.
-export var ACCOUNT_TOKEN_HOLDINGS_QUERY = 'query($account: String!, $version: Int!) { '
+export var ACCOUNT_TOKEN_HOLDINGS_QUERY = 'query($account: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'participants(where: { address: $account, version: $version, balance_gt: "0" }, '
-  + 'orderBy: "balance", orderDirection: "desc", limit: 500) { '
+  + 'orderBy: "balance", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'totalCount items { chainId projectId version balance creditBalance erc20Balance } } }';
 // Holdings: store items (721s) currently owned, version-pinned for the same reason. `hook` is part of
 // bendystraw's nft primary key (chainId, hook, tokenId, version) — JB721 tokenIds (tierId*1e9+serial)
 // collide across every collection on a chain, so identity must include the collection.
-export var ACCOUNT_NFT_HOLDINGS_QUERY = 'query($owner: String!, $version: Int!) { '
-  + 'nfts(where: { owner: $owner, version: $version }, limit: 1000) { '
+export var ACCOUNT_NFT_HOLDINGS_QUERY = 'query($owner: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'nfts(where: { owner: $owner, version: $version }, limit: $limit, offset: $offset) { '
   + 'totalCount items { chainId projectId hook tokenId tierId } } }';
+
+async function fetchAllOffsetPages(query, path, variables, pageSize) {
+  var items = [], totalCount = 0;
+  while (items.length < totalCount || items.length === 0) {
+    var data = await bendystrawQuery(query, Object.assign({}, variables, {
+      limit: pageSize || 250,
+      offset: items.length,
+    }));
+    var result = data && data[path];
+    var page = (result && result.items) || [];
+    totalCount = result && result.totalCount != null ? Number(result.totalCount) : items.length + page.length;
+    items = items.concat(page);
+    if (!page.length || items.length >= totalCount) break;
+  }
+  return items;
+}
 
 // -- Pure helpers (unit-tested) --
 
@@ -246,9 +350,9 @@ function fetchProjectStubs(refs) {
   var byChain = {};
   (refs || []).forEach(function (r) { (byChain[r.chainId] = byChain[r.chainId] || []).push(r.projectId); });
   return Promise.all(Object.keys(byChain).map(function (cid) {
-    return bendystrawQuery(ACCOUNT_PROJECT_STUBS_QUERY, {
+    return fetchAllOffsetPages(ACCOUNT_PROJECT_STUBS_QUERY, 'projects', {
       chainId: Number(cid), version: VERSION, projectIds: byChain[cid],
-    }).then(function (d) { return projectStubsFromRows(d && d.projects && d.projects.items); }).catch(function () { return {}; });
+    }, 250).then(projectStubsFromRows).catch(function () { return {}; });
   })).then(function (maps) { return Object.assign.apply(Object, [{}].concat(maps)); });
 }
 
@@ -408,7 +512,8 @@ function renderActivityCard(address, isOwn, live) {
   card.appendChild(more);
 
   var stubs = {};
-  var cursor = null;
+  var loadedCount = 0;
+  var totalCount = 0;
   var loadedAny = false;
 
   function stubFor(ev) {
@@ -443,22 +548,20 @@ function renderActivityCard(address, isOwn, live) {
     more.disabled = true;
     status.style.display = '';
     status.textContent = 'Loading activity…';
-    bendystrawQuery(ACCOUNT_ACTIVITY_QUERY, {
-      from: address.toLowerCase(), version: VERSION, limit: ACTIVITY_PAGE, after: cursor,
-    }).then(function (data) {
-      var res = data && data.activityEvents;
-      var items = (res && res.items) || [];
-      cursor = (res && res.pageInfo && res.pageInfo.hasNextPage) ? res.pageInfo.endCursor : null;
+    fetchAccountActivityWindow(address).then(function (page) {
+      totalCount = page.totalCount;
+      var items = page.items.slice(loadedCount, loadedCount + ACTIVITY_PAGE);
       return loadStubs(items).then(function () { return items; });
     }).then(function (items) {
       if (!live()) return;
       appendRows(items);
+      loadedCount += items.length;
       status.style.display = 'none';
       if (!loadedAny) {
         status.style.display = '';
         status.textContent = 'No indexed V6 activity for this account yet.';
       }
-      more.style.display = cursor ? '' : 'none';
+      more.style.display = loadedCount < totalCount ? '' : 'none';
       more.disabled = false;
     }).catch(function () {
       if (!live()) return;
@@ -531,9 +634,9 @@ function renderTokenHoldingsCard(address, live) {
   body.textContent = 'Loading…';
   card.appendChild(body);
 
-  bendystrawQuery(ACCOUNT_TOKEN_HOLDINGS_QUERY, { account: address.toLowerCase(), version: VERSION }).then(function (data) {
-    var res = data && data.participants;
-    var items = (res && res.items) || [];
+  fetchAllOffsetPages(ACCOUNT_TOKEN_HOLDINGS_QUERY, 'participants', {
+    account: address.toLowerCase(), version: VERSION,
+  }, 250).then(function (items) {
     var rows = dedupeTokenHoldings(items);
     return fetchProjectStubs(rows).then(function (stubMap) {
       if (!live() || !body.isConnected) return;
@@ -558,8 +661,6 @@ function renderTokenHoldingsCard(address, live) {
         }
         body.appendChild(line);
       });
-      var note = capNote(items.length, res && res.totalCount, 'token balances');
-      if (note) { var capEl = el('div', 'account-holdings-cap'); capEl.textContent = note; body.appendChild(capEl); }
     });
   }).catch(function () {
     if (!live() || !body.isConnected) return;
@@ -575,9 +676,9 @@ function renderNftHoldingsCard(address, live) {
   body.textContent = 'Loading…';
   card.appendChild(body);
 
-  bendystrawQuery(ACCOUNT_NFT_HOLDINGS_QUERY, { owner: address.toLowerCase(), version: VERSION }).then(function (data) {
-    var res = data && data.nfts;
-    var items = (res && res.items) || [];
+  fetchAllOffsetPages(ACCOUNT_NFT_HOLDINGS_QUERY, 'nfts', {
+    owner: address.toLowerCase(), version: VERSION,
+  }, 250).then(function (items) {
     var groups = groupNftHoldings(items);
     return fetchProjectStubs(groups).then(function (stubMap) {
       if (!live() || !body.isConnected) return;
@@ -595,8 +696,6 @@ function renderNftHoldingsCard(address, live) {
         });
         body.appendChild(line);
       });
-      var note = capNote(items.length, res && res.totalCount, 'store items');
-      if (note) { var capEl = el('div', 'account-holdings-cap'); capEl.textContent = note; body.appendChild(capEl); }
     });
   }).catch(function () {
     if (!live() || !body.isConnected) return;
@@ -615,22 +714,32 @@ function renderOwnedCard(address, live) {
   card.appendChild(body);
 
   var owner = address.toLowerCase();
-  var direct = bendystrawQuery(ACCOUNT_OWNED_QUERY, { owner: owner, version: VERSION })
-    .then(function (data) { return (data && data.projects && data.projects.items) || []; })
-    .catch(function () { return []; });
+  var safeOwnershipPartial = false;
+  var direct = fetchAllOffsetPages(
+    ACCOUNT_OWNED_QUERY,
+    'projects',
+    { owner: owner, version: VERSION },
+    250
+  );
 
   // Safe-owned: for each active chain with a Safe Transaction Service, list the Safes this account
   // signs for, then find projects owned by any of them (project ownership is chain-local).
   var viaSafe = Promise.all(activeDiscoverChains().filter(function (c) { return hasSafeService(c.id); }).map(function (c) {
-    return safesForOwner(address, c.id).catch(function () { return []; }).then(function (safes) {
+    return safesForOwner(address, c.id).catch(function () {
+      safeOwnershipPartial = true;
+      return [];
+    }).then(function (safes) {
       if (!safes.length) return [];
-      return bendystrawQuery(ACCOUNT_SAFE_OWNED_QUERY, {
+      return fetchAllOffsetPages(ACCOUNT_SAFE_OWNED_QUERY, 'projects', {
         owners: safes.map(function (s) { return String(s).toLowerCase(); }), chainId: c.id, version: VERSION,
-      }).then(function (data) {
-        return ((data && data.projects && data.projects.items) || []).map(function (row) {
+      }, 250).then(function (items) {
+        return items.map(function (row) {
           return Object.assign({ safe: row.owner }, row);
         });
-      }).catch(function () { return []; });
+      }).catch(function () {
+        safeOwnershipPartial = true;
+        return [];
+      });
     });
   })).then(function (pages) { return [].concat.apply([], pages); });
 
@@ -654,6 +763,14 @@ function renderOwnedCard(address, live) {
       }
       body.appendChild(line);
     });
+    if (safeOwnershipPartial) {
+      var warning = el('div', 'account-holdings-cap');
+      warning.textContent = 'Some Safe-owned projects could not be loaded.';
+      body.appendChild(warning);
+    }
+  }).catch(function () {
+    if (!live() || !body.isConnected) return;
+    body.textContent = 'Could not load owned projects from Bendystraw or Safe services.';
   });
   return card;
 }
@@ -667,9 +784,11 @@ function renderOperatedCard(address, live) {
   body.textContent = 'Loading…';
   card.appendChild(body);
 
-  bendystrawQuery(ACCOUNT_OPERATED_QUERY, { operator: address.toLowerCase(), version: VERSION }).then(function (data) {
+  fetchAllOffsetPages(ACCOUNT_OPERATED_QUERY, 'permissionHolders', {
+    operator: address.toLowerCase(), version: VERSION,
+  }, 250).then(function (items) {
     if (!live() || !body.isConnected) return;
-    var groups = groupOperatedProjects(data && data.permissionHolders && data.permissionHolders.items);
+    var groups = groupOperatedProjects(items);
     body.innerHTML = '';
     if (!groups.length) { body.textContent = 'This account operates no V6 projects.'; return; }
 

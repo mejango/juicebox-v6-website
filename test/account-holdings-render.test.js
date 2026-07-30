@@ -1,7 +1,6 @@
 // Account Holdings tab rendered against fixture bendystraw data: V6-pinned queries, hook-keyed
 // NFT identity (same-chain tokenId collisions across collections both render), the credit/ERC-20
-// split beside each combined balance, and an honest "showing first N of M" note when the single
-// page the view fetches is smaller than what the indexer holds.
+// split beside each combined balance, and complete offset pagination.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderAccountView } from '../src/account-view.js';
 import { bendystrawQuery } from '../src/bendystraw-client.js';
@@ -16,15 +15,19 @@ const E18 = 10n ** 18n;
 const HOOK_A = '0xaaaa000000000000000000000000000000000001';
 const HOOK_B = '0xbbbb000000000000000000000000000000000002';
 
-function primeQueries({ participants, nfts }) {
+function primeQueries({ participants, nfts, pageSize }) {
   bendystrawQuery.mockImplementation((query, vars) => {
     if (query.indexOf('participants(') !== -1) {
       expect(vars.version).toBe(6); // V6-only site: the pin must actually be sent
-      return Promise.resolve({ participants });
+      const items = pageSize
+        ? participants.items.slice(vars.offset, vars.offset + pageSize)
+        : participants.items;
+      return Promise.resolve({ participants: { ...participants, items } });
     }
     if (query.indexOf('nfts(') !== -1) {
       expect(vars.version).toBe(6);
-      return Promise.resolve({ nfts });
+      const items = pageSize ? nfts.items.slice(vars.offset, vars.offset + pageSize) : nfts.items;
+      return Promise.resolve({ nfts: { ...nfts, items } });
     }
     return Promise.reject(new Error('offline'));
   });
@@ -75,21 +78,31 @@ describe('holdings tab rendering', () => {
     expect(tab.textContent).not.toContain('Showing the first');
   });
 
-  it('surfaces "showing first N of M" when the indexer holds more than one page', async () => {
+  it('loads every offset page instead of surfacing a truncated holdings window', async () => {
     primeQueries({
       participants: {
-        totalCount: 730,
-        items: [{ chainId: 1, projectId: 3, version: 6, balance: String(2n * E18), creditBalance: '0', erc20Balance: String(2n * E18) }],
+        totalCount: 2,
+        items: [
+          { chainId: 1, projectId: 3, version: 6, balance: String(2n * E18), creditBalance: '0', erc20Balance: String(2n * E18) },
+          { chainId: 8453, projectId: 9, version: 6, balance: String(E18), creditBalance: String(E18), erc20Balance: '0' },
+        ],
       },
       nfts: {
-        totalCount: 1521,
-        items: [{ chainId: 1, projectId: 3, hook: HOOK_A, tokenId: '3000000001', tierId: 3 }],
+        totalCount: 2,
+        items: [
+          { chainId: 1, projectId: 3, hook: HOOK_A, tokenId: '3000000001', tierId: 3 },
+          { chainId: 1, projectId: 7, hook: HOOK_B, tokenId: '4000000001', tierId: 4 },
+        ],
       },
+      pageSize: 1,
     });
     const tab = mountHoldings();
     await vi.waitFor(() => {
-      expect(tab.textContent).toContain('Showing the first 1 of 730 token balances.');
-      expect(tab.textContent).toContain('Showing the first 1 of 1521 store items.');
+      expect(tab.querySelectorAll('.account-holding-balance')).toHaveLength(2);
+      const nftCard = [...tab.querySelectorAll('.detail-card')].find((c) => c.textContent.includes('Store items'));
+      expect(nftCard.querySelectorAll('.account-proj-row')).toHaveLength(2);
     });
+    expect(tab.textContent).not.toContain('Showing the first');
+    expect(bendystrawQuery.mock.calls.some(([, vars]) => vars.offset === 1)).toBe(true);
   });
 });

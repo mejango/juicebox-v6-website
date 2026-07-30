@@ -297,9 +297,9 @@ function lockedUntilRow(split) {
     split.lockedUntil = isNaN(d.getTime()) ? 0 : Math.floor(d.getTime() / 1000);
   });
   row.appendChild(input);
-  var clearLink = document.createElement('a');
+  var clearLink = document.createElement('button');
+  clearLink.type = 'button';
   clearLink.className = 'datetime-clear';
-  clearLink.href = '#';
   clearLink.textContent = 'clear';
   clearLink.addEventListener('click', function(e) {
     e.preventDefault();

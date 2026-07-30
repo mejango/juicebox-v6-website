@@ -560,7 +560,7 @@ function mergeDraft(obj) {
     seenChains[chainId] = true; return true;
   });
   if (!s.chainIds.length) s.chainIds = allowedChains;
-  s.stages = (Array.isArray(obj.stages) && obj.stages.length ? obj.stages : defaults.stages).slice(0, 20)
+  s.stages = (Array.isArray(obj.stages) && obj.stages.length ? obj.stages : defaults.stages)
     .map(function (st) { return normalizeImportedStage(st, s.chainIds); });
   s.nfts = (Array.isArray(obj.nfts) ? obj.nfts : []).slice(0, 100).map(normalizeImportedItem);
   s.storeCategories = (Array.isArray(obj.storeCategories) ? obj.storeCategories : []).slice(0, 255).map(function (entry) {
@@ -1019,7 +1019,7 @@ function accountingBlock(state, render) {
       line2.appendChild(document.createTextNode(state.swapRouter
         ? 'Other payment tokens auto-swap to your chosen accounting token(s) as they’re paid in. '
         : 'Payers can only pay in your accounting token(s). '));
-      var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
+      var toggle = el('button', 'create-inline-toggle');
       toggle.textContent = state.swapRouter ? 'Make payers pay in your accounting token' : 'Allow payers to pay in any token';
       toggle.addEventListener('click', function (e) { e.preventDefault(); state.swapRouter = !state.swapRouter; render(); });
       line2.appendChild(toggle);
@@ -2102,7 +2102,7 @@ function payoutKindBlock(stage, kind, render, state) {
     var card = el('div', 'create-subcard');
     card.appendChild(toggleRow('Payout all received ' + kind.symbol, dz('Paying out everything received; recipients get a percentage and the rest goes to the project owner.', 'Paying out fixed amounts; anything else stays in the project.'), pk.mode === 'unlimited', function (v) { pk.mode = v ? 'unlimited' : 'limited'; if (!v && !pk.recipients.length) pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); }));
     pk.recipients.forEach(function (rec, i) { card.appendChild(payoutKindRow(pk, kind, rec, i, render, state, stage)); });
-    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add payout'; add.style.marginTop = pk.recipients.length ? '14px' : '4px';
+    var add = el('button', 'operator-cta create-add-link'); add.textContent = '+ Add payout'; add.style.marginTop = pk.recipients.length ? '14px' : '4px';
     add.addEventListener('click', function (e) { e.preventDefault(); pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); });
     card.appendChild(add);
     if (pk.mode === 'unlimited') { var on = el('div', 'create-hint'); on.style.marginTop = '10px'; on.textContent = 'Any ' + kind.symbol + ' not allocated above goes to the project owner.'; card.appendChild(on); }
@@ -2164,7 +2164,7 @@ function payoutsSection(stage, render, state) {
     }));
     var mode = stage.payoutMode === 'unlimited' ? 'percent' : 'amount';
     stage.payoutRecipients.forEach(function (rec, i) { card.appendChild(payoutRow(stage, rec, i, mode, render, state)); });
-    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add payout';
+    var add = el('button', 'operator-cta create-add-link'); add.textContent = '+ Add payout';
     add.style.marginTop = stage.payoutRecipients.length ? '14px' : '4px'; // only need the gap when there are rows above
     add.addEventListener('click', function (e) { e.preventDefault(); stage.payoutRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); });
     card.appendChild(add);
@@ -2541,7 +2541,7 @@ function tokenSection(stage, render, state, stageIdx) {
       sumNote.className = 'create-hint' + (tot > 100 ? ' warn' : '');
     }
     t.reservedRecipients.forEach(function (rec, i) { card.appendChild(reservedSplitRow(t, rec, i, render, updateReservedSummary, state, stageIdx)); });
-    var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = '+ Add split'; addSplit.style.marginTop = '14px';
+    var addSplit = el('button', 'operator-cta create-add-link'); addSplit.textContent = '+ Add split'; addSplit.style.marginTop = '14px';
     addSplit.addEventListener('click', function (e) { e.preventDefault(); t.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
     card.appendChild(addSplit);
     updateReservedSummary(); card.appendChild(sumNote);
@@ -2658,7 +2658,7 @@ export function renderNfts(state, render) {
   if (state.shopEnabled) {
     state.nfts.forEach(function (nft, idx) { wrap.appendChild(itemCard(state, nft, idx, render)); });
 
-    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add item';
+    var add = el('button', 'operator-cta create-add-link'); add.textContent = '+ Add item';
     add.style.marginTop = state.nfts.length ? '14px' : '4px';
     add.addEventListener('click', function (e) {
       e.preventDefault();
@@ -2735,7 +2735,7 @@ function itemMediaPicker(state, nft, render) {
   w.appendChild(file);
   if (nft._mediaBusy) { var b = el('span', 'operator-edit-hint'); b.textContent = 'Pinning…'; w.appendChild(b); }
   if (nft._mediaError) { var er = el('span', 'operator-edit-hint warn'); er.textContent = nft._mediaError; w.appendChild(er); }
-  if (nft.imageUri) { var clr = el('a', 'operator-edit-logo-clear'); clr.href = '#'; clr.textContent = '✕'; clr.title = 'Remove'; clr.addEventListener('click', function (e) { e.preventDefault(); nft.imageUri = ''; nft.mediaType = ''; nft._mediaError = ''; render(); }); w.appendChild(clr); }
+  if (nft.imageUri) { var clr = el('button', 'operator-edit-logo-clear'); clr.textContent = '✕'; clr.title = 'Remove'; clr.addEventListener('click', function (e) { e.preventDefault(); nft.imageUri = ''; nft.mediaType = ''; nft._mediaError = ''; render(); }); w.appendChild(clr); }
   return w;
 }
 
@@ -2768,7 +2768,7 @@ function itemEditor(state, nft, idx, render) {
     if (nft.splitOn) {
       var sc = el('div', 'create-subcard');
       nft.splitRecipients.forEach(function (rec, i) { sc.appendChild(itemSplitRow(nft, rec, i, render)); });
-      var addS = el('a', 'operator-cta create-add-link'); addS.href = '#'; addS.textContent = '+ Add recipient'; addS.style.marginTop = '12px';
+      var addS = el('button', 'operator-cta create-add-link'); addS.textContent = '+ Add recipient'; addS.style.marginTop = '12px';
       addS.addEventListener('click', function (e) { e.preventDefault(); nft.splitRecipients.push({ pct: '', recip: '', benef: '' }); render(); });
       sc.appendChild(addS);
       if (nft.flags.allowCredits) sc.appendChild(warnNote('Buying with shop credit bypasses this split — the split only divides new payment, and a credit purchase brings in little or none. To make every sale honor the split, turn off “Allow credit purchases” under Extra options.'));
@@ -2799,7 +2799,7 @@ function itemEditor(state, nft, idx, render) {
     var caRow = el('div', 'create-inline-row');
     var caInp = el('input', 'field create-input'); caInp.type = 'text'; caInp.placeholder = 'category name'; caInp.value = nft._catName || '';
     caInp.addEventListener('input', function () { nft._catName = caInp.value; });
-    var caSave = el('a', 'operator-cta'); caSave.href = '#'; caSave.textContent = 'Save'; caSave.style.marginLeft = '8px';
+    var caSave = el('button', 'operator-cta'); caSave.textContent = 'Save'; caSave.style.marginLeft = '8px';
     caSave.addEventListener('click', function (e) {
       e.preventDefault(); var nm = (nft._catName || '').trim(); if (!nm) { caInp.focus(); return; }
       var nextId = (state.storeCategories || []).reduce(function (m, x) { return x.id > m ? x.id : m; }, 0) + 1;
@@ -2945,7 +2945,7 @@ function chainBridgeBlock(state, render) {
     // Single line, with "linked" as the toggle that opens the bridge selector.
     var note = el('div', 'create-hint');
     note.appendChild(document.createTextNode('Your project will exist on ' + state.chainIds.length + ' chains, '));
-    var linked = el('a', 'create-inline-toggle'); linked.href = '#'; linked.textContent = 'linked'; linked.title = 'Choose how the chains are connected';
+    var linked = el('button', 'create-inline-toggle'); linked.textContent = 'linked'; linked.title = 'Choose how the chains are connected';
     linked.addEventListener('click', function (e) { e.preventDefault(); state._bridgeOpen = !state._bridgeOpen; render(); });
     note.appendChild(linked);
     note.appendChild(document.createTextNode(' so your token and balances can move between them.'));
@@ -3019,7 +3019,7 @@ function renderDeploy(state, render) {
   tos.appendChild(cb);
   var tosContent = el('span', '');
   tosContent.appendChild(document.createTextNode(' I understand this is a public protocol that can’t be changed and accept the risks of deploying. '));
-  var auditLink = el('a', 'create-audit-link'); auditLink.href = '#'; auditLink.textContent = '[copy system audit prompt]';
+  var auditLink = el('button', 'create-audit-link'); auditLink.textContent = '[copy system audit prompt]';
   // preventDefault stops the surrounding label from toggling the checkbox when the link is clicked.
   auditLink.addEventListener('click', function (e) {
     e.preventDefault(); e.stopPropagation();
@@ -3414,7 +3414,7 @@ function perChainPayoutRowControl(state, render, rec, keys, defaults) {
   var open = !!state._pcOpen[keys.amt] || hasOverrides;
   if (!open) {
     wrap.classList.add('create-pcaddr-collapsed');
-    var link = el('a', 'create-pcaddr-toggle'); link.href = '#'; link.textContent = 'Set per chain';
+    var link = el('button', 'create-pcaddr-toggle'); link.textContent = 'Set per chain';
     link.title = 'Set a different amount and recipient on each chain';
     link.addEventListener('click', function (e) { e.preventDefault(); state._pcOpen[keys.amt] = true; render(); });
     wrap.appendChild(link);
@@ -3431,7 +3431,7 @@ function perChainPayoutRowControl(state, render, rec, keys, defaults) {
     wrap.appendChild(rowc);
   });
   var foot = el('div', 'create-pcaddr-foot');
-  var collapse = el('a', 'create-pcaddr-toggle'); collapse.href = '#'; collapse.textContent = 'Use same on all chains';
+  var collapse = el('button', 'create-pcaddr-toggle'); collapse.textContent = 'Use same on all chains';
   collapse.addEventListener('click', function (e) {
     e.preventDefault();
     state.chainIds.forEach(function (cid) {
@@ -3454,7 +3454,7 @@ function perChainControl(state, render, key, defStr, fieldFn, linkLabel, chains)
   var open = !!state._pcOpen[key] || hasOverrides;
   if (!open) {
     wrap.classList.add('create-pcaddr-collapsed'); // right-align the link under the field
-    var link = el('a', 'create-pcaddr-toggle'); link.href = '#';
+    var link = el('button', 'create-pcaddr-toggle');
     link.textContent = linkLabel || (ids.length === 1 ? 'Set address on ' + chainName(ids[0]) : 'Set per chain');
     link.title = ids.length === 1 ? 'Set a different value on ' + chainName(ids[0]) : 'Set a different value on each chain';
     link.addEventListener('click', function (e) { e.preventDefault(); state._pcOpen[key] = true; render(); });
@@ -3470,7 +3470,7 @@ function perChainControl(state, render, key, defStr, fieldFn, linkLabel, chains)
   });
   // …then the "use same on all chains" collapse link beneath them (right-aligned, like "Set per chain").
   var foot = el('div', 'create-pcaddr-foot');
-  var collapse = el('a', 'create-pcaddr-toggle'); collapse.href = '#';
+  var collapse = el('button', 'create-pcaddr-toggle');
   collapse.textContent = ids.length === 1 ? 'Use the default address' : 'Use same on all chains';
   collapse.addEventListener('click', function (e) {
     e.preventDefault();

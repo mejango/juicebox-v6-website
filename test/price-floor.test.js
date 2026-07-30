@@ -37,6 +37,16 @@ describe('cash out floor price', () => {
   it('zero tax: quote equals the minimum (pure pro-rata)', () => {
     expect(calculateFloorPrice(BAL, SUP, 0, 18)).toBeCloseTo(calculateFloorMinPrice(BAL, SUP, 0, 18), 12);
   });
+  it('preserves the contract staged rounding and max-tax sentinel', () => {
+    const x = 10n ** 18n;
+    const base = BAL * x / SUP;
+    const expected = base * (6000n + 4000n * x / SUP) / 10000n;
+    expect(calculateFloorPrice(BAL, SUP, TAX, 18)).toBe(Number(expected) / 1e18);
+    expect(calculateFloorPrice(BAL, SUP, 10_000, 18)).toBe(0);
+  });
+  it('returns the whole surplus when one token is the whole supply', () => {
+    expect(calculateFloorPrice(BAL, 10n ** 18n, TAX, 18)).toBe(Number(BAL) / 1e18);
+  });
 });
 
 describe('payment floor price', () => {
