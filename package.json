@@ -21,6 +21,7 @@
     "publish": "npm run check && node build/publish-ipfs.js",
     "check:source": "node scripts/check-source.mjs",
     "check:deployments": "node scripts/check-deployment-parity.mjs",
+    "schema:check": "node scripts/check-bendystraw-schema.mjs 30",
     "check:generated": "npm run sync-deployments && npm run generate && git diff --exit-code -- data/abis data/manifest.json data/deployments.json src/abi-registry.js",
     "transaction:check": "node scripts/check-transaction-inventory.mjs",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
@@ -31,7 +32,7 @@
     "test:watch": "vitest",
     "test:browser": "playwright test",
     "test:ui": "node test/ui-smoke.mjs",
-    "test:ci": "npm run check:source && npm run check:deployments && npm run check:generated && npm run transaction:check && npm run bundle && npm run test:coverage && npm run check:bundle && npm run test:browser"
+    "test:ci": "npm run check:source && npm run check:deployments && npm run check:generated && npm run schema:check && npm run transaction:check && npm run bundle && npm run test:coverage && npm run check:bundle && npm run test:browser"
   },
   "dependencies": {
     "pdfjs-dist": "^6.1.200",
@@ -42,7 +43,9 @@
     "@playwright/test": "^1.61.1",
     "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.28.1",
+    "graphql": "17.0.2",
     "jsdom": "^29.1.1",
+    "typescript": "5.9.3",
     "vitest": "^4.1.10"
   }
 }

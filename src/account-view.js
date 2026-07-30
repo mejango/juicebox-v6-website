@@ -143,7 +143,7 @@ export var ACCOUNT_TOKEN_HOLDINGS_QUERY = 'query($account: String!, $version: In
 // collide across every collection on a chain, so identity must include the collection.
 export var ACCOUNT_NFT_HOLDINGS_QUERY = 'query($owner: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'nfts(where: { owner: $owner, version: $version }, limit: $limit, offset: $offset) { '
-  + 'totalCount items { chainId projectId hook tokenId tierId } } }';
+  + 'totalCount items { chainId projectId hook { address } tokenId tierId } } }';
 
 async function fetchAllOffsetPages(query, path, variables, pageSize) {
   var items = [], totalCount = 0;
@@ -226,7 +226,9 @@ export function groupNftHoldings(items) {
     if (!it) return;
     var chainId = Number(it.chainId), projectId = Number(it.projectId), tierId = Number(it.tierId);
     if (!Number.isFinite(chainId) || !Number.isFinite(projectId) || projectId <= 0) return;
-    var tokenKey = chainId + ':' + String(it.hook == null ? '' : it.hook).toLowerCase() + ':' + String(it.tokenId);
+    var hook = it.hook && typeof it.hook === 'object' ? it.hook.address : it.hook;
+    if (typeof hook !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(hook)) return;
+    var tokenKey = chainId + ':' + hook.toLowerCase() + ':' + String(it.tokenId);
     if (seenToken[tokenKey]) return;
     seenToken[tokenKey] = true;
     var projKey = chainId + ':' + projectId;

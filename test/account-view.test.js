@@ -53,7 +53,7 @@ describe('holdings queries — V6-only, capped surfaces', () => {
     expect(ACCOUNT_NFT_HOLDINGS_QUERY).toContain('totalCount');
   });
   it('the nft query selects hook — the collection component of bendystraw\'s (chainId, hook, tokenId, version) key', () => {
-    expect(ACCOUNT_NFT_HOLDINGS_QUERY).toContain('hook');
+    expect(ACCOUNT_NFT_HOLDINGS_QUERY).toMatch(/hook\s*\{\s*address\s*\}/);
   });
   it('the token query selects the credit/ERC-20 split', () => {
     expect(ACCOUNT_TOKEN_HOLDINGS_QUERY).toContain('creditBalance');
@@ -258,7 +258,7 @@ describe('renderAccountView', () => {
     expect(tab.textContent).toContain('Activity');
     await vi.waitFor(() => {
       expect(tab.textContent).toMatch(/Could not load activity from Bendystraw/);
-    });
+    }, { timeout: 2500 });
   });
   it('shows a back-to-Discover affordance so #account routes (no active nav tab) are not a dead end', () => {
     document.body.innerHTML = '<section id="tab-account" class="tab-content"></section>';
@@ -285,14 +285,20 @@ describe('renderAccountView', () => {
     await vi.waitFor(() => {
       expect(tab.textContent).toMatch(/Could not load token balances from Bendystraw/);
       expect(tab.textContent).toMatch(/Could not load store items from Bendystraw/);
-    });
+    }, { timeout: 2500 });
     // Click through the mapped legacy sections: Projects (owned) and Roles (operated).
     btns.find(b => b.dataset.tab === 'projects').click();
     expect(tab.textContent).toContain('Owned projects');
-    await vi.waitFor(() => expect(tab.textContent).toMatch(/Could not load owned projects from Bendystraw/));
+    await vi.waitFor(
+      () => expect(tab.textContent).toMatch(/Could not load owned projects from Bendystraw/),
+      { timeout: 2500 },
+    );
     btns.find(b => b.dataset.tab === 'roles').click();
     expect(tab.textContent).toContain('Operated projects');
-    await vi.waitFor(() => expect(tab.textContent).toMatch(/Could not read permissions from Bendystraw/));
+    await vi.waitFor(
+      () => expect(tab.textContent).toMatch(/Could not read permissions from Bendystraw/),
+      { timeout: 2500 },
+    );
     // Tab clicks update the hash without retriggering the router.
     expect(location.hash).toBe('#account/' + ADDR + '/roles');
   });

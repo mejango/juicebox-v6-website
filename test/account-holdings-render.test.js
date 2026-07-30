@@ -55,8 +55,8 @@ describe('holdings tab rendering', () => {
         totalCount: 2,
         items: [
           // Same chain, same JB721 tokenId, DIFFERENT collections (projects 3 and 7): both must render.
-          { chainId: 1, projectId: 3, hook: HOOK_A, tokenId: '3000000001', tierId: 3 },
-          { chainId: 1, projectId: 7, hook: HOOK_B, tokenId: '3000000001', tierId: 3 },
+          { chainId: 1, projectId: 3, hook: { address: HOOK_A }, tokenId: '3000000001', tierId: 3 },
+          { chainId: 1, projectId: 7, hook: { address: HOOK_B }, tokenId: '3000000001', tierId: 3 },
         ],
       },
     });
