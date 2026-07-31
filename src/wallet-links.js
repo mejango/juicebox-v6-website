@@ -2,7 +2,11 @@
 // Pure mobile-wallet handoff helpers. Wallet apps open the dapp in their own browser, so the target URL must work
 // there without relying on browser features (notably the Service Worker used by ipfs.inbrowser.link).
 
-const INBROWSER_IPFS_SUFFIX = '.ipfs.inbrowser.link';
+const WALLET_UNSAFE_IPFS_SUFFIXES = [
+  '.ipfs.inbrowser.link',
+  '.ipfs.dweb.link',
+  '.ipfs.w3s.link',
+];
 const WALLET_IPFS_GATEWAY = 'https://ipfs.io';
 
 function ipfsPathUrl(cid, pathname, search, hash) {
@@ -15,9 +19,12 @@ export function walletDappUrl(href) {
   try { url = new URL(raw); } catch (_) { return raw; }
 
   var hostname = url.hostname.toLowerCase();
-  if (hostname.endsWith(INBROWSER_IPFS_SUFFIX) && hostname.length > INBROWSER_IPFS_SUFFIX.length) {
-    var cid = hostname.slice(0, -INBROWSER_IPFS_SUFFIX.length);
-    return ipfsPathUrl(cid, url.pathname, url.search, url.hash);
+  for (var i = 0; i < WALLET_UNSAFE_IPFS_SUFFIXES.length; i++) {
+    var suffix = WALLET_UNSAFE_IPFS_SUFFIXES[i];
+    if (hostname.endsWith(suffix) && hostname.length > suffix.length) {
+      var cid = hostname.slice(0, -suffix.length);
+      return ipfsPathUrl(cid, url.pathname, url.search, url.hash);
+    }
   }
 
   // Also handle the path-gateway form in case an inbrowser.link URL is shared that way.

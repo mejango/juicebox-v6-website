@@ -80,7 +80,7 @@ describe('IPFS metadata fetches', () => {
 
 describe('Bendystraw-first project metadata', () => {
   it('requests the parsed JSON and every project metadata field used by Discovery', () => {
-    ['metadataUri', 'metadata', 'name', 'description', 'projectTagline', 'logoUri', 'infoUri', 'tags'].forEach((field) => {
+    ['metadataUri', 'metadata', 'name', 'description', 'projectTagline', 'logoUri', 'infoUri', 'tags', 'createdAt'].forEach((field) => {
       expect(BENDYSTRAW_PROJECT_QUERY).toContain(field);
     });
   });

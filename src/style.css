@@ -90,6 +90,15 @@ a { color: inherit; }
 a:hover { color: var(--c-teal); }
 
 /* Clickables: browsers default button/select to cursor:default — pointer whenever enabled. */
+button {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+}
 button:not(:disabled),
 [role="button"]:not([aria-disabled="true"]),
 summary,
@@ -5026,6 +5035,23 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .chart-tip-date { font-weight: bold; margin-bottom: 2px; }
 .chart-tip-row { display: flex; align-items: center; gap: 5px; }
 .chart-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* Popovers and hover callouts use the app's square geometry. */
+.usd-balance-pop,
+.owners-pie-tip,
+.lp-graph-tip,
+.loan-fee-tip,
+.lp-depth-tip,
+.price-chip[data-tip]:hover::after,
+.chart-tip,
+.addr-tip,
+.instant-tip,
+.cashout-tip,
+.activity-chain-menu,
+.acct-search-menu,
+.wallet-menu {
+  border-radius: 0;
+}
 .chart-tip-reason {
   width: 240px;
   max-width: 68vw;
@@ -5064,7 +5090,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   display: flex; align-items: baseline; flex-wrap: nowrap;
   font-size: 11px; color: var(--muted-2); min-width: 0; white-space: nowrap;
 }
-.paybox-payon-label { font-size: 11px; }
+.paybox-payon-label { font-size: 11px; margin-right: 0.6ch; }
 .paybox-chain-static, .paybox-curr-static {
   font-weight: bold; color: var(--text); font-size: 11px; display: inline-block;
   vertical-align: baseline; white-space: nowrap;

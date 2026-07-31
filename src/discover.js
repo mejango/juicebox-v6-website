@@ -5782,6 +5782,7 @@ async function fetchProject(id, chainId) {
     metadata: null,
     reservedSplits: null,
     isRevnet: false,
+    createdAt: null,
     stages: null,
     loanBorrowed: null,
     loanCollateral: null,
@@ -5793,6 +5794,11 @@ async function fetchProject(id, chainId) {
   // Indexed volume / payments / contributors from Bendystraw (cross-chain aggregate when available).
   jobs.push(fetchProjectIndexedStats(id, chainId)
     .then(function (s) { if (s) project.indexedStats = s; }));
+
+  jobs.push(fetchBendystrawProjectRecord(id, chainId)
+    .then(function (record) {
+      if (record && Number(record.createdAt) > 0) project.createdAt = Number(record.createdAt);
+    }).catch(function () {}));
 
   jobs.push(fetchPreferredProjectMetadata(id, chainId)
     .then(function (record) { if (record) applyProjectMetadata(project, record); })
@@ -6349,17 +6355,20 @@ function renderProjectCard(project) {
   if (project.indexedStats) {
     stats.appendChild(statItem('Volume', formatUsd(usdFromScaled(project.indexedStats.volumeUsd))));
     stats.appendChild(statItem('Payments', String(project.indexedStats.paymentsCount)));
-    // Token-owner count — the same "Owners" label on every project kind (project-page convention).
+    // Revnet token holders are owners; custom-project holders retain the more
+    // literal label so they are not confused with project authority.
     // contributorsCount only counts addresses that paid; holders who received tokens via
     // auto-issuance / reserved mint (ART has one) are missed. Seed with it, then correct to
     // the real current-holder count (same aggregation the detail header uses).
     var ownersVal = el('span', ''); ownersVal.textContent = '…';
-    stats.appendChild(statItem(OWNERS_STAT_LABEL, ownersVal));
+    stats.appendChild(statItem(projectParticipantStatLabel(project.isRevnet), ownersVal));
     fetchOwnersCount(project).then(function (result) {
       if (!ownersVal.isConnected) return;
       ownersVal.textContent = ownerCountText(result);
       ownersVal.title = result && !result.exact
-        ? 'At least this many unique token holders were found before the indexer result cap.'
+        ? project.isRevnet
+          ? 'At least this many unique owners were found before the indexer result cap.'
+          : 'At least this many unique token holders were found before the indexer result cap.'
         : '';
     }).catch(function () { if (ownersVal.isConnected) ownersVal.textContent = '—'; });
   }
@@ -7972,14 +7981,14 @@ function renderDetailHeader(project) {
     fetchOwnersCount(project).then(function (result) {
       oStrong.textContent = ownerCountText(result);
       oStrong.title = result && !result.exact
-        ? 'At least this many unique token holders were found before the indexer result cap.'
+        ? 'At least this many unique owners were found before the indexer result cap.'
         : '';
       oLabel.textContent = result && result.exact && result.count === 1
-        ? ' token holder'
-        : ' token holders';
+        ? ' owner'
+        : ' owners';
     }).catch(function () {
       oStrong.textContent = '—';
-      oStrong.title = 'Token-holder data is unavailable.';
+      oStrong.title = 'Owner data is unavailable.';
     });
   } else {
     // Indexed activity (Bendystraw): volume raised + payment/contributor counts.
@@ -7997,21 +8006,26 @@ function renderDetailHeader(project) {
     nodes.forEach(function (n) { p.appendChild(n); });
     return p;
   };
-  // "Flavor | On | Operator | Site" on one row (the "|" is a ::after bar BETWEEN pairs); each pair is inline +
+  // "Flavor | Operator | Created | On | Site" on one row (the "|" is a ::after bar BETWEEN pairs); each pair is inline +
   // nowrap as a UNIT, so the row stays on one line on desktop and only wraps whole key:val pairs to the next
   // line when the viewport is too narrow (mobile) — a label never separates from its value.
   var ownerWarn = el('span', 'detail-head-ownerwarn');
   var row1 = el('div', 'detail-head-meta');
   var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
   row1.appendChild(mkPair('Flavor: ', [typeVal]));
+  row1.appendChild(document.createTextNode(' '));
+  row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)), ownerWarn]));
+  if (project.createdAt) {
+    row1.appendChild(document.createTextNode(' '));
+    var createdVal = el('span', 'detail-head-val'); createdVal.textContent = formatDate(project.createdAt);
+    row1.appendChild(mkPair('Created: ', [createdVal]));
+  }
   if (project.chains && project.chains.length) {
     row1.appendChild(document.createTextNode(' '));
     var logos = el('span', 'detail-chain-logos');
     for (var c = 0; c < project.chains.length; c++) logos.appendChild(projectChainLogo(project, project.chains[c]));
     row1.appendChild(mkPair('On: ', [logos]));
   }
-  row1.appendChild(document.createTextNode(' '));
-  row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)), ownerWarn]));
   if (project.infoUri) {
     var href = project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri);
     var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
@@ -16002,6 +16016,9 @@ function ownersCard(title, node) {
 export var OWNERS_SUBTABS_DEFAULT = ['Accounts', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'];
 export var OWNERS_SUBTABS_CUSTOM = ['Accounts', 'Market', 'Settlement', 'Reserved'];
 export var OWNERS_STAT_LABEL = 'Token holders';
+export function projectParticipantStatLabel(isRevnet) {
+  return isRevnet ? 'Owners' : OWNERS_STAT_LABEL;
+}
 
 // Owners tab (revnets) — split into lazy SUBTABS so each pane's reads only fire when first opened
 // (the page no longer fetches every owner/settlement/splits/loan source at once on tab open).
@@ -16120,7 +16137,7 @@ function detailSubSection(title, contentNode) {
 
 export var BENDYSTRAW_PROJECT_QUERY = 'query($projectId: Float!, $chainId: Float!, $version: Float!) { '
   + 'project(projectId: $projectId, chainId: $chainId, version: $version) { '
-  + 'suckerGroupId tokenSupply volume volumeUsd paymentsCount contributorsCount '
+  + 'suckerGroupId tokenSupply volume volumeUsd paymentsCount contributorsCount createdAt '
   + 'metadataUri metadata handle name description projectTagline logoUri coverImageUri infoUri payDisclosure '
   + 'tags twitter farcaster discord telegram domain tokens } }';
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
@@ -17430,7 +17447,7 @@ function renderOwnersAmm(project) {
     // Left column: pie, then the composition bar stacked directly on top of the liquidity-by-price chart.
     var leftCol = el('div', 'lp-amm-leftcol');
     var pie = renderLpOwnersPie(lp); if (pie) leftCol.appendChild(pie);
-    var bt = el('div', 'detail-card-title lp-amm-bartitle'); bt.textContent = 'Composition'; leftCol.appendChild(bt);
+    var bt = el('div', 'detail-card-title lp-amm-bartitle'); bt.textContent = 'Liquidity'; leftCol.appendChild(bt);
     var bar = renderLpCompositionBar(lp, sym); if (bar) leftCol.appendChild(bar);
     rowEl.appendChild(leftCol);
     // Right column: LP table.

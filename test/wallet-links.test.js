@@ -4,8 +4,14 @@ import { isMobileDevice, mobileWalletLinks, walletDappUrl } from '../src/wallet-
 const CID = 'bafybeia7uzprpwhblgdlu5b6bqzd3wcfx2ef6zyczlk67253fttdky6kly';
 
 describe('mobile wallet handoffs', () => {
-  it('moves inbrowser.link subdomain URLs to a gateway that wallet browsers can load', () => {
+  it('moves subdomain IPFS URLs to a gateway that wallet browsers can load', () => {
     expect(walletDappUrl('https://' + CID + '.ipfs.inbrowser.link/#base:1/pay')).toBe(
+      'https://ipfs.io/ipfs/' + CID + '/#base:1/pay',
+    );
+    expect(walletDappUrl('https://' + CID + '.ipfs.dweb.link/#base:1/pay')).toBe(
+      'https://ipfs.io/ipfs/' + CID + '/#base:1/pay',
+    );
+    expect(walletDappUrl('https://' + CID + '.ipfs.w3s.link/#base:1/pay')).toBe(
       'https://ipfs.io/ipfs/' + CID + '/#base:1/pay',
     );
   });

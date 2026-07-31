@@ -57,6 +57,41 @@ const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const SAFE = '0x2222222222222222222222222222222222222222';
 
 describe('wallet provider runtime states', () => {
+  it('waits for MetaMask Mobile to announce a provider injected after page load', async () => {
+    delete window.ethereum;
+    localStorage.clear();
+    runtime.currentChain = 1;
+    runtime.mobile = true;
+    runtime.safeInfo = null;
+    runtime.safeProvider = null;
+    vi.resetModules();
+
+    const wallet = await import('../src/wallet.js');
+    const provider = {
+      isMetaMask: true,
+      request: vi.fn(async ({ method }) => {
+        if (method === 'eth_requestAccounts') return [ACCOUNT];
+        if (method === 'wallet_revokePermissions') return null;
+        throw new Error(`unexpected method ${method}`);
+      }),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+    };
+
+    const connecting = wallet.connect();
+    Object.defineProperty(window, 'ethereum', { configurable: true, value: provider });
+    window.dispatchEvent(new Event('ethereum#initialized'));
+
+    await expect(connecting).resolves.toBeUndefined();
+    expect(wallet.getAccount()).toBe(ACCOUNT);
+    expect(provider.request).toHaveBeenCalledWith({ method: 'eth_requestAccounts' });
+    expect(provider.request).not.toHaveBeenCalledWith(expect.objectContaining({
+      method: 'wallet_requestPermissions',
+    }));
+    await wallet.disconnect();
+    delete window.ethereum;
+  });
+
   it('fails closed without a provider, connects one selected provider, switches/adds chains, restores, and disconnects', async () => {
     delete window.ethereum;
     localStorage.clear();

@@ -78,20 +78,30 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
       document.querySelector('#connect-btn').click();
       return 1;
     }`);
-    await page.waitForTimeout(650);
+    // MetaMask Mobile documents a late-injection window of up to three
+    // seconds. With no provider in this browser fixture, the app waits out
+    // that window before presenting wallet-app handoffs.
+    await page.waitForTimeout(3150);
     const mobileWalletMenu = await Q(page, `() => {
       const menu = document.querySelector('.wallet-menu');
       const links = [...menu.querySelectorAll('a')].map(a => a.textContent.trim());
       const more = [...menu.querySelectorAll('button')].find(b => b.textContent.trim() === 'Open another wallet…');
       if (more) more.click();
-      return { note: menu.querySelector('.wallet-menu-note').textContent.trim(), links, hasMore: !!more, pageUrl: location.href };
+      return {
+        note: menu.querySelector('.wallet-menu-note').textContent.trim(),
+        links,
+        hasMore: !!more,
+        pageUrl: location.href,
+        borderRadius: getComputedStyle(menu).borderRadius,
+      };
     }`);
     await page.waitForTimeout(50);
     const sharedWalletUrl = await Q(page, '() => window.__sharedWalletUrl');
     check('mobile connect offers wallet apps and a share-sheet fallback',
       mobileWalletMenu.note === 'Choose a wallet app to continue. This page will reopen there.'
         && ['Open in MetaMask', 'Open in Coinbase Wallet', 'Open in Trust Wallet'].every(x => mobileWalletMenu.links.includes(x))
-        && mobileWalletMenu.hasMore && sharedWalletUrl === mobileWalletMenu.pageUrl,
+        && mobileWalletMenu.hasMore && sharedWalletUrl === mobileWalletMenu.pageUrl
+        && mobileWalletMenu.borderRadius === '0px',
       JSON.stringify({ mobileWalletMenu, sharedWalletUrl }));
     await Q(page, '() => { document.querySelector("#connect-btn").click(); return 1; }');
 

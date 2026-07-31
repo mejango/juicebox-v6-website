@@ -1,7 +1,7 @@
 // Keep economic participation separate from protocol authority: token holders
 // live under Accounts within the revnet Owners tab; Owner and Operator are authority roles.
 import { beforeEach, describe, it, expect } from 'vitest';
-import { OWNERS_STAT_LABEL, OWNERS_SUBTABS_CUSTOM, OWNERS_SUBTABS_DEFAULT } from '../src/discover.js';
+import { OWNERS_STAT_LABEL, OWNERS_SUBTABS_CUSTOM, OWNERS_SUBTABS_DEFAULT, projectParticipantStatLabel } from '../src/discover.js';
 import { renderLearnTab } from '../src/learn-build.js';
 
 describe('project-page authority terminology', () => {
@@ -13,8 +13,10 @@ describe('project-page authority terminology', () => {
     expect(OWNERS_SUBTABS_CUSTOM).toContain('Reserved');
   });
 
-  it('uses the same stat label on every project header', () => {
+  it('calls revnet token holders owners without conflating custom-project authority', () => {
     expect(OWNERS_STAT_LABEL).toBe('Token holders');
+    expect(projectParticipantStatLabel(true)).toBe('Owners');
+    expect(projectParticipantStatLabel(false)).toBe('Token holders');
   });
 });
 
