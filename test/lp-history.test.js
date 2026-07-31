@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { toEventSelector } from 'viem';
-import { lpCollectPoolLogs, lpDefaultRange, lpDepthMarkerLabelLayout } from '../src/discover.js';
+import {
+  lpCollectPoolLogs,
+  lpDefaultRange,
+  lpDepthMarkerLabelLayout,
+  renderLpDepthChart,
+} from '../src/discover.js';
 
 const INITIALIZE = toEventSelector('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)');
 const MODIFY = toEventSelector('ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)');
@@ -44,6 +49,17 @@ describe('Uniswap V4 LP history parsing', () => {
 });
 
 describe('LP depth marker labels', () => {
+  it('renders liquidity bands when the pair token is currency1', () => {
+    const panel = renderLpDepthChart({
+      positions: [{ tickLower: -600, tickUpper: 600, liquidity: 10n ** 18n }],
+      sqrtP: 1n << 96n,
+      pairIsC0: false,
+      pair: { decimals: 18, symbol: 'USDC' },
+    }, 1, 1.05, 0.95, 'ART');
+
+    expect(panel.querySelectorAll('rect').length).toBeGreaterThan(0);
+  });
+
   it('stacks clustered floor, price, and ceiling labels without moving their markers', () => {
     const clustered = lpDepthMarkerLabelLayout([
       { x: 274, label: 'floor' },

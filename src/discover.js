@@ -23724,7 +23724,7 @@ export function lpDepthMarkerLabelLayout(markers, width) {
   return placed.map(function (item) { return { x: item.labelX, row: item.row }; });
 }
 
-function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
+export function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
   var positions = (lp && lp.positions) || [];
   if (!positions.length) return null;
   var sqrtP = lp.sqrtP;
@@ -23746,10 +23746,14 @@ function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
   for (var i = 0; i < N; i++) {
     var pLo = Math.exp(lmin + (i / N) * span), pHi = Math.exp(lmin + ((i + 1) / N) * span);
     var mid = Math.exp(lmin + ((i + 0.5) / N) * span);
-    var bTickLo = tickAtPrice(pHi), bTickHi = tickAtPrice(pLo); // price 1/1.0001^tick → tick falls as price rises
+    // Pair/token price falls with tick when pair is currency0 and rises when it is currency1.
+    // Normalize both orientations before intersecting a band with an LP position.
+    var bandTickA = tickAtPrice(pLo), bandTickB = tickAtPrice(pHi);
+    var bTickLo = Math.min(bandTickA, bandTickB), bTickHi = Math.max(bandTickA, bandTickB);
     var liq = 0, ethW = 0n, revW = 0n;
     positions.forEach(function (p) {
-      var plo = priceAtTick(p.tickUpper), phi = priceAtTick(p.tickLower);
+      var positionPriceA = priceAtTick(p.tickLower), positionPriceB = priceAtTick(p.tickUpper);
+      var plo = Math.min(positionPriceA, positionPriceB), phi = Math.max(positionPriceA, positionPriceB);
       if (mid >= plo && mid <= phi) liq += Number(p.liquidity);
       var oLo = Math.max(bTickLo, p.tickLower), oHi = Math.min(bTickHi, p.tickUpper);
       if (oLo < oHi && sqrtP) {
