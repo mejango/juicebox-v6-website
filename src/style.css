@@ -3183,6 +3183,14 @@ input[type="checkbox"].field {
 .ops-slippage { justify-content: flex-start; align-items: center; }
 .ops-slippage-lbl { margin-right: auto; font-size: 12px; color: var(--muted); }
 .ops-percent-btn.active { color: var(--text); border-color: var(--write); background: rgba(0, 0, 0, 0.05); }
+.ops-slippage-custom {
+  display: inline-flex; align-items: center; gap: 2px; padding: 3px 6px;
+  border: 1px solid var(--c-black-light); color: var(--muted-2); font-size: 11px;
+}
+.ops-slippage-custom input {
+  width: 38px; border: 0; padding: 0; background: transparent; color: inherit;
+  font: inherit; text-align: right; outline: none;
+}
 /* Add-liquidity range graph + inline Max buttons */
 .lp-graph { margin: 8px 0 4px; position: relative; }
 .lp-graph-holder { width: 100%; }

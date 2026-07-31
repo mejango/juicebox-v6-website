@@ -229,6 +229,46 @@ export function ambientCashOutDisplay(gross, taxRate, feeFreeSurplus) {
   return { value: ambientNetCashOut(value, taxRate, feeFreeSurplus), beforeFees: false };
 }
 
+// Keep the submit guard on the same route/output the modal is visibly previewing. Pool-route quotes can
+// legitimately replace a zero treasury quote; leaving `state.net` on the treasury value makes the button
+// display a valid swap and then reject it as a zero-output cash out.
+export function applyCashOutPreviewQuote(state, quote, accounting) {
+  state.net = quote.net;
+  state.outcome = {
+    net: quote.net,
+    sym: accounting.symbol,
+    decimals: accounting.decimals,
+    revToken: null,
+    protoToken: null,
+  };
+}
+
+// A pool route may disappear between preview and submit. Its fallback is the reviewed treasury quote—not
+// the larger pool quote that was on screen. Returning the latter as a terminal minimum would only revert.
+export function cashOutTreasuryFallbackNet(route, reviewedNet) {
+  return route && route.treasuryNet != null ? route.treasuryNet : reviewedNet;
+}
+
+// The hook's executable quote already includes pool fee, liquidity and impact.
+// User slippage covers movement after that preview; it must not be applied to
+// the optimistic raw oracle/direct quote used only for display.
+export function cashOutExecutableMinimum(executableQuote, slippageBps) {
+  return quotedOutputFloor(executableQuote, 10000 - (slippageBps || 0));
+}
+
+export function cashOutPoolBufferBps(rawQuote, executableQuote) {
+  if (rawQuote == null || rawQuote <= 0n || executableQuote == null) return null;
+  var bounded = executableQuote > rawQuote ? rawQuote : executableQuote;
+  return Number(((rawQuote - bounded) * 10000n + rawQuote - 1n) / rawQuote);
+}
+
+export function cashOutExecutionErrorMessage(message) {
+  var text = String(message || 'Cash out failed.');
+  return text.indexOf('0xe2d708a9') !== -1 || text.indexOf('JBBuybackHook_SpecifiedSlippageExceeded') !== -1
+    ? 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger max slippage, then try again.'
+    : text;
+}
+
 // The cash out tax rate from a decoded currentRulesetOf result ([ruleset, metadata] array or
 // { ruleset, metadata } object), falling back when the read failed or carried no metadata. Lets
 // per-chain surfaces use each chain's OWN ruleset tax instead of assuming the home chain's.
@@ -593,12 +633,17 @@ function buildCashOutAmmMetadata(hookAddr, minReturned) {
   return '0x' + '00'.repeat(32) + cashOutMetadataId(hookAddr) + '02' + '00'.repeat(27) + data.slice(2);
 }
 // The buyback hook's cash out spec metadata is a fixed 8-word static blob: (minOut, cashOutCountToSell,
-// netDirect, twapTick, twapLiquidity, poolId, rawSwapQuote, userSpecifiedMin). Slice the two words we need
-// (tokens the hook would sell + the net direct reclaim it compares against) — no decodeAbiParameters import.
+// netDirect, twapTick, twapLiquidity, poolId, rawSwapQuote, userSpecifiedMin). Keep the pool-aware executable
+// minimum as well as the optimistic raw oracle quote: the former already accounts for fee, liquidity, and impact.
 function decodeBuybackCashOutSpec(metaHex) {
   if (!metaHex || metaHex.length < 2 + 64 * 3) return null;
   var h = metaHex.slice(2);
-  return { cashOutCountToSell: BigInt('0x' + h.slice(64, 128)), netDirect: BigInt('0x' + h.slice(128, 192)) };
+  return {
+    minimumSwapAmountOut: BigInt('0x' + h.slice(0, 64)),
+    cashOutCountToSell: BigInt('0x' + h.slice(64, 128)),
+    netDirect: BigInt('0x' + h.slice(128, 192)),
+    rawSwapQuote: h.length >= 64 * 7 ? BigInt('0x' + h.slice(64 * 6, 64 * 7)) : 0n,
+  };
 }
 
 // The project's 721 hook. Returns { hook, authoritative }; null means the authoritative mapping/ruleset says
@@ -20799,7 +20844,7 @@ function buildRedeemItemsModal(project, requestClose) {
 function buildCashOutModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, supply: null, surplus: null, reclaim: null, net: null, cashOutTaxRate: null, feeless: null, contextAccount: null, locked: false, exact: true, kinds: null, reclaimKey: null, slippageBps: 100, lastF: null };
+  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, supply: null, surplus: null, reclaim: null, net: null, cashOutTaxRate: null, feeless: null, contextAccount: null, locked: false, exact: true, kinds: null, reclaimKey: null, slippageBps: 100 };
 
   // Your BREADFRUIT balance on each chain (so you can see where you can cash out from).
   var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
@@ -20836,19 +20881,29 @@ function buildCashOutModal(project, requestClose) {
 
   var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
   // Max-slippage control for the pool routes (direct sell / buyback). Hidden until a pool route is active — the
-  // treasury reclaim has no swap and ignores it. Changing it re-renders the floor line (no re-quote needed).
+  // treasury reclaim has no swap and ignores it. Changing it re-runs the route comparison so a tolerance
+  // which makes the protected pool floor fall below the treasury cannot leave a stale AMM route on screen.
   var slipRow = el('div', 'ops-percent ops-slippage'); slipRow.style.display = 'none'; wrap.appendChild(slipRow);
   var slipLbl = el('span', 'ops-slippage-lbl'); slipLbl.textContent = 'Max slippage'; slipRow.appendChild(slipLbl);
   [50, 100, 300, 500].forEach(function (bps) {
     var b = document.createElement('button'); b.className = 'ops-percent-btn'; b.textContent = (bps / 100) + '%';
     b.setAttribute('data-bps', String(bps));
-    b.addEventListener('click', function () { state.slippageBps = bps; syncSlip(); if (state.lastF) renderCashPreview(previewSeq, state.lastF); });
+    b.addEventListener('click', function () { state.slippageBps = bps; syncSlip(); updatePreview(); });
     slipRow.appendChild(b);
+  });
+  var customSlip = document.createElement('label'); customSlip.className = 'ops-slippage-custom';
+  var customSlipInput = document.createElement('input'); customSlipInput.type = 'number'; customSlipInput.min = '0.01'; customSlipInput.max = '99.99'; customSlipInput.step = '0.1'; customSlipInput.inputMode = 'decimal'; customSlipInput.setAttribute('aria-label', 'Custom max slippage percent');
+  customSlip.appendChild(customSlipInput); customSlip.appendChild(document.createTextNode('%')); slipRow.appendChild(customSlip);
+  customSlipInput.addEventListener('change', function () {
+    var pct = Number(customSlipInput.value);
+    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) { customSlipInput.value = String((state.slippageBps || 100) / 100); return; }
+    state.slippageBps = Math.round(pct * 100); syncSlip(); updatePreview();
   });
   function syncSlip() {
     Array.prototype.forEach.call(slipRow.querySelectorAll('.ops-percent-btn'), function (b) {
       b.classList.toggle('active', Number(b.getAttribute('data-bps')) === (state.slippageBps || 100));
     });
+    customSlipInput.value = String((state.slippageBps || 100) / 100);
   }
   syncSlip();
   var status = el('div', 'modal-status'); wrap.appendChild(status);
@@ -21108,9 +21163,12 @@ function buildCashOutModal(project, requestClose) {
         // Route 2 — buyback via terminal (credits fallback). The hook routes AMM only when the floor exceeds its
         // net direct reclaim, so a pool that doesn't clearly beat the treasury stays on the treasury path.
         if (dec && hookAddr && buybackOut != null && buybackOut > treasuryNet) {
-          var minReturned = quotedOutputFloor(buybackOut, 10000 - (state.slippageBps || 100));
+          // The direct quote is useful for display, but the hook's previewed minimum is the executable basis:
+          // it already accounts for pool fees, liquidity, and impact. Flooring the optimistic direct/raw quote
+          // caused JBBuybackHook_SpecifiedSlippageExceeded on otherwise valid cash outs.
+          var minReturned = cashOutExecutableMinimum(dec.minimumSwapAmountOut, state.slippageBps || 100);
           if (minReturned > dec.netDirect) {
-            state.cashOutRoute = { via: 'amm', hook: hookAddr, minReturned: minReturned, ammOut: buybackOut, cashOutCountToSell: dec.cashOutCountToSell, netDirect: dec.netDirect, treasuryNet: treasuryNet };
+            state.cashOutRoute = { via: 'amm', hook: hookAddr, minReturned: minReturned, hookMinimum: dec.minimumSwapAmountOut, rawSwapQuote: dec.rawSwapQuote, ammOut: buybackOut, cashOutCountToSell: dec.cashOutCountToSell, netDirect: dec.netDirect, treasuryNet: treasuryNet };
             renderCashPreview(seq, { net: buybackOut, revFee: 0n, protocolFee: 0n, route: 'amm', treasuryNet: treasuryNet });
           }
         }
@@ -21130,9 +21188,9 @@ function buildCashOutModal(project, requestClose) {
       preview.textContent = 'Connected account changed. Refresh the cash out quote before continuing.';
       state.net = null; btn.disabled = true; return;
     }
-    // Snapshot the outcome for the success panel (fee-token amounts fill in as their previews resolve).
-    state.outcome = { net: f.net, sym: a.symbol, decimals: a.decimals, revToken: null, protoToken: null };
-    state.lastF = f; // keep the last render so a slippage change can re-render the floor without a re-quote
+    // Snapshot the selected route/output for BOTH submit validation and the success panel. Fee-token amounts
+    // fill in as their previews resolve. Keep the quote so slippage changes can re-render without a re-quote.
+    applyCashOutPreviewQuote(state, f, a);
     var poolRoute = f.route === 'amm' || f.route === 'directsell';
     slipRow.style.display = poolRoute ? '' : 'none';
     if (poolRoute) syncSlip();
@@ -21159,10 +21217,19 @@ function buildCashOutModal(project, requestClose) {
     // below it (protection, not an expected loss). Reads state.slippageBps so the slippage control updates it live.
     if (poolRoute && f.net != null) {
       var slip = state.slippageBps || 100;
-      var floor = quotedOutputFloor(f.net, 10000 - slip);
+      var activeRoute = state.cashOutRoute || {};
+      var floorBasis = f.route === 'amm' && activeRoute.hookMinimum != null ? activeRoute.hookMinimum : f.net;
+      var floor = cashOutExecutableMinimum(floorBasis, slip);
+      if (f.route === 'amm') activeRoute.minReturned = floor;
       var floorLine = el('div', 'ops-preview-line ops-preview-feetok');
       floorLine.textContent = 'Reverts below ' + formatBalance(floor, a.decimals, a.symbol) + ' floor (' + (slip / 100) + '% max slippage)';
       preview.appendChild(floorLine);
+      if (f.route === 'amm' && activeRoute.rawSwapQuote > 0n && activeRoute.hookMinimum != null) {
+        var poolBps = cashOutPoolBufferBps(activeRoute.rawSwapQuote, activeRoute.hookMinimum);
+        var poolGuide = el('div', 'ops-preview-line ops-preview-feetok');
+        poolGuide.textContent = 'Pool preview already allows about ' + (poolBps / 100).toFixed(2).replace(/\.00$/, '') + '% for fee and price impact; your setting additionally covers movement before inclusion.';
+        preview.appendChild(poolGuide);
+      }
     }
     if (f.approx) {
       var note = el('div', 'ops-preview-line ops-preview-feetok');
@@ -21319,7 +21386,9 @@ function buildCashOutModal(project, requestClose) {
     function submitTerminalCashOut(r) {
       var routeP = (r.via === 'amm' && r.hook && r.cashOutCountToSell)
         ? quoteCashOutSell(project, cid, r.cashOutCountToSell).then(function (fresh) {
-            var freshMin = fresh != null ? quotedOutputFloor(fresh, 10000 - reviewedSlippage) : 0n;
+            var freshQuoteMin = fresh != null ? quotedOutputFloor(fresh, 10000 - reviewedSlippage) : 0n;
+            var hookMin = r.hookMinimum != null ? cashOutExecutableMinimum(r.hookMinimum, reviewedSlippage) : freshQuoteMin;
+            var freshMin = freshQuoteMin < hookMin ? freshQuoteMin : hookMin;
             if (fresh != null && fresh > (r.treasuryNet || 0n) && freshMin > (r.netDirect || 0n)) {
               return { metadata: buildCashOutAmmMetadata(r.hook, freshMin), minReclaimed: 0n, net: fresh };
             }
@@ -21333,10 +21402,16 @@ function buildCashOutModal(project, requestClose) {
           metadata = amm.metadata; minReclaimed = amm.minReclaimed; outNet = amm.net;
         } else {
           if (r.via === 'amm') status.textContent = 'Pool no longer beats the treasury — cashing out via the treasury.';
+          var treasuryNet = cashOutTreasuryFallbackNet(r, reviewedNet);
+          if (treasuryNet <= 0n) {
+            status.textContent = 'The pool quote is no longer available and the treasury currently returns 0 tokens. Nothing was sent.';
+            btn.disabled = false;
+            return;
+          }
           metadata = '0x';
           // Floor under the exact previewed NET payout (bonding curve → data hook → protocol fee).
-          minReclaimed = quotedOutputFloor(reviewedNet, 9900n);
-          outNet = reviewedNet;
+          minReclaimed = quotedOutputFloor(treasuryNet, 9900n);
+          outNet = treasuryNet;
         }
         var outcome = Object.assign({}, reviewedOutcome);
         outcome.net = outNet; outcome.approxAmount = ammRoute; outcome.sold = false;
@@ -21345,7 +21420,7 @@ function buildCashOutModal(project, requestClose) {
           args: [acct, pid, count, reclaimToken, minReclaimed, acct, metadata],
           onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
           onSuccess: function (m, meta) { renderCashSuccess(count, outcome, meta); },
-          onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
+          onError: function (m) { status.classList.remove('pending'); status.textContent = cashOutExecutionErrorMessage(m); btn.disabled = false; },
         });
       });
     }
@@ -21365,7 +21440,7 @@ function buildCashOutModal(project, requestClose) {
         var fresh = rr[0], bal = rr[1];
         if (fresh == null || fresh <= (route.treasuryNet || 0n) || bal < route.count) {
           status.textContent = 'Pool no longer beats the treasury — cashing out via the treasury.';
-          submitTerminalCashOut({ via: 'treasury' });
+          submitTerminalCashOut({ via: 'treasury', treasuryNet: route.treasuryNet });
           return;
         }
         var minOut = quotedOutputFloor(fresh, 10000 - reviewedSlippage); // slippage floor = swap amountOutMinimum
