@@ -1833,6 +1833,8 @@ function openAddTierModal(project, shop) {
     parent.appendChild(i); return i;
   }
   var nameInput = fieldIn(content, 'Name', 'My juicy thing', null, 0);
+  var descriptionLabel = el('div', 'operator-edit-label'); descriptionLabel.style.marginTop = '10px'; descriptionLabel.textContent = 'Description'; content.appendChild(descriptionLabel);
+  var descriptionInput = el('textarea', 'operator-edit-textarea'); descriptionInput.rows = 3; descriptionInput.placeholder = 'What is this item?'; content.appendChild(descriptionInput);
 
   var ilbl = el('div', 'operator-edit-label'); ilbl.style.marginTop = '10px'; ilbl.textContent = 'Media'; content.appendChild(ilbl);
   var isub = el('div', 'operator-edit-sub'); isub.textContent = 'Image, gif, video, audio, PDF, text… up to ' + MAX_MEDIA_MB + ' MB.'; content.appendChild(isub);
@@ -2228,7 +2230,7 @@ function openAddTierModal(project, shop) {
   }
   function collectForm() {
     return {
-      name: nameInput.value, price: priceInput.value, supply: unlimitedCb.checked ? '' : supplyInput.value, priceDecimals: priceDecimals,
+      name: nameInput.value, description: descriptionInput.value, price: priceInput.value, supply: unlimitedCb.checked ? '' : supplyInput.value, priceDecimals: priceDecimals,
       imageFile: selectedMedia,
       category: categorySelect.value, reserveFreq: reserveCb.checked ? reserveFreqInput.value : '', reserveBenef: reserveCb.checked ? reserveBenefPerChain.snapshot() : '',
       votingUnits: votingInput.value,
@@ -2242,9 +2244,9 @@ function openAddTierModal(project, shop) {
       },
     };
   }
-  function formIsEmpty(f) { return !(f.name || '').trim() && !(f.price || '').trim() && !f.imageFile; }
+  function formIsEmpty(f) { return !(f.name || '').trim() && !(f.description || '').trim() && !(f.price || '').trim() && !f.imageFile; }
   function resetForm() {
-    nameInput.value = ''; priceInput.value = ''; clearMedia(); imgFile.value = '';
+    nameInput.value = ''; descriptionInput.value = ''; priceInput.value = ''; clearMedia(); imgFile.value = '';
     splitCb.checked = false; splitWrap.style.display = 'none'; splitRowsBox.innerHTML = ''; splitRows = [];
     discCb.checked = false; discWrap.style.display = 'none'; discInput.value = '';
     unlimitedCb.checked = true; supplyWrap.style.display = 'none'; supplyInput.value = '';
@@ -5362,7 +5364,7 @@ async function revnetOperatorOf(projectId, chainId) {
 }
 
 function projectAuthorityLabel(project) {
-  return project && project.isRevnet ? 'Revnet operator' : 'Project owner';
+  return project && project.isRevnet ? 'Operator' : 'Owner';
 }
 
 function projectAuthorityAddress(project) {
@@ -7301,22 +7303,17 @@ function renderPayCard(project, cart) {
       box.appendChild(r);
     }
     row('Items', formatShopPrice(state.shop, breakdown.subtotal, state.chainId));
-    if (!getEffectiveAccount()) {
-      row('Shop credit', 'Connect wallet to check', 'muted');
-    } else if (state.nftCreditsLoading) {
-      row('Shop credit', 'Checking…', 'muted');
-    } else if (breakdown.applied > 0n) {
+    if (!state.nftCreditsLoading && breakdown.applied > 0n) {
       row('Shop credit applied', '−' + formatShopPrice(state.shop, breakdown.applied, state.chainId), 'credit');
-    } else {
-      row('Shop credit', formatShopPrice(state.shop, state.nftCredits, state.chainId), 'muted');
+    } else if (!state.nftCreditsLoading && state.nftCredits > 0n) {
+      row('Shop credit available', formatShopPrice(state.shop, state.nftCredits, state.chainId), 'muted');
     }
-    if (breakdown.restrictedCost > 0n) {
+    if (!state.nftCreditsLoading && state.nftCredits > 0n && breakdown.restrictedCost > 0n) {
       row(
-        breakdown.restrictedCost === breakdown.subtotal ? 'Shop credit not accepted' : 'Shop credit not accepted by some items',
+        breakdown.restrictedCost === breakdown.subtotal ? 'These items require fresh payment' : 'Some items require fresh payment',
         formatShopPrice(state.shop, breakdown.restrictedCost, state.chainId),
         'short'
       );
-      row('Fresh payment required', formatShopPrice(state.shop, breakdown.restrictedCost, state.chainId), 'muted');
     }
     row('Amount due', formatShopPrice(state.shop, breakdown.due, state.chainId), 'total');
 
@@ -11729,6 +11726,9 @@ export async function buildProjectCreateDraft(project) {
   state.projectType = project.isRevnet ? 'revnet' : 'custom';
   applyDraftDetails(state, project);
   var sources = await Promise.all(chains.map(function (chain) { return draftLiveProjectChain(project, chain); }));
+  if (sources.some(function (source) { return isZeroishAddress(source.owner); })) {
+    throw new Error('The ' + (project.isRevnet ? 'operator' : 'project owner') + ' could not be verified on every project chain.');
+  }
   if (sources.slice(1).some(function (source) { return draftRulesetFingerprint(source) !== draftRulesetFingerprint(sources[0]); })) {
     throw new Error('Ruleset or accounting configuration differs by chain, which one .jb draft cannot reproduce safely.');
   }
@@ -11834,8 +11834,37 @@ export async function buildProjectCreateDraft(project) {
   return { state: state, warnings: warnings };
 }
 
+function renderProjectDraftExport(project) {
+  var card = el('div', 'detail-card extras-export-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Export deployment'; card.appendChild(title);
+  var body = el('div', 'detail-card-body extras-body');
+  var intro = el('div', 'extras-payer-copy');
+  intro.textContent = 'Download this project’s deployed configuration as a .jb file. Import it from New project to review the reconstructed rules and make changes before deploying.';
+  body.appendChild(intro);
+  var status = el('div', 'operator-edit-status'); body.appendChild(status);
+  var actions = el('div', 'operator-edit-actions extras-actions');
+  var button = el('a', 'operator-cta operator-edit-submit'); button.href = '#'; button.textContent = 'Export .jb'; actions.appendChild(button);
+  body.appendChild(actions); card.appendChild(body);
+  var busy = false;
+  button.addEventListener('click', function (event) {
+    event.preventDefault(); if (busy) return; busy = true; button.classList.add('disabled');
+    status.className = 'operator-edit-status pending'; status.textContent = 'Verifying live rules, funds, splits, terminals, and shop…';
+    buildProjectCreateDraft(project).then(function (result) {
+      if (result.warnings.length && !window.confirm(result.warnings.join('\n\n') + '\n\nExport this editable .jb anyway?')) {
+        status.className = 'operator-edit-status'; status.textContent = 'Cancelled'; return;
+      }
+      exportDraftFile(result.state);
+      status.className = 'operator-edit-status success'; status.textContent = 'Exported .jb. Import it from New project to review and edit.';
+    }).catch(function (error) {
+      status.className = 'operator-edit-status error'; status.textContent = errMessage(error, 'Could not safely reconstruct this project.');
+    }).finally(function () { busy = false; button.classList.remove('disabled'); });
+  });
+  return card;
+}
+
 function renderExtrasSection(project) {
   var section = el('div', 'detail-section');
+  section.appendChild(renderProjectDraftExport(project));
   var card = el('div', 'detail-card extras-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Payer address'; card.appendChild(title);
 

@@ -1083,6 +1083,7 @@ function ownerSection(state, render) {
   }
   box.appendChild(perChainAddrControl(state, render, 'owner', d.ownerResolved || d.owner || ''));
   box.appendChild(infoNote('The address that can make changes around the configured rulesets.'));
+  box.appendChild(infoNote('Currently set to ' + (perChainOpen(state, 'owner') ? 'the per-chain addresses above' : (d.owner || 'no project owner yet')) + '.'));
   var wrap = el('div', '');
   wrap.appendChild(fieldBlock('Project owner', false, box));
   return wrap;
@@ -1099,6 +1100,7 @@ function operatorSection(state, render) {
   }
   box.appendChild(perChainAddrControl(state, render, 'op', state.revOperatorResolved || state.revOperator || ''));
   box.appendChild(infoNote('The address that operates the few controls available in revnets.'));
+  box.appendChild(infoNote('Currently set to ' + (perChainOpen(state, 'op') ? 'the per-chain addresses above' : (state.revOperator || 'no revnet operator yet')) + '.'));
   wrap.appendChild(fieldBlock('Revnet operator', false, box));
   return wrap;
 }
@@ -1280,7 +1282,7 @@ function collapse(state, key, label, optional, render, contentFn) {
 function renderDetails(state, render) {
   var d = state.details;
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Project details', 'You can edit these at any time.'));
+  wrap.appendChild(stepHead('Project details', 'The ' + (state.projectType === 'revnet' ? 'revnet operator' : 'project owner') + ' can edit these after launch.'));
 
   wrap.appendChild(fieldBlock('Name', false, textInput(d.name, 'My project', function (v) { d.name = v; })));
   // Token ticker — revnets only (it names the ERC-20 REVDeployer deploys). A custom project's ERC-20 is
@@ -1439,9 +1441,9 @@ export function renderStages(state, render, opts) {
     afterRow.appendChild(sel);
     wrap.appendChild(afterRow);
     var notes = {
-      wait: 'The project idles safely — no issuance, payments paused, cash outs preserved — until you change it.',
+      wait: 'The project idles safely — no issuance, payments paused, cash outs preserved — until the project owner changes it.',
       terminal: 'Ruleset #1’s terms continue on forever, without cycling again.',
-      cycle: 'Ruleset #1 repeats its cycle over and over until you change it. Changes will only be able to be made once a cycled ruleset ends.',
+      cycle: 'Ruleset #1 repeats its cycle until the project owner changes it. Changes can only take effect once a cycled ruleset ends.',
     };
     wrap.appendChild(infoNote(notes[state.afterMode] || ''));
 
@@ -2649,7 +2651,7 @@ export function renderNfts(state, render) {
   })()));
 
   // Opt-in: the Shop is off by default. Ticking it on reveals the first item to fill out.
-  wrap.appendChild(toggleRow('Launch with items in stock', dz('Your project launches with items already for sale.', 'You can add items to sell anytime after launch.'), state.shopEnabled, function (v) {
+  wrap.appendChild(toggleRow('Launch with items in stock', dz('The project launches with items already for sale.', 'The ' + (state.projectType === 'revnet' ? 'revnet operator' : 'project owner') + ' can add items after launch.'), state.shopEnabled, function (v) {
     state.shopEnabled = v;
     if (v && !state.nfts.length) state.nfts.push(itemDraft());
     render();
@@ -2974,8 +2976,8 @@ function chainBridgeBlock(state, render) {
     if (unc.length && !(usdcAcct && state.suckerType === 'native')) wrap.appendChild(warnNote('' + unc.length + ' chain pair' + (unc.length > 1 ? 's' : '') + ' can’t connect with native bridges (they only link Ethereum↔L2). Choose CCIP or Native and CCIP to link L2↔L2 pairs.'));
   } else {
     wrap.appendChild(infoNote('Deploys on a single chain. ' + (state.projectType === 'revnet'
-      ? 'You can add more chains later if they exactly match the configuration you deploy with now.'
-      : 'You can add more chains later.')));
+      ? 'The revnet operator can add more chains later if they exactly match the configuration deployed now.'
+      : 'The project owner can add more chains later.')));
   }
   return wrap;
 }
