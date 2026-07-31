@@ -243,12 +243,6 @@ export function applyCashOutPreviewQuote(state, quote, accounting) {
   };
 }
 
-// A pool route may disappear between preview and submit. Its fallback is the reviewed treasury quote—not
-// the larger pool quote that was on screen. Returning the latter as a terminal minimum would only revert.
-export function cashOutTreasuryFallbackNet(route, reviewedNet) {
-  return route && route.treasuryNet != null ? route.treasuryNet : reviewedNet;
-}
-
 // The hook's executable quote already includes pool fee, liquidity and impact.
 // User slippage covers movement after that preview; it must not be applied to
 // the optimistic raw oracle/direct quote used only for display.
@@ -262,11 +256,24 @@ export function cashOutPoolBufferBps(rawQuote, executableQuote) {
   return Number(((rawQuote - bounded) * 10000n + rawQuote - 1n) / rawQuote);
 }
 
+export function cashOutDirectRouteWins(directQuote, terminalExpected, slippageBps, spendableCount, cashOutCount) {
+  directQuote = directQuote == null ? 0n : toBigInt(directQuote);
+  terminalExpected = terminalExpected == null ? 0n : toBigInt(terminalExpected);
+  spendableCount = spendableCount == null ? 0n : toBigInt(spendableCount);
+  cashOutCount = cashOutCount == null ? 0n : toBigInt(cashOutCount);
+  return directQuote > 0n && cashOutCount > 0n && spendableCount >= cashOutCount
+    && cashOutExecutableMinimum(directQuote, slippageBps == null ? 100 : Number(slippageBps)) > terminalExpected;
+}
+
 export function cashOutExecutionErrorMessage(message) {
   var text = String(message || 'Cash out failed.');
-  return text.indexOf('0xe2d708a9') !== -1 || text.indexOf('JBBuybackHook_SpecifiedSlippageExceeded') !== -1
-    ? 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger max slippage, then try again.'
-    : text;
+  if (text.indexOf('0xe2d708a9') !== -1 || text.toLowerCase().indexOf('jbbuybackhook_specifiedslippageexceeded') !== -1) {
+    return 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger max slippage, then try again.';
+  }
+  if (text.indexOf('0x6b2bb382') !== -1 || text.toLowerCase().indexOf('jbmultiterminal_undermin') !== -1) {
+    return 'The live return fell below the minimum you reviewed. Refresh the quote and try again.';
+  }
+  return text;
 }
 
 // The cash out tax rate from a decoded currentRulesetOf result ([ruleset, metadata] array or
@@ -643,7 +650,53 @@ function decodeBuybackCashOutSpec(metaHex) {
     cashOutCountToSell: BigInt('0x' + h.slice(64, 128)),
     netDirect: BigInt('0x' + h.slice(128, 192)),
     rawSwapQuote: h.length >= 64 * 7 ? BigInt('0x' + h.slice(64 * 6, 64 * 7)) : 0n,
+    hasUserSpecifiedMinimum: h.length >= 64 * 8 ? BigInt('0x' + h.slice(64 * 7, 64 * 8)) !== 0n : false,
   };
+}
+
+// Match juice-sdk's resolveCashOutRoute for the terminal path. The first preview is authoritative for whether
+// the project's exact buyback hook is active; diagnostic metadata from a noop/foreign hook must never zero the
+// terminal minimum. Pool routes put their floor in hook metadata and keep the terminal minimum at zero.
+export function resolveCashOutPreviewRoute(previewResult, buybackHookAddress, slippageBps, beneficiaryIsFeeless, feeFreeSurplus) {
+  if (!previewResult) throw new Error('A hook-aware cash out preview is required.');
+  var reclaim = toBigInt(previewResult.reclaimAmount != null ? previewResult.reclaimAmount : previewResult[1]);
+  var taxRate = Number(previewResult.cashOutTaxRate != null ? previewResult.cashOutTaxRate : previewResult[2] || 0);
+  var specs = previewResult.hookSpecifications || previewResult[3] || [];
+  var protocolFee = cashOutProtocolFee(reclaim, taxRate, !!beneficiaryIsFeeless, feeFreeSurplus || 0n);
+  var treasuryNet = reclaim - protocolFee;
+  var treasuryMinimum = quotedOutputFloor(treasuryNet, 10000 - Number(slippageBps == null ? 100 : slippageBps));
+  var treasury = {
+    via: 'treasury', expected: treasuryNet, minimum: treasuryMinimum, terminalMinimum: treasuryMinimum,
+    metadata: '0x', treasuryGross: reclaim, treasuryProtocolFee: protocolFee, treasuryNet: treasuryNet,
+  };
+  if (!buybackHookAddress) return treasury;
+  var hook = String(buybackHookAddress).toLowerCase();
+  var spec = specs.filter(function (candidate) {
+    return candidate && String(candidate.hook || '').toLowerCase() === hook && candidate.metadata && candidate.metadata !== '0x';
+  })[0];
+  if (!spec || spec.noop) return treasury;
+  var buyback = decodeBuybackCashOutSpec(spec.metadata);
+  if (!buyback) return treasury;
+  var quote = buyback.rawSwapQuote > 0n ? buyback.rawSwapQuote : buyback.minimumSwapAmountOut;
+  var executable = buyback.rawSwapQuote > 0n && buyback.minimumSwapAmountOut > buyback.rawSwapQuote
+    ? buyback.rawSwapQuote : buyback.minimumSwapAmountOut;
+  var minimum = buyback.rawSwapQuote > 0n && !buyback.hasUserSpecifiedMinimum
+    ? cashOutExecutableMinimum(executable, slippageBps == null ? 100 : Number(slippageBps))
+    : buyback.minimumSwapAmountOut;
+  if (quote <= 0n || minimum <= buyback.netDirect) return treasury;
+  return {
+    via: 'amm', expected: quote, minimum: minimum, terminalMinimum: 0n,
+    metadata: buildCashOutAmmMetadata(buybackHookAddress, minimum), hook: buybackHookAddress,
+    hookMinimum: buyback.minimumSwapAmountOut, rawSwapQuote: buyback.rawSwapQuote,
+    cashOutCountToSell: buyback.cashOutCountToSell, netDirect: buyback.netDirect,
+    treasuryGross: reclaim, treasuryProtocolFee: protocolFee, treasuryNet: treasuryNet,
+  };
+}
+
+export function cashOutPreviewRulesetId(previewResult) {
+  var ruleset = previewResult && (previewResult.ruleset || previewResult[0]);
+  var raw = ruleset && ruleset.id != null ? ruleset.id : (Array.isArray(ruleset) ? ruleset[1] : null);
+  try { return raw == null ? null : BigInt(raw); } catch (_) { return null; }
 }
 
 // The project's 721 hook. Returns { hook, authoritative }; null means the authoritative mapping/ruleset says
@@ -3645,7 +3698,7 @@ function projectDataHook(project, chainId, opts) {
 //   the concrete JBBuybackHook wired directly → use it.
 //   anything else (croptop CTDeployer, 721 tiers, Defifa, unknown) → no buyback pool → null.
 // readPoolState additionally null-gates on an uninitialized pool, so a mis-recognized hook can't render a phantom pool.
-function projectBuybackHook(project, chainId, opts) {
+export function projectBuybackHook(project, chainId, opts) {
   var registry = getAddress('JBBuybackHookRegistry', chainId);
   var revOwner = getAddress('REVOwner', chainId);
   var omni = getAddress('JBOmnichainDeployer', chainId);
@@ -3981,9 +4034,12 @@ function quoteDirectSwap(chainId, pool, amountIn) {
 // returned object plugs into quoteDirectSwap / encodeV4SwapInput / buildDirectSwapErc20Tx unchanged: `pairAddr` is
 // the swap INPUT (here the project token being sold) and `tokenOut` the output (the pool's pair, USDC/ETH). Used
 // both to quote a sell and to execute a direct pool sell that bypasses the terminal (no 2.5% cash out fee).
-function directSellPoolFor(project, chainId) {
+function directSellPoolFor(project, chainId, tokenToReclaim) {
   if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
-  return Promise.all([projectBuybackHook(project, chainId), lpPairFor(project, chainId)]).then(function (r) {
+  var requestedPair = tokenToReclaim
+    ? Promise.resolve({ addr: tokenToReclaim.toLowerCase() === NATIVE_TOKEN.toLowerCase() ? ZERO_ADDRESS : tokenToReclaim.toLowerCase() })
+    : lpPairFor(project, chainId);
+  return Promise.all([projectBuybackHook(project, chainId), requestedPair]).then(function (r) {
     var hook = r[0], pair = r[1];
     if (!hook || !pair) return null;
     return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] })
@@ -3992,19 +4048,15 @@ function directSellPoolFor(project, chainId) {
         var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
         if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null; // pool not set
         var pairAddr = pair.addr.toLowerCase();
+        if (c0 !== pairAddr && c1 !== pairAddr) return null;
+        if (!key.hooks || key.hooks.toLowerCase() !== hook.toLowerCase()) return null;
         var projTok = c0 === pairAddr ? key.currency1 : key.currency0; // the non-pair currency = project token
+        if (!projTok || projTok.toLowerCase() === ZERO_ADDRESS || projTok.toLowerCase() === pairAddr) return null;
         var zeroForOne = projTok.toLowerCase() === c0; // selling the project token IN
         // pairAddr := the input currency (project token); tokenOut := the pool pair (what the user receives).
         return { key: key, zeroForOne: zeroForOne, pairAddr: projTok, tokenOut: pair.addr, projectToken: projTok, pair: pair };
       }).catch(function () { return null; });
   }).catch(function () { return null; });
-}
-
-// Quote selling `artCount` of the project token into the buyback pool → pair-token out (USDC). Null if no
-// pool/quoter or the quote reverts. Used to compare a pool sell against the treasury bonding-curve reclaim.
-function quoteCashOutSell(project, chainId, artCount) {
-  if (!artCount || artCount <= 0n) return Promise.resolve(null);
-  return directSellPoolFor(project, chainId).then(function (pool) { return pool ? quoteDirectSwap(chainId, pool, artCount) : null; });
 }
 
 // Encode the V4_SWAP command input for an exact-in single swap (pair token → project token), output to
@@ -21055,6 +21107,7 @@ function buildCashOutModal(project, requestClose) {
     // the new preview + pool quote resolve. Prevents a stale `amm` route (old minReturned) from being submitted with
     // a freshly-edited count (a shrunk count would make the hook's swap miss the old floor and revert).
     state.cashOutRoute = { via: 'treasury' };
+    state.net = null; state.outcome = null; btn.disabled = true;
     preview.textContent = 'Calculating…';
     // Beneficiary drives feeless + REV-fee math; use the connected wallet so the preview matches what
     // that wallet will see. A placeholder (not feeless) is fine for the disconnected preview.
@@ -21115,9 +21168,10 @@ function buildCashOutModal(project, requestClose) {
       state.net = net;
       state.cashOutRoute = { via: 'treasury' };
       renderCashPreview(seq, { net: net, revFee: revFee, protocolFee: protocolFee });
-      // Probe the two pool routes: a direct sell (bypass the terminal) and the buyback-routed cash out. Offer
-      // whichever nets more than the treasury reclaim. Async; leaves the treasury route on failure.
-      maybeOfferCashOutRoutes(seq, specs, net, count);
+      // Resolve the terminal's hook-aware route, then compare a claimed-token direct sell against that WHOLE
+      // route. The direct swap only wins when its protected minimum—not its optimistic quote—beats the terminal's
+      // full expected output. Async; leaves the safely floored treasury route on an unavailable pool/hook read.
+      maybeOfferCashOutRoutes(seq, preCut, revFee, protocolFee, count);
     }).catch(function () {
       if (seq === previewSeq) {
         preview.textContent = 'Could not verify the exact hook-aware cash out amount. Nothing can be sent until the preview succeeds.';
@@ -21134,43 +21188,31 @@ function buildCashOutModal(project, requestClose) {
   //   • BUYBACK via terminal (route 'amm') — the credits fallback: the terminal cash out routed through the hook
   //     via a minReturned. Works when part of the balance is unclaimed credits (a direct sell can't touch those).
   // The buyback spec (hook == projectBuybackHook) from the treasury-path preview carries the fee-net sell count.
-  function maybeOfferCashOutRoutes(seq, specs, treasuryNet, count) {
+  function maybeOfferCashOutRoutes(seq, previewResult, revFee, protocolFee, count) {
     var acct = state.contextAccount;
-    Promise.all([directSellPoolFor(project, state.chainId), projectBuybackHook(project, state.chainId)]).then(function (r) {
+    Promise.all([directSellPoolFor(project, state.chainId, state.acct && state.acct.address), projectBuybackHook(project, state.chainId)]).then(function (r) {
       if (seq !== previewSeq) return;
       var pool = r[0], hookAddr = r[1];
-      var dec = null;
-      if (hookAddr && specs && specs.length) {
-        var lc = hookAddr.toLowerCase();
-        var bspec = specs.filter(function (s) { return s && (s.hook || '').toLowerCase() === lc; })[0];
-        if (bspec) dec = decodeBuybackCashOutSpec(bspec.metadata);
+      var terminalRoute = resolveCashOutPreviewRoute(previewResult, hookAddr, state.slippageBps || 100, state.feeless, state.feeFreeSurplus);
+      state.cashOutRoute = terminalRoute;
+      if (terminalRoute.via === 'amm') {
+        renderCashPreview(seq, { net: terminalRoute.expected, revFee: 0n, protocolFee: 0n, route: 'amm', treasuryNet: terminalRoute.treasuryNet });
+      } else {
+        renderCashPreview(seq, { net: terminalRoute.expected, revFee: revFee, protocolFee: protocolFee });
       }
       var qDirect = (pool && count > 0n) ? quoteDirectSwap(state.chainId, pool, count) : Promise.resolve(null);
-      var qBuyback = (pool && dec && dec.cashOutCountToSell > 0n) ? quoteDirectSwap(state.chainId, pool, dec.cashOutCountToSell) : Promise.resolve(null);
       // Claimed ERC-20 balance = the pool's project-token currency held by the user (credits are excluded).
       var erc20P = (pool && acct) ? clientFor(state.chainId).readContract({ address: pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n);
-      Promise.all([qDirect, qBuyback, erc20P]).then(function (q) {
+      Promise.all([qDirect, erc20P]).then(function (q) {
         if (seq !== previewSeq) return;
         var liveAccount = getEffectiveAccount();
         if (!acct || !liveAccount || liveAccount.toLowerCase() !== acct.toLowerCase()) { onChainChange(); return; }
-        var directOut = q[0], buybackOut = q[1], erc20Bal = q[2] || 0n;
+        var directOut = q[0], erc20Bal = q[1] || 0n;
         // Route 3 — direct pool sell (preferred when the user holds enough claimed ERC-20 to cover the cash out).
-        if (pool && directOut != null && directOut > treasuryNet && erc20Bal >= count) {
-          state.cashOutRoute = { via: 'directsell', pool: pool, out: directOut, count: count, treasuryNet: treasuryNet };
-          renderCashPreview(seq, { net: directOut, revFee: 0n, protocolFee: 0n, route: 'directsell', treasuryNet: treasuryNet });
-          return;
-        }
-        // Route 2 — buyback via terminal (credits fallback). The hook routes AMM only when the floor exceeds its
-        // net direct reclaim, so a pool that doesn't clearly beat the treasury stays on the treasury path.
-        if (dec && hookAddr && buybackOut != null && buybackOut > treasuryNet) {
-          // The direct quote is useful for display, but the hook's previewed minimum is the executable basis:
-          // it already accounts for pool fees, liquidity, and impact. Flooring the optimistic direct/raw quote
-          // caused JBBuybackHook_SpecifiedSlippageExceeded on otherwise valid cash outs.
-          var minReturned = cashOutExecutableMinimum(dec.minimumSwapAmountOut, state.slippageBps || 100);
-          if (minReturned > dec.netDirect) {
-            state.cashOutRoute = { via: 'amm', hook: hookAddr, minReturned: minReturned, hookMinimum: dec.minimumSwapAmountOut, rawSwapQuote: dec.rawSwapQuote, ammOut: buybackOut, cashOutCountToSell: dec.cashOutCountToSell, netDirect: dec.netDirect, treasuryNet: treasuryNet };
-            renderCashPreview(seq, { net: buybackOut, revFee: 0n, protocolFee: 0n, route: 'amm', treasuryNet: treasuryNet });
-          }
+        var protectedDirect = directOut == null ? 0n : cashOutExecutableMinimum(directOut, state.slippageBps || 100);
+        if (pool && cashOutDirectRouteWins(directOut, terminalRoute.expected, state.slippageBps || 100, erc20Bal, count)) {
+          state.cashOutRoute = { via: 'directsell', pool: pool, out: directOut, minimum: protectedDirect, count: count, terminalRoute: terminalRoute, treasuryNet: terminalRoute.treasuryNet };
+          renderCashPreview(seq, { net: directOut, revFee: 0n, protocolFee: 0n, route: 'directsell', treasuryNet: terminalRoute.expected });
         }
       });
     }).catch(function () {});
@@ -21218,9 +21260,7 @@ function buildCashOutModal(project, requestClose) {
     if (poolRoute && f.net != null) {
       var slip = state.slippageBps || 100;
       var activeRoute = state.cashOutRoute || {};
-      var floorBasis = f.route === 'amm' && activeRoute.hookMinimum != null ? activeRoute.hookMinimum : f.net;
-      var floor = cashOutExecutableMinimum(floorBasis, slip);
-      if (f.route === 'amm') activeRoute.minReturned = floor;
+      var floor = activeRoute.minimum != null ? activeRoute.minimum : cashOutExecutableMinimum(f.net, slip);
       var floorLine = el('div', 'ops-preview-line ops-preview-feetok');
       floorLine.textContent = 'Reverts below ' + formatBalance(floor, a.decimals, a.symbol) + ' floor (' + (slip / 100) + '% max slippage)';
       preview.appendChild(floorLine);
@@ -21378,100 +21418,116 @@ function buildCashOutModal(project, requestClose) {
     }
     btn.disabled = true; status.textContent = '';
 
-    // A TERMINAL cash out: treasury reclaim, or the buyback route via a minReturned metadata. For the buyback
-    // route, RE-QUOTE at submit — minReturned is a hard onchain floor (userSpecifiedMin=true) that reverts the
-    // swap if the realized fill misses it, so a >1% adverse move since the preview would revert the whole
-    // cash out against a stale floor. If the pool no longer beats the treasury (or the quote fails), fall to the
-    // treasury path. `r` may differ from the outer route (the direct-sell fallback passes a forced treasury r).
-    function submitTerminalCashOut(r) {
-      var routeP = (r.via === 'amm' && r.hook && r.cashOutCountToSell)
-        ? quoteCashOutSell(project, cid, r.cashOutCountToSell).then(function (fresh) {
-            var freshQuoteMin = fresh != null ? quotedOutputFloor(fresh, 10000 - reviewedSlippage) : 0n;
-            var hookMin = r.hookMinimum != null ? cashOutExecutableMinimum(r.hookMinimum, reviewedSlippage) : freshQuoteMin;
-            var freshMin = freshQuoteMin < hookMin ? freshQuoteMin : hookMin;
-            if (fresh != null && fresh > (r.treasuryNet || 0n) && freshMin > (r.netDirect || 0n)) {
-              return { metadata: buildCashOutAmmMetadata(r.hook, freshMin), minReclaimed: 0n, net: fresh };
-            }
-            return null;
-          }).catch(function () { return null; })
-        : Promise.resolve(null);
-      routeP.then(function (amm) {
-        if (!requireCashInputs()) return;
-        var metadata, minReclaimed, outNet, ammRoute = !!amm;
-        if (amm) {
-          metadata = amm.metadata; minReclaimed = amm.minReclaimed; outNet = amm.net;
-        } else {
-          if (r.via === 'amm') status.textContent = 'Pool no longer beats the treasury — cashing out via the treasury.';
-          var treasuryNet = cashOutTreasuryFallbackNet(r, reviewedNet);
-          if (treasuryNet <= 0n) {
-            status.textContent = 'The pool quote is no longer available and the treasury currently returns 0 tokens. Nothing was sent.';
-            btn.disabled = false;
-            return;
+    function previewTerminal(metadata) {
+      return clientFor(cid).readContract({
+        address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom',
+        args: [acct, pid, count, reclaimToken, acct, metadata],
+      });
+    }
+
+    // Mirror juice-sdk's prepareHookAwareCashOut: take a fresh empty-metadata preview, resolve the exact terminal
+    // route, then re-preview an AMM route with its final metadata. Matching ruleset, route, minimum and metadata
+    // prove that the transaction we're about to build is the one the contract just simulated.
+    function prepareTerminalCashOut() {
+      return Promise.all([
+        projectBuybackHook(project, cid, { strict: true }),
+        isFeelessAddress(cid, acct, pid),
+        clientFor(cid).readContract({ address: terminal, abi: feeFreeSurplusOfAbi, functionName: 'feeFreeSurplusOf', args: [pid, reclaimToken] }).then(toBigInt),
+        previewTerminal('0x'),
+      ]).then(function (r) {
+        if (r[1] == null) throw new Error('Could not verify the live fee status.');
+        var freshPreview = r[3];
+        var freshRoute = resolveCashOutPreviewRoute(freshPreview, r[0], reviewedSlippage, r[1], r[2]);
+        if (freshRoute.expected <= 0n) throw new Error('This cash out currently returns 0 tokens. Nothing was sent.');
+        if (freshRoute.via !== 'amm') return { route: freshRoute, preview: freshPreview, lockedPreview: null };
+        return previewTerminal(freshRoute.metadata).then(function (lockedPreview) {
+          var lockedRoute = resolveCashOutPreviewRoute(lockedPreview, r[0], reviewedSlippage, r[1], r[2]);
+          var firstRuleset = cashOutPreviewRulesetId(freshPreview);
+          var lockedRuleset = cashOutPreviewRulesetId(lockedPreview);
+          if ((firstRuleset != null && lockedRuleset != null && firstRuleset !== lockedRuleset)
+            || lockedRoute.via !== 'amm' || lockedRoute.minimum !== freshRoute.minimum
+            || lockedRoute.metadata.toLowerCase() !== freshRoute.metadata.toLowerCase()) {
+            var changed = new Error('The cash out route changed while its executable minimum was being locked.');
+            changed.code = 'CASH_OUT_ROUTE_CHANGED';
+            throw changed;
           }
-          metadata = '0x';
-          // Floor under the exact previewed NET payout (bonding curve → data hook → protocol fee).
-          minReclaimed = quotedOutputFloor(treasuryNet, 9900n);
-          outNet = treasuryNet;
-        }
-        var outcome = Object.assign({}, reviewedOutcome);
-        outcome.net = outNet; outcome.approxAmount = ammRoute; outcome.sold = false;
-        executeTransaction({
-          chainId: cid, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
-          args: [acct, pid, count, reclaimToken, minReclaimed, acct, metadata],
-          onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
-          onSuccess: function (m, meta) { renderCashSuccess(count, outcome, meta); },
-          onError: function (m) { status.classList.remove('pending'); status.textContent = cashOutExecutionErrorMessage(m); btn.disabled = false; },
+          return { route: freshRoute, preview: freshPreview, lockedPreview: lockedPreview };
         });
       });
     }
 
-    // DIRECT pool sell — a Universal Router swap that bypasses the terminal entirely (not cashOutTokensOf). It
-    // sells the claimed ERC-20 straight into the pool, dodging the 2.5% cash out fee. Re-quote for a fresh floor;
-    // if the pool no longer beats the treasury (or the quote fails), fall back to the terminal cash out.
-    if (route.via === 'directsell' && route.pool && route.count) {
-      // Re-quote the pool AND re-read the claimed ERC-20 balance at submit: a direct sell pulls `count` via
-      // Permit2, so if the balance dropped below `count` since the preview (e.g. a sell in another tab) the swap
-      // would approve+sign+revert. Fall back to the terminal cash out (credits-safe) when either check fails.
-      Promise.all([
-        quoteDirectSwap(cid, route.pool, route.count),
-        clientFor(cid).readContract({ address: route.pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }),
-      ]).then(function (rr) {
-        if (!requireCashInputs()) return;
-        var fresh = rr[0], bal = rr[1];
-        if (fresh == null || fresh <= (route.treasuryNet || 0n) || bal < route.count) {
-          status.textContent = 'Pool no longer beats the treasury — cashing out via the treasury.';
-          submitTerminalCashOut({ via: 'treasury', treasuryNet: route.treasuryNet });
-          return;
-        }
-        var minOut = quotedOutputFloor(fresh, 10000 - reviewedSlippage); // slippage floor = swap amountOutMinimum
-        var statusCb = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
-        var outcome = { net: fresh, sym: reviewedAcct.symbol, decimals: reviewedAcct.decimals, approxAmount: true, sold: true };
-        var swapSummary = {
-          action: 'Sell ' + sym + ' into the buyback pool',
-          rows: [
-            ['Selling', formatBalance(route.count, 18, sym)],
-            ['You receive', '≈ ' + formatBalance(fresh, reviewedAcct.decimals, reviewedAcct.symbol) + ' (actual set by the pool)'],
-            ['Minimum', formatBalance(minOut, reviewedAcct.decimals, reviewedAcct.symbol) + ' — reverts below this (' + (reviewedSlippage / 100) + '% max slippage)'],
-            ['Route', 'Uniswap Universal Router — bypasses the terminal (no 2.5% cash out fee)'],
-            ['To', acct],
-          ],
-        };
-        buildDirectSwapErc20Tx(cid, route.pool, route.pool.projectToken, route.count, minOut, acct, statusCb)
-          .then(function (tx) {
-            if (!requireCashInputs()) return;
-            executeTransaction(Object.assign({}, tx, {
-              confirmTitle: 'Confirm swap',
-              confirmSummary: swapSummary,
-              onStatus: statusCb,
-              onSuccess: function (m, meta) { renderCashSuccess(route.count, outcome, meta); },
-              onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
-            }));
-          })
-          .catch(function (e) { status.classList.remove('pending'); status.textContent = errMessage(e, 'Could not authorize the swap.'); btn.disabled = false; });
-      }).catch(function () { btn.disabled = false; status.textContent = 'Could not quote the pool.'; });
-      return;
+    function routeChangedMessage() {
+      status.classList.remove('pending');
+      status.textContent = 'The best cash out route changed while it was being prepared. Review the refreshed quote and try again.';
+      updatePreview();
     }
-    submitTerminalCashOut(route);
+
+    function submitPreparedTerminal(prepared) {
+      if (!requireCashInputs()) return;
+      var preparedRoute = prepared.route;
+      var reviewedTerminal = route.via === 'directsell' ? route.terminalRoute : route;
+      if (reviewedTerminal && reviewedTerminal.via && reviewedTerminal.via !== preparedRoute.via) {
+        routeChangedMessage(); return;
+      }
+      var outcome = Object.assign({}, reviewedOutcome);
+      outcome.net = preparedRoute.expected; outcome.approxAmount = preparedRoute.via === 'amm'; outcome.sold = false;
+      executeTransaction({
+        chainId: cid, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
+        args: [acct, pid, count, reclaimToken, preparedRoute.terminalMinimum, acct, preparedRoute.metadata],
+        onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
+        onSuccess: function (m, meta) { renderCashSuccess(count, outcome, meta); },
+        onError: function (m) { status.classList.remove('pending'); status.textContent = cashOutExecutionErrorMessage(m); btn.disabled = false; },
+      });
+    }
+
+    status.classList.add('pending'); status.textContent = 'Refreshing and locking the cash out route…';
+    prepareTerminalCashOut().then(function (prepared) {
+      if (!requireCashInputs()) return;
+
+      // A direct Universal Router sale is valid only for the exact reclaim-token pool, only when the wallet still
+      // holds the full amount as claimed ERC-20, and only when its fresh protected minimum beats the freshly
+      // prepared terminal route. If any fact changed, stop for review instead of silently burning via another route.
+      if (route.via === 'directsell') {
+        return directSellPoolFor(project, cid, reclaimToken).then(function (freshPool) {
+          if (!freshPool) { routeChangedMessage(); return; }
+          return Promise.all([
+            quoteDirectSwap(cid, freshPool, count),
+            clientFor(cid).readContract({ address: freshPool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt),
+          ]).then(function (rr) {
+            if (!requireCashInputs()) return;
+            var fresh = rr[0], bal = rr[1];
+            var minOut = fresh == null ? 0n : cashOutExecutableMinimum(fresh, reviewedSlippage);
+            if (!cashOutDirectRouteWins(fresh, prepared.route.expected, reviewedSlippage, bal, count)) { routeChangedMessage(); return; }
+            var statusCb = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
+            var outcome = { net: fresh, sym: reviewedAcct.symbol, decimals: reviewedAcct.decimals, approxAmount: true, sold: true };
+            var swapSummary = {
+              action: 'Sell ' + sym + ' into the buyback pool',
+              rows: [
+                ['Selling', formatBalance(count, 18, sym)],
+                ['You receive', '≈ ' + formatBalance(fresh, reviewedAcct.decimals, reviewedAcct.symbol) + ' (actual set by the pool)'],
+                ['Minimum', formatBalance(minOut, reviewedAcct.decimals, reviewedAcct.symbol) + ' — reverts below this (' + (reviewedSlippage / 100) + '% max slippage)'],
+                ['Route', 'Uniswap Universal Router — bypasses the terminal (no 2.5% cash out fee)'],
+                ['To', acct],
+              ],
+            };
+            return buildDirectSwapErc20Tx(cid, freshPool, freshPool.projectToken, count, minOut, acct, statusCb)
+              .then(function (tx) {
+                if (!requireCashInputs()) return;
+                executeTransaction(Object.assign({}, tx, {
+                  confirmTitle: 'Confirm swap', confirmSummary: swapSummary, onStatus: statusCb,
+                  onSuccess: function (m, meta) { renderCashSuccess(count, outcome, meta); },
+                  onError: function (m) { status.classList.remove('pending'); status.textContent = cashOutExecutionErrorMessage(m); btn.disabled = false; },
+                }));
+              });
+          });
+        });
+      }
+      submitPreparedTerminal(prepared);
+    }).catch(function (e) {
+      status.classList.remove('pending'); btn.disabled = false;
+      if (e && e.code === 'CASH_OUT_ROUTE_CHANGED') routeChangedMessage();
+      else status.textContent = cashOutExecutionErrorMessage(errMessage(e, 'Could not prepare this cash out.'));
+    });
   });
 
   // Replace the form with a satisfying summary of what landed: tokens burned, value received, and the

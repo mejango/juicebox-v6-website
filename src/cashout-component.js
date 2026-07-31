@@ -9,6 +9,7 @@ import {
   getAccount, getEffectiveAccount, getChainTokens, parseAmount, formatAmount, parseHashDefaults,
   getBeneficiaryAddress, createPublicClientForChain, truncAddr, tokenByAddress,
 } from './component-base.js';
+import { cashOutPreviewRulesetId, projectBuybackHook, resolveCashOutPreviewRoute } from './discover.js';
 
 export var cashOutAbi = [{
   type: 'function', name: 'cashOutTokensOf', stateMutability: 'nonpayable',
@@ -24,9 +25,8 @@ export var cashOutAbi = [{
   outputs: [{ name: '', type: 'uint256' }],
 }];
 
-// 99% floor on the previewed reclaim (1% slippage, the cross-client default; the preview is pre-fee, so
-// the floor is compared before the protocol fee applies) so a burn can't reclaim ~0 silently (surplus
-// drained / MEV).
+// 99% floor on a NET terminal reclaim (after the protocol fee). Passing previewCashOutFrom's gross amount
+// here is unsafe: the terminal compares its minimum after charging the fee, so a gross floor can only revert.
 export function cashOutMinReclaimed(reclaimAmount) {
   try {
     var quoted = BigInt(reclaimAmount || 0);
@@ -38,13 +38,14 @@ export function cashOutMinReclaimed(reclaimAmount) {
 // Pure builder for JBMultiTerminal.cashOutTokensOf. `o`: { chainId, terminalAddr, holder, projectId,
 // cashOutCount (bigint), tokenToReclaim, beneficiary, minReclaimed (bigint) }.
 export function buildCashOutArgs(o) {
-  if (o.minReclaimed == null || BigInt(o.minReclaimed) <= 0n) throw new Error('A non-zero cash out preview is required.');
+  var metadata = o.metadata || '0x';
+  if ((o.minReclaimed == null || BigInt(o.minReclaimed) <= 0n) && metadata === '0x') throw new Error('A non-zero cash out preview is required.');
   return {
     chainId: o.chainId,
     address: o.terminalAddr,
     abi: cashOutAbi,
     functionName: 'cashOutTokensOf',
-    args: [o.holder, BigInt(o.projectId), o.cashOutCount, o.tokenToReclaim, BigInt(o.minReclaimed), o.beneficiary, '0x'],
+    args: [o.holder, BigInt(o.projectId), o.cashOutCount, o.tokenToReclaim, BigInt(o.minReclaimed || 0), o.beneficiary, metadata],
   };
 }
 
@@ -57,6 +58,8 @@ var totalBalanceOfAbi = [{
   outputs: [{ name: '', type: 'uint256' }],
 }];
 var accountingContextsAbi = [{ type: 'function', name: 'accountingContextsOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ name: 'contexts', type: 'tuple[]', components: [{ name: 'token', type: 'address' }, { name: 'decimals', type: 'uint256' }, { name: 'currency', type: 'uint256' }] }] }];
+var feeFreeSurplusOfAbi = [{ type: 'function', name: 'feeFreeSurplusOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [{ type: 'uint256' }] }];
+var isFeelessForAbi = [{ type: 'function', name: 'isFeelessFor', stateMutability: 'view', inputs: [{ name: 'addr', type: 'address' }, { name: 'projectId', type: 'uint256' }, { name: 'caller', type: 'address' }], outputs: [{ type: 'bool' }] }];
 
 export function renderCashOutComponent() {
   var defaults = parseHashDefaults('cashout');
@@ -323,36 +326,55 @@ export function renderCashOutComponent() {
     var reclaimToken = state.selectedToken.address;
     var amountText = state.amount;
 
-    // Slippage floor: 99% of the previewed reclaim (1% tolerance, the cross-client default). A nonzero
-    // terminal minimum forces the direct treasury route, so this floor also keeps a buyback data hook from
-    // AMM-routing the cash out. Reverts a burn that would reclaim near-zero (surplus drained / MEV)
-    // instead of letting it silently succeed.
-    var minReclaimed = 0n;
+    // Prepare the same hook-aware route as the project cash-out modal. previewCashOutFrom returns a GROSS
+    // treasury reclaim, so resolveCashOutPreviewRoute nets the protocol fee before setting the terminal floor.
+    // An AMM route instead puts its floor in buyback-hook metadata and MUST keep the terminal minimum at zero.
+    var preparedRoute;
     try {
-      var preview = await executeRead({
-        chainId: chainId, address: terminalAddr, abi: previewCashOutAbi, functionName: 'previewCashOutFrom',
-        args: [holder, BigInt(state.projectId), cashOutCount, reclaimToken, beneficiary, '0x'],
-      });
-      var reclaim = preview && (preview.reclaimAmount != null ? preview.reclaimAmount : preview[1]);
-      minReclaimed = cashOutMinReclaimed(reclaim);
+      state.txStatus = { message: 'Refreshing and locking the cash out route…', success: false }; updateUI();
+      var projectId = BigInt(state.projectId);
+      var feelessAddr = getAddress('JBFeelessAddresses', chainId);
+      if (!feelessAddr) throw new Error('Could not verify the fee configuration on this chain.');
+      var context = await Promise.all([
+        projectBuybackHook({ chainId: chainId, id: state.projectId }, chainId, { strict: true }),
+        executeRead({ chainId: chainId, address: terminalAddr, abi: feeFreeSurplusOfAbi, functionName: 'feeFreeSurplusOf', args: [projectId, reclaimToken] }),
+        executeRead({ chainId: chainId, address: feelessAddr, abi: isFeelessForAbi, functionName: 'isFeelessFor', args: [beneficiary, projectId, holder] }),
+        executeRead({ chainId: chainId, address: terminalAddr, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [holder, projectId, cashOutCount, reclaimToken, beneficiary, '0x'] }),
+      ]);
+      preparedRoute = resolveCashOutPreviewRoute(context[3], context[0], 100, !!context[2], BigInt(context[1]));
+      if (preparedRoute.expected <= 0n) throw new Error('This cash out currently returns 0 tokens. Nothing was sent.');
+      if (preparedRoute.via === 'amm') {
+        var lockedPreview = await executeRead({
+          chainId: chainId, address: terminalAddr, abi: previewCashOutAbi, functionName: 'previewCashOutFrom',
+          args: [holder, projectId, cashOutCount, reclaimToken, beneficiary, preparedRoute.metadata],
+        });
+        var lockedRoute = resolveCashOutPreviewRoute(lockedPreview, context[0], 100, !!context[2], BigInt(context[1]));
+        var firstRuleset = cashOutPreviewRulesetId(context[3]);
+        var lockedRuleset = cashOutPreviewRulesetId(lockedPreview);
+        if ((firstRuleset != null && lockedRuleset != null && firstRuleset !== lockedRuleset)
+          || lockedRoute.via !== 'amm' || lockedRoute.minimum !== preparedRoute.minimum
+          || lockedRoute.metadata.toLowerCase() !== preparedRoute.metadata.toLowerCase()) {
+          throw new Error('The cash out route changed while its executable minimum was being locked. Refresh and try again.');
+        }
+      }
     } catch (error) {
       state.error = (error && (error.shortMessage || error.message)) || 'Could not preview this cash out.';
-      updateUI(); return;
-    }
-    if (minReclaimed === 0n) {
-      state.error = 'This cash out currently returns 0 tokens. Nothing was sent.';
+      state.txStatus = null;
       updateUI(); return;
     }
     if (state.selectedChain !== chainId || state.amount !== amountText || !state.selectedToken
       || state.selectedToken.address.toLowerCase() !== reclaimToken.toLowerCase()
-      || String(getBeneficiaryAddress(state) || '').toLowerCase() !== beneficiary.toLowerCase()) {
+      || String(getBeneficiaryAddress(state) || '').toLowerCase() !== beneficiary.toLowerCase()
+      || String(getAccount() || '').toLowerCase() !== holder.toLowerCase()) {
       state.error = 'Cash out inputs changed while the preview was loading. Review the refreshed form and try again.';
+      state.txStatus = null;
       updateUI(); return;
     }
 
     executeTransaction(Object.assign(buildCashOutArgs({
       chainId: chainId, terminalAddr: terminalAddr, holder: holder, projectId: state.projectId,
-      cashOutCount: cashOutCount, tokenToReclaim: reclaimToken, beneficiary: beneficiary, minReclaimed: minReclaimed,
+      cashOutCount: cashOutCount, tokenToReclaim: reclaimToken, beneficiary: beneficiary,
+      minReclaimed: preparedRoute.terminalMinimum, metadata: preparedRoute.metadata,
     }), {
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },

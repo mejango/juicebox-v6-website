@@ -76,6 +76,13 @@ describe('cashout — JBMultiTerminal.cashOutTokensOf', () => {
     expect(() => buildCashOutArgs({ chainId: 1, terminalAddr: TERMINAL, holder: BOB, projectId: 7, cashOutCount: 1n, tokenToReclaim: NATIVE_TOKEN, beneficiary: BOB, minReclaimed: 0n })).toThrow(/preview/i);
     expect(cashOutMinReclaimed(1n)).toBe(1n);
   });
+  it('puts an AMM floor in hook metadata while keeping the terminal minimum at zero', () => {
+    const metadata = `0x${'11'.repeat(96)}`;
+    const tx = buildCashOutArgs({ chainId: 1, terminalAddr: TERMINAL, holder: BOB, projectId: 7, cashOutCount: 1n, tokenToReclaim: NATIVE_TOKEN, beneficiary: BOB, minReclaimed: 0n, metadata });
+    expect(tx.args[4]).toBe(0n);
+    expect(tx.args[6]).toBe(metadata);
+    expect(roundTrips(cashOutAbi, 'cashOutTokensOf', tx.args)).toBe(true);
+  });
 });
 
 describe('mint — JBController.mintTokensOf', () => {
