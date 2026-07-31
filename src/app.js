@@ -278,7 +278,11 @@ function initTabs() {
       if (!providers.length) {
         var mobile = isMobileDevice(typeof navigator !== 'undefined' ? navigator : null);
         openWalletNotice(mobile ? 'Checking this browser for wallet access…' : 'Looking for wallet…', '');
-        refreshProviders(500).then(function (fresh) {
+        // MetaMask Mobile may not inject `window.ethereum` until after the
+        // page lifecycle has started. Its documented initialization window is
+        // up to three seconds; refreshProviders also resolves early when the
+        // provider event arrives.
+        refreshProviders(mobile ? 3000 : 500).then(function (fresh) {
           if (getAccount() || !walletMenu) return;
           if (fresh.length) { openWalletPicker(); return; }
           if (mobile) openWalletNotice('Choose a wallet app to continue. This page will reopen there.', '');

@@ -24,6 +24,13 @@ const WALLET_RDNS = 'jb-wallet-rdns';      // which wallet (EIP-6963 rdns) to re
 const _providers = []; // [{ info: { uuid, name, icon, rdns }, provider }]
 let activeProvider = (typeof window !== 'undefined' && window.ethereum) || null;
 if (typeof window !== 'undefined') {
+  // MetaMask Mobile can inject its provider after the app has loaded. It emits
+  // this event once `window.ethereum` is ready; desktop extensions are already
+  // present by the time this module runs.
+  window.addEventListener('ethereum#initialized', function () {
+    if (!activeProvider && window.ethereum) activeProvider = window.ethereum;
+    requestProviderAnnouncements();
+  });
   window.addEventListener('eip6963:announceProvider', function (e) {
     var d = e && e.detail;
     if (!d || !d.info || !d.provider) return;
@@ -90,7 +97,34 @@ export function getProviders() {
 export function refreshProviders(waitMs) {
   requestProviderAnnouncements();
   return new Promise(function (resolve) {
-    setTimeout(function () { resolve(getProviders()); }, waitMs == null ? 350 : waitMs);
+    var settled = false;
+    var timer;
+    function finish() {
+      if (settled) return;
+      var providers = getProviders();
+      if (!providers.length && timer) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('ethereum#initialized', onProvider);
+        window.removeEventListener('eip6963:announceProvider', onProvider);
+      }
+      resolve(providers);
+    }
+    function onProvider() {
+      if (!activeProvider && typeof window !== 'undefined' && window.ethereum) activeProvider = window.ethereum;
+      // Let an EIP-6963 announcement listener record its provider first.
+      setTimeout(finish, 0);
+    }
+    if (getProviders().length) { finish(); return; }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('ethereum#initialized', onProvider);
+      window.addEventListener('eip6963:announceProvider', onProvider);
+    }
+    timer = setTimeout(function () {
+      timer = null;
+      finish();
+    }, waitMs == null ? 350 : waitMs);
   });
 }
 
@@ -182,6 +216,18 @@ export async function connect(chosen) {
     connectedViaSafe = !!chosen.provider.isSafe;
     bindEvents(activeProvider);
     try { localStorage.setItem(WALLET_RDNS, (chosen.info && chosen.info.rdns) || ''); } catch (_) {}
+  }
+  if (!activeProvider && typeof window !== 'undefined' && window.ethereum) {
+    activeProvider = window.ethereum;
+  }
+  if (!activeProvider && isMobileDevice(typeof navigator !== 'undefined' ? navigator : null)) {
+    // MetaMask documents a late provider-injection path on mobile. Wait for
+    // its initialization event before declaring that no wallet exists.
+    var mobileProviders = await refreshProviders(3000);
+    if (mobileProviders.length) {
+      activeProvider = mobileProviders[0].provider;
+      bindEvents(activeProvider);
+    }
   }
   if (!activeProvider) {
     throw new Error('No wallet detected. Install MetaMask or another browser wallet.');
