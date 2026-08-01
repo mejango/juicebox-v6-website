@@ -1019,7 +1019,7 @@ function txRawJson(tx) {
 // title, indented `label: value` lines) so every confirm modal's pretty view looks identical.
 function renderFriendlySummary(summary, tx) {
   if (!summary) return null;
-  var wrap = el('div', 'tx-decoded');
+  var wrap = el('div', 'tx-decoded tx-decoded-friendly');
   if (tx && tx.chain) { var ch = el('div', 'tx-decoded-chain'); ch.textContent = tx.chain; wrap.appendChild(ch); }
   if (tx && (tx.contract || tx.address || tx.to)) {
     var who = el('div', 'tx-decoded-target');
@@ -1032,7 +1032,7 @@ function renderFriendlySummary(summary, tx) {
   (summary.rows || []).forEach(function (row) {
     var r = el('div', 'tx-decoded-arg');
     var k = el('span', 'tx-decoded-argname'); k.textContent = row[0] + ': '; r.appendChild(k);
-    r.appendChild(document.createTextNode(row[1]));
+    var v = el('span', 'tx-decoded-argval'); v.textContent = row[1]; r.appendChild(v);
     call.appendChild(r);
   });
   wrap.appendChild(call);
