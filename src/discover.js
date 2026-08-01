@@ -4154,6 +4154,7 @@ function directSwapTokenApprovalPayload(chainId, token, amountIn) {
     calldata: encodeFunctionData({ abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, max] }),
     value: 0n,
     summary: { action: 'Approve token access', rows: [
+      ['Token', knownPaymentTokenAddress(chainId, token)],
       ['Spender', 'Permit2 | ' + PERMIT2_ADDRESS],
       ['Required for this payment', amountIn.toString() + ' token units'],
       ['Approval', 'Reusable maximum allowance to canonical Permit2'],
@@ -4174,7 +4175,7 @@ function directSwapPermit2ApprovalPayload(plan) {
     }),
     value: 0n,
     summary: { action: 'Authorize the Uniswap swap router', rows: [
-      ['Token', plan.token],
+      ['Token', knownPaymentTokenAddress(plan.chainId, plan.token)],
       ['Spender', 'Uniswap Universal Router | ' + plan.router],
       ['Amount', plan.amountIn.toString() + ' token units'],
       ['Expires', new Date(Number(plan.onchainExpiration) * 1000).toLocaleString()],
@@ -4205,13 +4206,19 @@ function directSwapPermit2SignaturePayload(plan) {
     authorization: authorization,
     value: 0n,
     summary: { action: 'Sign the swap authorization', rows: [
-      ['Token', plan.token],
+      ['Token', knownPaymentTokenAddress(plan.chainId, plan.token)],
       ['Spender', 'Uniswap Universal Router | ' + plan.router],
       ['Amount', plan.amountIn.toString() + ' token units'],
       ['Expires', new Date(plan.expiration * 1000).toLocaleString()],
       ['Gas', 'No transaction fee — this is an EIP-712 signature'],
     ] },
   };
+}
+
+function knownPaymentTokenAddress(chainId, value) {
+  var address = String(value || '');
+  var usdc = USDC_BY_CHAIN[Number(chainId)];
+  return usdc && sameAddr(usdc, address) ? 'USDC | ' + address : address;
 }
 
 async function prepareDirectSwapErc20Authorization(chainId, token, amountIn, recipient) {
