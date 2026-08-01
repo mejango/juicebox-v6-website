@@ -4144,11 +4144,131 @@ export function permit2SignatureNeedsOnchainFallback(error) {
   return /(^|\s)-32602(\s|$)|(^|\s)-32601(\s|$)|(^|\s)4200(\s|$)|invalid parameters|method .*not supported|unsupported method|typed data.*not supported/.test(text);
 }
 
+function directSwapTokenApprovalPayload(chainId, token, amountIn) {
+  var max = (1n << 256n) - 1n;
+  return {
+    chain: chainNameOf(chainId), chainId: chainId,
+    contract: 'Payment token', address: token,
+    'function': 'approve', abi: lpErc20Abi,
+    args: [PERMIT2_ADDRESS, max],
+    calldata: encodeFunctionData({ abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, max] }),
+    value: 0n,
+    summary: { action: 'Approve token access', rows: [
+      ['Spender', 'Permit2 | ' + PERMIT2_ADDRESS],
+      ['Required for this payment', amountIn.toString() + ' token units'],
+      ['Approval', 'Reusable maximum allowance to canonical Permit2'],
+    ] },
+  };
+}
+
+function directSwapPermit2ApprovalPayload(plan) {
+  return {
+    chain: chainNameOf(plan.chainId), chainId: plan.chainId,
+    contract: 'Permit2', address: PERMIT2_ADDRESS,
+    'function': 'approve', abi: lpPermit2Abi,
+    args: [plan.token, plan.router, plan.amountIn, plan.onchainExpiration],
+    calldata: encodeFunctionData({
+      abi: lpPermit2Abi,
+      functionName: 'approve',
+      args: [plan.token, plan.router, plan.amountIn, plan.onchainExpiration],
+    }),
+    value: 0n,
+    summary: { action: 'Authorize the Uniswap swap router', rows: [
+      ['Token', plan.token],
+      ['Spender', 'Uniswap Universal Router | ' + plan.router],
+      ['Amount', plan.amountIn.toString() + ' token units'],
+      ['Expires', new Date(Number(plan.onchainExpiration) * 1000).toLocaleString()],
+    ] },
+  };
+}
+
+function directSwapPermit2SignaturePayload(plan) {
+  var authorization = {
+    domain: { name: 'Permit2', chainId: plan.chainId, verifyingContract: PERMIT2_ADDRESS },
+    types: LP_PERMIT2_TYPES,
+    primaryType: 'PermitSingle',
+    message: {
+      details: {
+        token: plan.token,
+        amount: plan.amountIn,
+        expiration: plan.expiration,
+        nonce: plan.nonce,
+      },
+      spender: plan.router,
+      sigDeadline: plan.sigDeadline,
+    },
+  };
+  return {
+    chain: chainNameOf(plan.chainId), chainId: plan.chainId,
+    contract: 'Permit2', address: PERMIT2_ADDRESS,
+    'function': 'PermitSingle authorization',
+    authorization: authorization,
+    value: 0n,
+    summary: { action: 'Sign the swap authorization', rows: [
+      ['Token', plan.token],
+      ['Spender', 'Uniswap Universal Router | ' + plan.router],
+      ['Amount', plan.amountIn.toString() + ' token units'],
+      ['Expires', new Date(plan.expiration * 1000).toLocaleString()],
+      ['Gas', 'No transaction fee — this is an EIP-712 signature'],
+    ] },
+  };
+}
+
+async function prepareDirectSwapErc20Authorization(chainId, token, amountIn, recipient) {
+  var client = clientFor(chainId);
+  var router = UNIVERSAL_ROUTER_BY_CHAIN[chainId];
+  var rows = await Promise.all([
+    client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [recipient, PERMIT2_ADDRESS] }),
+    client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [recipient, token, router] }),
+    latestChainTimestamp(client),
+    client.getBytecode({ address: recipient }).catch(function () { return null; }),
+  ]);
+  var p2 = rows[1], now = rows[2];
+  var plan = {
+    chainId: chainId,
+    token: token,
+    router: router,
+    amountIn: BigInt(amountIn),
+    needsTokenApproval: BigInt(rows[0]) < BigInt(amountIn),
+    permit2Covered: permit2AllowanceCovers(p2, amountIn, now, 60),
+    mustApproveOnchain: isSafeConnected() || !!(rows[3] && rows[3] !== '0x'),
+    nonce: Number(p2[2]),
+    expiration: now + 1800,
+    sigDeadline: BigInt(now + 1800),
+    onchainExpiration: BigInt(now + 30 * 24 * 3600),
+    now: now,
+  };
+  plan.firstPayload = plan.needsTokenApproval
+    ? directSwapTokenApprovalPayload(chainId, token, amountIn)
+    : plan.permit2Covered
+      ? null
+      : plan.mustApproveOnchain
+        ? directSwapPermit2ApprovalPayload(plan)
+        : directSwapPermit2SignaturePayload(plan);
+  return plan;
+}
+
+function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber) {
+  return {
+    chainId: chainId,
+    address: UNIVERSAL_ROUTER_BY_CHAIN[chainId],
+    abi: urExecuteAbi,
+    functionName: 'execute',
+    args: [
+      '0x' + pad1(UR_CMD.V4_SWAP),
+      [encodeV4SwapInput(pool, amountIn, minOut, recipient)],
+      BigInt(now + 1800),
+    ],
+    value: 0n,
+    simulationBlockNumber: simulationBlockNumber,
+  };
+}
+
 // ERC-20 pair token (e.g. USDC for ART) → project token. Ensures a one-time USDC→Permit2 approval, then reuses
 // a live Permit2→Universal Router allowance or signs a gasless single allowance. Wallets which cannot sign that
 // EIP-712 payload fall back to on-chain Permit2.approve. The swap's SETTLE pulls USDC through whichever live
 // allowance was established.
-async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus) {
+async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus, preparedPlan) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   amountIn = BigInt(amountIn); minOut = BigInt(minOut);
   var max128 = (1n << 128n) - 1n;
@@ -4161,9 +4281,9 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   if (wc0 !== chainId) { if (onStatus) onStatus('Switching to ' + chainNameOf(chainId) + '…', 'pending'); await switchChain(chainId); wallet = getWalletClient(); }
   if (!wallet || !getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
   // 1. One-time ERC20→Permit2 approval (canonical Permit2; wallets recognize it).
-  var erc20Allow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [recipient, PERMIT2_ADDRESS] });
-  if (BigInt(erc20Allow) < amountIn) {
-    if (onStatus) onStatus('Approving for Permit2 (one-time)…', 'pending');
+  var plan = preparedPlan || await prepareDirectSwapErc20Authorization(chainId, token, amountIn, recipient);
+  if (plan.needsTokenApproval) {
+    if (onStatus) await onStatus('Approving for Permit2 (one-time)…', 'pending', { reviewPayload: directSwapTokenApprovalPayload(chainId, token, amountIn) });
     var approval = await client.simulateContract({ account: recipient, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, (1n << 256n) - 1n] });
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
@@ -4173,29 +4293,24 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   }
   // 2. Reuse an existing live Permit2 → Universal Router allowance. This is the contract-wallet path and also
   // avoids asking an EOA for a redundant typed-data signature after another client already authorized the route.
-  var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [recipient, token, ur] });
-  var now = await latestChainTimestamp(client);
+  var now = plan.now;
   function v4OnlyTx(simulationBlockNumber) {
-    return {
-      chainId: chainId, address: ur, abi: urExecuteAbi, functionName: 'execute',
-      args: ['0x' + pad1(UR_CMD.V4_SWAP), [encodeV4SwapInput(pool, amountIn, minOut, recipient)], BigInt(now + 1800)],
-      value: 0n,
-      simulationBlockNumber: simulationBlockNumber,
-    };
+    return buildDirectSwapErc20ExecuteTx(
+      chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber,
+    );
   }
-  if (permit2AllowanceCovers(p2, amountIn, now, 60)) return v4OnlyTx();
+  if (plan.permit2Covered) return v4OnlyTx();
 
   // Contract wallets cannot reliably produce a short-lived Permit2 EIP-712 signature. EOAs try the gasless
   // signature first; wallets which explicitly reject the typed-data parameter shape fall back to the same
   // on-chain Permit2.approve route used by revnet.money.
-  var ownerCode = await client.getBytecode({ address: recipient }).catch(function () { return null; });
-  var mustApproveOnchain = isSafeConnected() || !!(ownerCode && ownerCode !== '0x');
-  var nonce = Number(p2[2]);
-  var expiration = now + 1800, sigDeadline = BigInt(now + 1800);
+  var mustApproveOnchain = plan.mustApproveOnchain;
+  var nonce = plan.nonce;
+  var expiration = plan.expiration, sigDeadline = plan.sigDeadline;
   var signature = null;
   if (!mustApproveOnchain) {
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
-    if (onStatus) onStatus('Sign the swap authorization…', 'pending');
+    if (onStatus) await onStatus('Sign the swap authorization…', 'pending', { reviewPayload: directSwapPermit2SignaturePayload(plan) });
     try {
       signature = await wallet.signTypedData({
         account: recipient,
@@ -4212,8 +4327,8 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
 
   if (mustApproveOnchain) {
-    if (onStatus) onStatus('Approving the swap router on Permit2…', 'pending');
-    var onchainExpiration = BigInt(now + 30 * 24 * 3600);
+    if (onStatus) await onStatus('Approving the swap router on Permit2…', 'pending', { reviewPayload: directSwapPermit2ApprovalPayload(plan) });
+    var onchainExpiration = plan.onchainExpiration;
     var approval = await client.simulateContract({
       account: recipient, address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve',
       args: [token, ur, amountIn, onchainExpiration],
@@ -7967,7 +8082,7 @@ function renderPayCard(project, cart) {
       // Native swaps are fully determined before review, so reuse this exact call after confirmation and expose
       // its calldata to txlink. ERC-20 swaps still need a wallet-bound Permit2 signature and cannot be shared yet.
       var directReviewTx = isNative ? buildDirectSwapNativeTx(reviewedChainId, ds.pool, amt, dsMinOut, beneficiary) : null;
-      openPayConfirm({
+      var directPaymentPayload = {
         chain: dChain,
         chainId: reviewedChainId,
         contract: 'Uniswap Universal Router',
@@ -7986,7 +8101,31 @@ function renderPayCard(project, cart) {
           beneficiary: beneficiary,
           note: 'Swaps the buyback pool directly via the Universal Router; the hook fills at the best of AMM vs issuance.',
         },
-      }, function send(confirmCtx) {
+      };
+      function executePayload(tx) {
+        return Object.assign({}, directPaymentPayload, {
+          calldata: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }),
+          txlinkUnavailableReason: null,
+        });
+      }
+      function openDirectSwapConfirm(plan) {
+        var coveredTx = !isNative && plan && plan.permit2Covered
+          ? buildDirectSwapErc20ExecuteTx(
+              reviewedChainId, ds.pool, amt, dsMinOut, beneficiary, plan.now,
+            )
+          : null;
+        var initialPayload = isNative
+          ? directPaymentPayload
+          : (plan.firstPayload || executePayload(coveredTx));
+        var sequenceSteps = [];
+        if (!isNative && plan.needsTokenApproval) sequenceSteps.push('Approve token access');
+        if (!isNative && !plan.permit2Covered) {
+          sequenceSteps.push(plan.mustApproveOnchain
+            ? 'Authorize the Uniswap swap router'
+            : 'Sign the swap authorization');
+        }
+        sequenceSteps.push('Execute the swap');
+        openPayConfirm(initialPayload, function send(confirmCtx) {
         if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) {
           var accountError = 'Connected account changed. Review the payment again.';
           status.className = 'paybox-status error'; status.textContent = accountError; confirmCtx.fail(accountError); return;
@@ -7994,16 +8133,41 @@ function renderPayCard(project, cart) {
         if (isNative) { sendPay(directReviewTx, { addBalance: false, confirmCtx: confirmCtx }); return; }
         // ERC-20 (USDC) input → Permit2 approval/signature, then PERMIT2_PERMIT + V4_SWAP in one tx.
         var statusCb = function (m, kind, meta) {
+          if (meta && meta.reviewPayload) confirmCtx.showAction(meta.reviewPayload);
           status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
           confirmCtx.showStatus(m, kind, meta);
+          return meta && meta.reviewPayload ? confirmCtx.afterPaint() : undefined;
         };
-        buildDirectSwapErc20Tx(reviewedChainId, ds.pool, reviewedToken.address, amt, dsMinOut, beneficiary, statusCb)
-          .then(function (tx) { sendPay(tx, { addBalance: false, confirmCtx: confirmCtx }); })
+        buildDirectSwapErc20Tx(reviewedChainId, ds.pool, reviewedToken.address, amt, dsMinOut, beneficiary, statusCb, plan)
+          .then(function (tx) {
+            confirmCtx.showAction(executePayload(tx));
+            confirmCtx.showStatus('Review and execute the swap.', 'pending');
+            return confirmCtx.afterPaint().then(function () {
+              sendPay(tx, { addBalance: false, confirmCtx: confirmCtx });
+            });
+          })
           .catch(function (e) {
             var message = errMessage(e, 'Could not authorize the swap.');
             status.className = 'paybox-status error'; status.textContent = message; confirmCtx.fail(message);
           });
-      });
+        }, { sequenceSteps: sequenceSteps });
+      }
+      if (isNative) {
+        openDirectSwapConfirm(null);
+      } else {
+        status.className = 'paybox-status pending';
+        status.textContent = 'Preparing the first wallet action…';
+        prepareDirectSwapErc20Authorization(
+          reviewedChainId, reviewedToken.address, amt, beneficiary,
+        ).then(function (plan) {
+          if (!requirePayInputs()) return;
+          status.className = 'paybox-status'; status.textContent = '';
+          openDirectSwapConfirm(plan);
+        }).catch(function (error) {
+          status.className = 'paybox-status error';
+          status.textContent = errMessage(error, 'Could not prepare the wallet actions.');
+        });
+      }
       return;
     }
 
@@ -8133,7 +8297,7 @@ function renderPayCard(project, cart) {
     var confirmCtx = opts.confirmCtx || null;
     var add = !!opts.addBalance;
     var processing = add ? 'Adding to balance' : 'Payment processing';
-    var confirmed = add ? 'Added to balance' : 'Payment confirmed';
+    var confirmed = add ? 'Added to balance' : 'Payment complete';
     executeTransaction(Object.assign({}, txParams, {
       skipConfirm: true, // already confirmed via openPayConfirm
       onStatus: function (m, kind, meta) {
@@ -20733,7 +20897,13 @@ function openTxConfirm(payload, onConfirm, opts) {
     sequence.appendChild(sequenceList);
     content.appendChild(sequence);
   }
-  renderConfirmBody(content, payload, opts); // shared body: decoded summary + raw-in-details + audit link
+  var reviewHost = el('div', 'pay-confirm-current-action');
+  content.appendChild(reviewHost);
+  function showAction(nextPayload, nextOpts) {
+    reviewHost.innerHTML = '';
+    renderConfirmBody(reviewHost, nextPayload, Object.assign({}, opts, nextOpts || {}));
+  }
+  showAction(payload); // shared body: decoded summary + raw-in-details + audit link
   var status = el('div', 'modal-status tx-confirm-status');
   status.style.display = 'none';
   content.appendChild(status);
@@ -20797,8 +20967,14 @@ function openTxConfirm(payload, onConfirm, opts) {
     onConfirm({
       modal: modal,
       status: status,
+      showAction: showAction,
+      afterPaint: function () {
+        return new Promise(function (resolve) {
+          requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+        });
+      },
       showStatus: showStatus,
-      complete: function (message, meta) { unlockWithResult(message || 'Payment confirmed.', 'success', meta); },
+      complete: function (message, meta) { unlockWithResult(message || 'Payment complete.', 'success', meta); },
       pending: function (message, meta) { unlockWithResult(message || 'Waiting for confirmation.', 'pending', meta); },
       fail: function (message, meta) { unlockWithResult(message || 'The payment could not be completed.', 'error', meta); },
       confirm: confirm,
@@ -20809,12 +20985,14 @@ function openTxConfirm(payload, onConfirm, opts) {
 
 function openPayConfirm(payload, onConfirm, opts) {
   opts = opts || {};
-  var steps = [];
-  if (payload.erc20Approval) {
+  var steps = opts.sequenceSteps ? opts.sequenceSteps.slice() : [];
+  if (!steps.length && payload.erc20Approval) {
     steps.push('Approve token access if needed');
     if (payload.erc20Approval.authorize) steps.push('Sign or confirm the swap authorization');
   }
-  steps.push(payload['function'] === 'execute' ? 'Execute the swap' : (payload['function'] === 'addToBalanceOf' ? 'Add to the project balance' : 'Execute the payment'));
+  if (!steps.length) {
+    steps.push(payload['function'] === 'execute' ? 'Execute the swap' : (payload['function'] === 'addToBalanceOf' ? 'Add to the project balance' : 'Execute the payment'));
+  }
   openTxConfirm(payload, onConfirm, {
     title: opts.title || 'Confirm payment',
     confirmText: opts.confirmText || 'Confirm & Pay',

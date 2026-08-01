@@ -3,7 +3,7 @@
 // transaction amount (wrong decimals) or mis-routes funds, so they get their own guard.
 import { describe, it, expect } from 'vitest';
 import { parseAmount, formatAmount } from '../src/encoding.js';
-import { isAddr, addrOrZero, friendlyTransactionError, shouldKeepSubmittedTransactionPending, waitForErc20Approval, ZERO_ADDRESS } from '../src/component-base.js';
+import { isAddr, addrOrZero, friendlyTransactionError, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, ZERO_ADDRESS } from '../src/component-base.js';
 import { parseEther, parseUnits } from 'viem';
 
 const GOOD = '0x1111111111111111111111111111111111111111';
@@ -77,5 +77,17 @@ describe('ERC-20 approval finality', () => {
       readContract: async () => 9n,
     };
     await expect(waitForErc20Approval(short, '0xhash', GOOD, GOOD, GOOD, 10n)).rejects.toThrow(/did not grant/i);
+  });
+});
+
+describe('transaction receipt tracking', () => {
+  it('uses a direct mined-receipt lookup instead of waiting on a stuck watcher', async () => {
+    const receipt = { status: 'success', blockNumber: 456n, transactionHash: '0xhash' };
+    const client = {
+      getTransactionReceipt: async () => receipt,
+      waitForTransactionReceipt: () => new Promise(() => undefined),
+    };
+
+    await expect(waitForTrackedTransactionReceipt(client, '0xhash')).resolves.toBe(receipt);
   });
 });
