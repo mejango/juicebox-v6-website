@@ -6075,6 +6075,19 @@ var _activeDetail = null; // { key, showTab, project, isMobile } for the current
 var _projectRefreshTimer = null;
 var _projectRefreshSeq = 0;
 
+// Header wallet menus live outside the Discover renderer. Expose only the
+// active project's balance metadata rather than leaking the mutable detail
+// controller itself.
+export function activeProjectForWallet() {
+  if (!_activeDetail || !_activeDetail.project) return null;
+  var project = _activeDetail.project;
+  return {
+    chainId: Number(project.chainId),
+    tokenAddress: project.tokenAddress || null,
+    tokenSymbol: project.tokenSymbol || null,
+  };
+}
+
 function scheduleActiveProjectRefresh(project) {
   if (!_activeDetail || !_activeDetail.project || !sameProjectDeployment(_activeDetail.project, project)) return;
   if (_projectRefreshTimer) clearTimeout(_projectRefreshTimer);

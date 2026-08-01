@@ -5130,7 +5130,8 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   font-family: inherit; font-size: 17px; font-weight: bold;
   padding: 6px 4px 6px 8px; border: none; background: transparent; color: var(--text);
 }
-.paybox-amount:focus { outline: none; }
+.paybox-amount:focus,
+.paybox-amount:focus-visible { outline: none !important; }
 .paybox-amount::-webkit-outer-spin-button,
 .paybox-amount::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .paybox-amount[type=number] { -moz-appearance: textfield; }
@@ -5336,6 +5337,13 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   color: var(--c-pink-light);
   font-weight: bold;
 }
+.wallet-menu-balances {
+  min-width: 220px; padding: 8px 10px; color: var(--bg); font-size: 11px;
+  border-bottom: 1px solid var(--c-black-light);
+}
+.wallet-menu-balance-chain { margin-bottom: 5px; color: var(--c-teal-light); }
+.wallet-menu-balance-row { display: flex; justify-content: space-between; gap: 20px; line-height: 1.6; }
+.wallet-menu-balance-row strong { white-space: nowrap; color: var(--bg); }
 .wallet-pick { display: flex; align-items: center; gap: 8px; }
 .wallet-pick-icon { width: 18px; height: 18px; border-radius: 4px; flex: none; }
 

@@ -71,6 +71,14 @@ vi.mock('../src/components.js', () => ({ renderStyleEditor: vi.fn() }));
 vi.mock('../src/component-base.js', () => ({
   buildEmbedUrl: () => 'https://example.invalid/embed',
   getAccount: () => entry.account,
+  getWalletClient: () => ({
+    chain: { id: 8453 },
+    getChainId: vi.fn().mockResolvedValue(8453),
+  }),
+  createPublicClientForChain: () => ({
+    getBalance: vi.fn().mockResolvedValue(250000000000000000n),
+    readContract: vi.fn().mockResolvedValue(12500000n),
+  }),
   connect: vi.fn().mockResolvedValue(undefined),
   disconnect: vi.fn().mockResolvedValue(undefined),
   onWalletChange: vi.fn(),
@@ -90,6 +98,7 @@ vi.mock('../src/discover.js', () => ({
   renderDiscoverTab: entry.renderDiscoverTab,
   applyDiscoverRoute: entry.applyDiscoverRoute,
   renderAdminTab: entry.renderAdminTab,
+  activeProjectForWallet: () => null,
   classifyAccountQuery: query => /^0x[0-9a-fA-F]{40}$/.test(String(query || '').trim())
     ? { kind: 'address', address: String(query).trim() }
     : { kind: 'text' },

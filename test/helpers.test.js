@@ -3,7 +3,7 @@
 // transaction amount (wrong decimals) or mis-routes funds, so they get their own guard.
 import { describe, it, expect } from 'vitest';
 import { parseAmount, formatAmount } from '../src/encoding.js';
-import { isAddr, addrOrZero, friendlyTransactionError, waitForErc20Approval, ZERO_ADDRESS } from '../src/component-base.js';
+import { isAddr, addrOrZero, friendlyTransactionError, shouldKeepSubmittedTransactionPending, waitForErc20Approval, ZERO_ADDRESS } from '../src/component-base.js';
 import { parseEther, parseUnits } from 'viem';
 
 const GOOD = '0x1111111111111111111111111111111111111111';
@@ -47,6 +47,14 @@ describe('raw transaction error messages', () => {
     expect(friendlyTransactionError('reverted with signature: 0x76d03816')).toMatch(/no price feed.*supported currency/i);
     expect(friendlyTransactionError('reverted with signature: 0xee890b46')).toMatch(/worth less.*item total/i);
     expect(friendlyTransactionError('0xdeadbeef')).toBeNull();
+  });
+
+  it('keeps a wallet-broadcast transaction pending when only receipt tracking fails', () => {
+    expect(shouldKeepSubmittedTransactionPending('0xhash', new Error('Invalid RPC parameters'))).toBe(true);
+    expect(shouldKeepSubmittedTransactionPending(null, new Error('Invalid RPC parameters'))).toBe(false);
+    const reverted = new Error('reverted');
+    reverted.onchainRevert = true;
+    expect(shouldKeepSubmittedTransactionPending('0xhash', reverted)).toBe(false);
   });
 });
 

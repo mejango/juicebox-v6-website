@@ -164,6 +164,13 @@ export function friendlyTransactionError(errorText) {
   return null;
 }
 
+// Once the wallet returns a hash, an RPC receipt-watch failure is not a
+// transaction failure. Only an explicit mined revert can downgrade the
+// submitted state.
+export function shouldKeepSubmittedTransactionPending(hash, error) {
+  return !!hash && !(error && error.onchainRevert);
+}
+
 // One address-format check for the whole app (replaces ~39 inline `/^0x[0-9a-fA-F]{40}$/` regexes).
 // strict:false = format only (any case), matching the old regex; the `typeof` guard matches `.test()`'s
 // string coercion so isAddr(undefined) === false. addrOrZero coerces a blank/invalid address to 0x0.
@@ -1241,6 +1248,7 @@ export function executeTransaction(opts) {
   });
 
   function sendNow() {
+  var submittedHash = null;
   function reverifyReviewedState() {
     if (!opts.reverify) return Promise.resolve();
     return Promise.resolve(opts.reverify()).then(function () {
@@ -1316,15 +1324,32 @@ export function executeTransaction(opts) {
       return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId] }));
     });
   }).then(function(hash) {
+    submittedHash = hash;
     // Submitted to the mempool — now waiting to be included onchain. Keep a live pending state up
     // the whole time (waitForTransactionReceipt can take a while).
     cbs.onStatus('Confirming onchain | ' + truncAddr(hash), 'pending', { phase: 'submitted', hash: hash, chainId: opts.chainId });
     var pub = createPublicClientForChain(opts.chainId);
-    return pub.waitForTransactionReceipt({ hash: hash });
+    return pub.waitForTransactionReceipt({ hash: hash }).catch(function (waitError) {
+      // Some load-balanced RPCs reject the receipt watch with -32602 even
+      // after the wallet successfully broadcast the transaction. Try a
+      // direct receipt lookup once; if that backend also cannot track it, keep
+      // the honest submitted state and explorer link instead of reporting the
+      // already-broadcast transaction as failed.
+      if (typeof pub.getTransactionReceipt !== 'function') throw waitError;
+      return pub.getTransactionReceipt({ hash: hash }).catch(function () { throw waitError; });
+    });
   }).then(function(receipt) {
-    if (!receipt || receipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
+    if (!receipt || receipt.status !== 'success') {
+      var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
+      reverted.onchainRevert = true;
+      throw reverted;
+    }
     cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(function(err) {
+    if (shouldKeepSubmittedTransactionPending(submittedHash, err)) {
+      cbs.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'submitted', hash: submittedHash, chainId: opts.chainId, trackingError: true });
+      return;
+    }
     var msg = err.shortMessage || err.message || 'Unknown error';
     var full = ((err.shortMessage || '') + ' ' + (err.message || '') + ' ' + (err.details || '') + ' ' + (err.cause && (err.cause.message || err.cause.shortMessage) || '')).toLowerCase();
     var chainName = CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : ('chain ' + opts.chainId);

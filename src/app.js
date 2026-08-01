@@ -2,19 +2,21 @@
 // Entry point: tabs, wallet, directory rendering
 // Chain selection is per-function-form, not global.
 
+import { erc20Abi, formatUnits } from 'viem';
 import { contracts, meta, natspec, categories, chains, commonActions, getFunctions, getAddress, getFunctionSource, getGithubUrl } from './abi-registry.js';
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
-import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
+import { buildEmbedUrl, getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
-import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf } from './discover.js';
+import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet } from './discover.js';
 import { getViewAs, setViewAs, clearViewAs, onViewAsChange } from './view-as.js';
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links.js';
 import { reverseEns } from './create-flow.js';
 import { renderAccountView } from './account-view.js';
+import { CHAINS, getChainTokens } from './chain.js';
 
 // Component renderers for pretty mode
 import { renderPayComponent } from './pay-component.js';
@@ -239,6 +241,59 @@ function initTabs() {
       });
       menu.appendChild(item);
     }
+    function formatMenuBalance(value, decimals, symbol) {
+      var amount = Number(formatUnits(BigInt(value || 0n), Number(decimals)));
+      return amount.toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' ' + symbol;
+    }
+    function appendWalletBalances(menu, account) {
+      var panel = document.createElement('div');
+      panel.className = 'wallet-menu-balances';
+      panel.textContent = 'Loading balances…';
+      menu.appendChild(panel);
+
+      var activeProject = activeProjectForWallet();
+      var chainPromise = activeProject
+        ? Promise.resolve(activeProject.chainId)
+        : Promise.resolve(getWalletClient()).then(function (wallet) { return wallet && wallet.getChainId ? wallet.getChainId() : null; });
+      chainPromise.then(function (chainId) {
+        if (!panel.isConnected || !chainId || !CHAINS[chainId]) return;
+        var client = createPublicClientForChain(chainId);
+        var usdc = getChainTokens(chainId).find(function (token) { return String(token.symbol || '').toUpperCase() === 'USDC'; });
+        var reads = [
+          client.getBalance({ address: account }).then(function (value) {
+            return { label: CHAINS[chainId].nativeCurrency && CHAINS[chainId].nativeCurrency.symbol || 'ETH', value: formatMenuBalance(value, 18, CHAINS[chainId].nativeCurrency && CHAINS[chainId].nativeCurrency.symbol || 'ETH') };
+          }).catch(function () { return { label: 'Native', value: 'Unavailable' }; }),
+          usdc
+            ? client.readContract({ address: usdc.address, abi: erc20Abi, functionName: 'balanceOf', args: [account] }).then(function (value) {
+              return { label: 'USDC', value: formatMenuBalance(value, usdc.decimals, 'USDC') };
+            }).catch(function () { return { label: 'USDC', value: 'Unavailable' }; })
+            : Promise.resolve({ label: 'USDC', value: 'Unavailable' }),
+        ];
+        if (activeProject && activeProject.tokenAddress) {
+          reads.push(client.readContract({ address: activeProject.tokenAddress, abi: erc20Abi, functionName: 'balanceOf', args: [account] }).then(function (value) {
+            var symbol = activeProject.tokenSymbol || 'Project token';
+            return { label: symbol, value: formatMenuBalance(value, 18, symbol) };
+          }).catch(function () { return { label: activeProject.tokenSymbol || 'Project token', value: 'Unavailable' }; }));
+        } else if (activeProject) {
+          reads.push(Promise.resolve({ label: activeProject.tokenSymbol || 'Project token', value: 'Not deployed' }));
+        }
+        return Promise.all(reads).then(function (rows) {
+          if (!panel.isConnected) return;
+          panel.innerHTML = '';
+          var chain = document.createElement('div');
+          chain.className = 'wallet-menu-balance-chain';
+          chain.textContent = CHAINS[chainId].name || ('Chain ' + chainId);
+          panel.appendChild(chain);
+          rows.forEach(function (row) {
+            var line = document.createElement('div');
+            line.className = 'wallet-menu-balance-row';
+            var label = document.createElement('span'); label.textContent = row.label;
+            var value = document.createElement('strong'); value.textContent = row.value;
+            line.appendChild(label); line.appendChild(value); panel.appendChild(line);
+          });
+        });
+      }).catch(function () { if (panel.isConnected) panel.textContent = 'Balances unavailable'; });
+    }
     function openWalletMenu() {
       closeWalletMenu();
       var acc = getAccount();
@@ -246,6 +301,7 @@ function initTabs() {
       walletMenu = document.createElement('div');
       walletMenu.className = 'wallet-menu';
       positionWalletMenu();
+      if (viewed || acc) appendWalletBalances(walletMenu, viewed || acc);
       var acctItem = document.createElement('button'); acctItem.className = 'wallet-menu-item'; acctItem.textContent = 'Account';
       // While "View as" is active the Account item targets the impersonated address.
       acctItem.addEventListener('click', function () { closeWalletMenu(); location.hash = '#account/' + (getViewAs() || acc); });
