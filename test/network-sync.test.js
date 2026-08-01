@@ -26,7 +26,7 @@ describe('Discover/Data network synchronization', () => {
 
     const note = () => document.querySelector('.bendystraw-settings-note').textContent;
     const select = () => document.querySelector('.bendystraw-settings .discover-net-select');
-    expect(note()).toContain('(bendystraw.xyz)');
+    expect(note()).toContain('(bendystraw.up.railway.app)');
     expect(select().value).toBe('mainnet');
 
     // Expand a query row so its chain pills are on-screen before the network flips.

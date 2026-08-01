@@ -44,7 +44,7 @@ one cannot silently enter the app.
 | Generic ABI contract write | `form.js` reviewed write | Displays target/function/arguments/calldata/value, rechecks account and chain, simulates, then requires a successful receipt. |
 | Relayr forwarded bundle / payment | `relayrPostBundle` / `relayrPay` | Canonical forward request, signer/account identity, quote/payment state, persistence, polling, and partial-chain failure are unit-tested. |
 | Safe proposal / confirmation / execution | Safe App and Safe service boundaries | Proposal hashes remain distinct from execution; exact `execTransaction` tuples, signatures, nonce, confirmation, and receipt status are tested. |
-| Permit2 and direct approvals | reviewed approval helpers | Canonical Permit2 domain/spender, amount/deadline/nonce, account rechecks, simulations, and post-receipt allowances are tested. |
+| Permit2 and direct approvals | reviewed approval helpers | Canonical Permit2 domain/spender, amount/deadline/nonce, account rechecks, simulations, post-receipt allowance checks, valid-allowance reuse, and typed-signature fallback to an approval-block-anchored on-chain authorization are tested. |
 | Project management actions | `discover.js` reviewed action handlers | Individual ABI builders are tracked above; all submission paths must remain behind the shared review, Safe, or Relayr boundaries. |
 | Wallet connection / network request | EIP-1193 provider requests | Only account permission, account enumeration, and chain switching are allowed here; all write/sign APIs are inventoried separately. |
 

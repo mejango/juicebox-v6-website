@@ -1303,10 +1303,14 @@ export function executeTransaction(opts) {
       args: opts.args,
       value: opts.value || 0n,
     };
-    // Anchor the follow-on simulation to the approval block. Some load-balanced RPCs return the receipt from
-    // one backend while another backend’s `latest` state still predates the approval; the terminal then falls
-    // through to an old/expired Permit2 allowance even though the approval just confirmed.
-    if (approvalReceipt && approvalReceipt.blockNumber != null) simulationRequest.blockNumber = approvalReceipt.blockNumber;
+    // Anchor the follow-on simulation to the newest approval block. Some load-balanced RPCs return the receipt
+    // from one backend while another backend’s `latest` state still predates the approval; the target then sees
+    // an old/expired allowance even though the approval just confirmed. Callers which perform their own
+    // prerequisite write (for example Permit2.approve) pass that receipt block explicitly.
+    var approvalBlock = approvalReceipt && approvalReceipt.blockNumber != null ? approvalReceipt.blockNumber : null;
+    var callerBlock = opts.simulationBlockNumber == null ? null : BigInt(opts.simulationBlockNumber);
+    if (callerBlock != null && (approvalBlock == null || callerBlock > approvalBlock)) approvalBlock = callerBlock;
+    if (approvalBlock != null) simulationRequest.blockNumber = approvalBlock;
     return pub.simulateContract(simulationRequest).then(function(simulation) {
       cbs.onStatus('Awaiting wallet confirmation…', 'pending');
       return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId] }));

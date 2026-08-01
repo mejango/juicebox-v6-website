@@ -611,7 +611,7 @@ export function buildDataQueryPrompt(query) {
     lines.push('', 'Indexed-data semantics:');
     for (const note of q.notes) lines.push('- ' + note);
   }
-  lines.push('', 'Use the Bendystraw GraphQL API. Follow the selected network: https://bendystraw.xyz on mainnet and https://testnet.bendystraw.xyz on testnet. Read the endpoint/key handling from the reference implementation rather than hardcoding credentials.');
+  lines.push('', 'Use the Bendystraw GraphQL API. Follow the selected network: https://bendystraw.up.railway.app on mainnet and https://testnet.bendystraw.xyz on testnet. Read the endpoint/key handling from the reference implementation rather than hardcoding credentials.');
   if (q.resolveSuckerGroup) {
     lines.push('', 'This query is sucker-group scoped. First resolve projectId + its single Project chain to project(version: 6, projectId, chainId) { suckerGroupId }, then pass that suckerGroupId into the query below. A separate multi-select Result chains control filters chainIds; it must not change which chain scopes projectId.');
   }

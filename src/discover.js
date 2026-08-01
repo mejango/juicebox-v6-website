@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { createPublicClient, http, keccak256, stringToHex, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
-import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl } from './component-base.js';
+import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { downsampleTimeSeries } from './time-series.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
@@ -4030,6 +4030,16 @@ function quoteDirectSwap(chainId, pool, amountIn) {
   }).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; });
 }
 
+// A direct Universal Router swap must be compared using the direct V4 Quoter
+// result. `previewPayFor` describes the terminal/hook route; adding its
+// beneficiary and reserved counts does not reconstruct the output of a call
+// that bypasses `pay`, and materially underquoted Base USDC buys.
+export function directPaySwapQuoteIfBetter(payOutput, directQuote) {
+  if (directQuote == null) return null;
+  var quoted = toBigInt(directQuote);
+  return quoted > toBigInt(payOutput || 0n) ? quoted : null;
+}
+
 // Resolve the buyback pool + swap direction for SELLING the project token (the mirror of directSwapPoolFor). The
 // returned object plugs into quoteDirectSwap / encodeV4SwapInput / buildDirectSwapErc20Tx unchanged: `pairAddr` is
 // the swap INPUT (here the project token being sold) and `tokenOut` the output (the pool's pair, USDC/ETH). Used
@@ -4089,9 +4099,38 @@ function buildDirectSwapNativeTx(chainId, pool, amountIn, minOut, recipient) {
   };
 }
 
-// ERC-20 pair token (e.g. USDC for ART) → project token. Ensures a one-time USDC→Permit2 approval, signs a
-// gasless Permit2 single-allowance for the Universal Router, then sends PERMIT2_PERMIT + V4_SWAP in one tx
-// (the swap's SETTLE pulls the USDC via that allowance). Async: may send an approval tx + request a sig.
+// A Permit2 allowance is usable only while both its amount and expiration cover the swap. Keep a small lifetime
+// buffer so a quote/sign/send round trip cannot cross the expiration boundary after the check.
+export function permit2AllowanceCovers(allowance, amount, now, lifetimeBufferSeconds) {
+  try {
+    if (!allowance) return false;
+    var buffer = lifetimeBufferSeconds == null ? 60 : Number(lifetimeBufferSeconds);
+    return BigInt(allowance[0]) >= BigInt(amount)
+      && BigInt(allowance[1]) > BigInt(Number(now) + Math.max(0, buffer));
+  } catch (_) { return false; }
+}
+
+// Wallets which do not implement this Permit2 EIP-712 shape commonly surface JSON-RPC -32602/4200. A user
+// rejection is never converted into another wallet prompt; only capability/parameter failures may fall back to
+// an ordinary on-chain Permit2.approve transaction.
+export function permit2SignatureNeedsOnchainFallback(error) {
+  var messages = [], current = error;
+  for (var i = 0; current && i < 5; i++) {
+    if (current.code != null) messages.push(String(current.code));
+    if (current.shortMessage) messages.push(String(current.shortMessage));
+    if (current.message) messages.push(String(current.message));
+    if (current.details) messages.push(String(current.details));
+    current = current.cause;
+  }
+  var text = messages.join(' ').toLowerCase();
+  if (/user rejected|rejected the request|denied|4001/.test(text)) return false;
+  return /(^|\s)-32602(\s|$)|(^|\s)-32601(\s|$)|(^|\s)4200(\s|$)|invalid parameters|method .*not supported|unsupported method|typed data.*not supported/.test(text);
+}
+
+// ERC-20 pair token (e.g. USDC for ART) → project token. Ensures a one-time USDC→Permit2 approval, then reuses
+// a live Permit2→Universal Router allowance or signs a gasless single allowance. Wallets which cannot sign that
+// EIP-712 payload fall back to on-chain Permit2.approve. The swap's SETTLE pulls USDC through whichever live
+// allowance was established.
 async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   amountIn = BigInt(amountIn); minOut = BigInt(minOut);
@@ -4113,20 +4152,64 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
     await waitForErc20Approval(client, ah, token, recipient, PERMIT2_ADDRESS, amountIn);
   }
-  // 2. Sign an expiring Permit2 single-allowance authorizing the Universal Router to pull `amountIn`.
+  // 2. Reuse an existing live Permit2 → Universal Router allowance. This is the contract-wallet path and also
+  // avoids asking an EOA for a redundant typed-data signature after another client already authorized the route.
   var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [recipient, token, ur] });
-  var nonce = Number(p2[2]);
   var now = await latestChainTimestamp(client);
+  function v4OnlyTx(simulationBlockNumber) {
+    return {
+      chainId: chainId, address: ur, abi: urExecuteAbi, functionName: 'execute',
+      args: ['0x' + pad1(UR_CMD.V4_SWAP), [encodeV4SwapInput(pool, amountIn, minOut, recipient)], BigInt(now + 1800)],
+      value: 0n,
+      simulationBlockNumber: simulationBlockNumber,
+    };
+  }
+  if (permit2AllowanceCovers(p2, amountIn, now, 60)) return v4OnlyTx();
+
+  // Contract wallets cannot reliably produce a short-lived Permit2 EIP-712 signature. EOAs try the gasless
+  // signature first; wallets which explicitly reject the typed-data parameter shape fall back to the same
+  // on-chain Permit2.approve route used by revnet.money.
+  var ownerCode = await client.getBytecode({ address: recipient }).catch(function () { return null; });
+  var mustApproveOnchain = isSafeConnected() || !!(ownerCode && ownerCode !== '0x');
+  var nonce = Number(p2[2]);
   var expiration = now + 1800, sigDeadline = BigInt(now + 1800);
+  var signature = null;
+  if (!mustApproveOnchain) {
+    if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
+    if (onStatus) onStatus('Sign the swap authorization…', 'pending');
+    try {
+      signature = await wallet.signTypedData({
+        account: recipient,
+        domain: { name: 'Permit2', chainId: chainId, verifyingContract: PERMIT2_ADDRESS },
+        types: LP_PERMIT2_TYPES, primaryType: 'PermitSingle',
+        message: { details: { token: token, amount: amountIn, expiration: expiration, nonce: nonce }, spender: ur, sigDeadline: sigDeadline },
+      });
+    } catch (error) {
+      if (!permit2SignatureNeedsOnchainFallback(error)) throw error;
+      mustApproveOnchain = true;
+    }
+  }
   if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
-  if (onStatus) onStatus('Sign the swap authorization…', 'pending');
-  var signature = await wallet.signTypedData({
-    account: recipient,
-    domain: { name: 'Permit2', chainId: chainId, verifyingContract: PERMIT2_ADDRESS },
-    types: LP_PERMIT2_TYPES, primaryType: 'PermitSingle',
-    message: { details: { token: token, amount: amountIn, expiration: expiration, nonce: nonce }, spender: ur, sigDeadline: sigDeadline },
-  });
-  if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
+
+  if (mustApproveOnchain) {
+    if (onStatus) onStatus('Approving the swap router on Permit2…', 'pending');
+    var onchainExpiration = BigInt(now + 30 * 24 * 3600);
+    var approval = await client.simulateContract({
+      account: recipient, address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve',
+      args: [token, ur, amountIn, onchainExpiration],
+    });
+    if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
+    var approvalHash = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
+    var approvalReceipt = await client.waitForTransactionReceipt({ hash: approvalHash });
+    if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error('Swap-router authorization reverted onchain. Nothing else was sent.');
+    var approved = await client.readContract({
+      address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [recipient, token, ur],
+      blockNumber: approvalReceipt.blockNumber,
+    });
+    if (!permit2AllowanceCovers(approved, amountIn, now, 60)) throw new Error('Swap-router authorization confirmed but did not grant the reviewed amount. Nothing else was sent.');
+    return v4OnlyTx(approvalReceipt.blockNumber);
+  }
+
   // 3. PERMIT2_PERMIT input = (PermitSingle, signature); PermitSingle = (PermitDetails, spender, sigDeadline).
   var permitInput = encodeAbiParameters(
     [{ type: 'tuple', components: [
@@ -7579,8 +7662,9 @@ function renderPayCard(project, cart) {
 
   // Decide whether a direct AMM swap beats paying (which skims the reserved % even on the swap route).
   // Only for plain native-token buys (no NFTs, not add-to-balance) where a buyback pool exists. When
-  // previewPay already routed AMM, the full output = received + reserved (pay would split it); otherwise
-  // the V4 Quoter gives the true hook-routed output (null at 0 liquidity → stays on pay, no change).
+  // The direct V4 Quoter is always authoritative. A terminal preview's
+  // received+reserved figures describe `pay` and cannot stand in for the
+  // direct Universal Router output.
   function maybeOfferDirectSwap(gen, amt, p) {
     if (state.mode === 'addbalance' || selectedTierIds().length) return;
     // Input must be a directly-accepted token (a swap-via-router currency isn't the pool's pair).
@@ -7594,10 +7678,9 @@ function renderPayCard(project, cart) {
       if (gen !== previewGen || !pool || pool.pairAddr !== inputCur) return;
       function decide(directOut) {
         if (gen !== previewGen) return;
-        if (directOut != null && directOut > payOut) { state.directSwap = { pool: pool, out: directOut }; renderFeedback(); }
+        var winner = directPaySwapQuoteIfBetter(payOut, directOut);
+        if (winner != null) { state.directSwap = { pool: pool, out: winner }; renderFeedback(); }
       }
-      var ammFull = (p.routing === 'amm' && p.reserved != null) ? (p.received + p.reserved) : null;
-      if (ammFull != null && ammFull > payOut) { decide(ammFull); return; }
       quoteDirectSwap(state.chainId, pool, amt).then(decide);
     }).catch(function () {});
   }

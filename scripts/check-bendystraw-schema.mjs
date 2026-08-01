@@ -149,7 +149,7 @@ async function liveSchema(endpoint) {
   return buildClientSchema(envelope.data)
 }
 
-for (const endpoint of ['https://bendystraw.xyz/graphql', 'https://testnet.bendystraw.xyz/graphql']) {
+for (const endpoint of ['https://bendystraw.up.railway.app/graphql', 'https://testnet.bendystraw.xyz/graphql']) {
   const schema = await liveSchema(endpoint)
   const errors = parsedDocuments.flatMap(({ parsed, location }) =>
     validate(schema, parsed).map(error => `${location}: ${error.message}`),
