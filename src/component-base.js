@@ -1330,13 +1330,12 @@ export function executeTransaction(opts) {
     cbs.onStatus('Confirming onchain | ' + truncAddr(hash), 'pending', { phase: 'submitted', hash: hash, chainId: opts.chainId });
     var pub = createPublicClientForChain(opts.chainId);
     return pub.waitForTransactionReceipt({ hash: hash }).catch(function (waitError) {
-      // Some load-balanced RPCs reject the receipt watch with -32602 even
-      // after the wallet successfully broadcast the transaction. Try a
-      // direct receipt lookup once; if that backend also cannot track it, keep
-      // the honest submitted state and explorer link instead of reporting the
-      // already-broadcast transaction as failed.
+      // A load-balanced RPC can reject the receipt watch even after broadcast.
+      // Poll direct receipt lookups across subsequent backends before falling
+      // back to the honest unresolved state; a single immediate retry left
+      // successful payments stuck on "processing" indefinitely.
       if (typeof pub.getTransactionReceipt !== 'function') throw waitError;
-      return pub.getTransactionReceipt({ hash: hash }).catch(function () { throw waitError; });
+      return pollTransactionReceipt(pub, hash, 120, 2000).catch(function () { throw waitError; });
     });
   }).then(function(receipt) {
     if (!receipt || receipt.status !== 'success') {
@@ -1368,8 +1367,28 @@ export function executeTransaction(opts) {
   }
 }
 
+function pollTransactionReceipt(client, hash, attempts, intervalMs) {
+  return new Promise(function (resolve, reject) {
+    var remaining = Math.max(1, Number(attempts) || 1);
+    function check() {
+      client.getTransactionReceipt({ hash: hash }).then(resolve).catch(function (error) {
+        remaining -= 1;
+        if (remaining <= 0) { reject(error); return; }
+        setTimeout(check, intervalMs);
+      });
+    }
+    check();
+  });
+}
+
 export async function waitForErc20Approval(client, hash, tokenAddr, owner, spender, amount) {
-  var receipt = await client.waitForTransactionReceipt({ hash: hash });
+  var receipt;
+  try {
+    receipt = await client.waitForTransactionReceipt({ hash: hash });
+  } catch (waitError) {
+    if (typeof client.getTransactionReceipt !== 'function') throw waitError;
+    receipt = await pollTransactionReceipt(client, hash, 120, 2000).catch(function () { throw waitError; });
+  }
   if (!receipt || receipt.status !== 'success') throw new Error('Token approval reverted onchain. Nothing else was sent.');
   var allowance = await client.readContract({
     address: tokenAddr,

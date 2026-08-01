@@ -573,7 +573,9 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     var approval = await client.simulateContract({ account: owner, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, maxU] });
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
     var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId] }));
+    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, owner, PERMIT2_ADDRESS, amount);
+    if (onStatus) onStatus('Token access approved. Next: authorize the payment.', 'pending');
   }
   // 2. Read the current Permit2 allowance to get the next nonce for (owner, token, spender=router).
   var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [owner, token, spender] });
@@ -590,6 +592,7 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     primaryType: 'PermitSingle',
     message: { details: { token: token, amount: amount, expiration: expiration, nonce: nonce }, spender: spender, sigDeadline: sigDeadline },
   });
+  if (onStatus) onStatus('Payment authorization signed. Next: execute the payment.', 'pending');
   if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
   // 4. Encode JBSingleAllowance as ONE dynamic tuple (the router does abi.decode(data,(JBSingleAllowance)),
   //    which expects a leading offset word — flat params would empty-revert). Order: sigDeadline, amount,
@@ -4110,6 +4113,20 @@ export function permit2AllowanceCovers(allowance, amount, now, lifetimeBufferSec
   } catch (_) { return false; }
 }
 
+function pollDirectSwapReceipt(client, hash) {
+  return new Promise(function (resolve, reject) {
+    var attempts = 120;
+    function check() {
+      client.getTransactionReceipt({ hash: hash }).then(resolve).catch(function (error) {
+        attempts -= 1;
+        if (attempts <= 0) { reject(error); return; }
+        setTimeout(check, 2000);
+      });
+    }
+    check();
+  });
+}
+
 // Wallets which do not implement this Permit2 EIP-712 shape commonly surface JSON-RPC -32602/4200. A user
 // rejection is never converted into another wallet prompt; only capability/parameter failures may fall back to
 // an ordinary on-chain Permit2.approve transaction.
@@ -4150,7 +4167,9 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     var approval = await client.simulateContract({ account: recipient, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, (1n << 256n) - 1n] });
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
+    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, recipient, PERMIT2_ADDRESS, amountIn);
+    if (onStatus) onStatus('Token access approved. Next: authorize the swap.', 'pending');
   }
   // 2. Reuse an existing live Permit2 → Universal Router allowance. This is the contract-wallet path and also
   // avoids asking an EOA for a redundant typed-data signature after another client already authorized the route.
@@ -4184,6 +4203,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
         types: LP_PERMIT2_TYPES, primaryType: 'PermitSingle',
         message: { details: { token: token, amount: amountIn, expiration: expiration, nonce: nonce }, spender: ur, sigDeadline: sigDeadline },
       });
+      if (onStatus) onStatus('Swap authorization signed. Next: execute the swap.', 'pending');
     } catch (error) {
       if (!permit2SignatureNeedsOnchainFallback(error)) throw error;
       mustApproveOnchain = true;
@@ -4200,13 +4220,20 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     });
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var approvalHash = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
-    var approvalReceipt = await client.waitForTransactionReceipt({ hash: approvalHash });
+    if (onStatus) onStatus('Swap-router authorization submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: approvalHash, chainId: chainId });
+    var approvalReceipt;
+    try {
+      approvalReceipt = await client.waitForTransactionReceipt({ hash: approvalHash });
+    } catch (waitError) {
+      approvalReceipt = await pollDirectSwapReceipt(client, approvalHash).catch(function () { throw waitError; });
+    }
     if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error('Swap-router authorization reverted onchain. Nothing else was sent.');
     var approved = await client.readContract({
       address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [recipient, token, ur],
       blockNumber: approvalReceipt.blockNumber,
     });
     if (!permit2AllowanceCovers(approved, amountIn, now, 60)) throw new Error('Swap-router authorization confirmed but did not grant the reviewed amount. Nothing else was sent.');
+    if (onStatus) onStatus('Swap router authorized. Next: execute the swap.', 'pending');
     return v4OnlyTx(approvalReceipt.blockNumber);
   }
 
@@ -6083,7 +6110,9 @@ export function activeProjectForWallet() {
   var project = _activeDetail.project;
   return {
     chainId: Number(project.chainId),
-    tokenAddress: project.tokenAddress || null,
+    chains: projectChains(project).map(function (chain) {
+      return { chainId: Number(chain.id), projectId: Number(chain.projectId) };
+    }),
     tokenSymbol: project.tokenSymbol || null,
   };
 }
@@ -7573,14 +7602,30 @@ function renderPayCard(project, cart) {
       var dVal = el('div', 'paybox-yg-val');
       dVal.textContent = formatTokenCount(quotedOutputFloor(ds.out, 10000 - (state.slippageBps || 0))) + ' ' + sym;
       dRow.appendChild(dVal);
-      var dTag = el('span', 'paybox-route-tag paybox-route-direct'); dTag.textContent = 'SWAP';
-      dTag.title = 'Bought straight from the Uniswap pool, bypassing pay — so the reserved % / splits take nothing';
+      var dTag = el('button', 'paybox-route-tag paybox-route-direct'); dTag.type = 'button'; dTag.textContent = 'Swap';
+      dTag.title = 'Compare the selected swap with project issuance';
+      dTag.setAttribute('aria-expanded', state.routeComparisonOpen ? 'true' : 'false');
+      dTag.addEventListener('click', function () {
+        state.routeComparisonOpen = !state.routeComparisonOpen;
+        renderFeedback();
+      });
       dRow.appendChild(dTag);
       feedback.appendChild(dRow);
-      var dNote = el('div', 'paybox-splits');
-      var extra = ds.out > p.received ? ' (+' + formatTokenCount(ds.out - p.received) + ' vs paying)' : '';
-      dNote.textContent = 'Swapped from the market — splits take 0 ' + sym + extra + '.';
-      feedback.appendChild(dNote);
+      if (state.routeComparisonOpen) {
+        var comparison = el('div', 'paybox-route-comparison');
+        var swapValue = el('div', 'paybox-route-comparison-item');
+        var swapLabel = el('span'); swapLabel.textContent = 'Swap'; swapValue.appendChild(swapLabel);
+        var swapCount = el('strong'); swapCount.textContent = formatTokenCount(quotedOutputFloor(ds.out, 10000 - (state.slippageBps || 0))) + ' ' + sym; swapValue.appendChild(swapCount);
+        comparison.appendChild(swapValue);
+        var issuanceValue = el('div', 'paybox-route-comparison-item');
+        var issuanceLabel = el('span'); issuanceLabel.textContent = 'Issuance'; issuanceValue.appendChild(issuanceLabel);
+        var issuanceCount = el('strong'); issuanceCount.textContent = formatTokenCount(p.received) + ' ' + sym; issuanceValue.appendChild(issuanceCount);
+        comparison.appendChild(issuanceValue);
+        var comparisonNote = el('div', 'paybox-route-comparison-note');
+        comparisonNote.textContent = 'The better guaranteed return is selected automatically.';
+        comparison.appendChild(comparisonNote);
+        feedback.appendChild(comparison);
+      }
       return;
     }
 
@@ -7941,14 +7986,23 @@ function renderPayCard(project, cart) {
           beneficiary: beneficiary,
           note: 'Swaps the buyback pool directly via the Universal Router; the hook fills at the best of AMM vs issuance.',
         },
-      }, function send() {
-        if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) { status.className = 'paybox-status error'; status.textContent = 'Connected account changed. Review the payment again.'; return; }
-        if (isNative) { sendPay(directReviewTx, { addBalance: false }); return; }
+      }, function send(confirmCtx) {
+        if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) {
+          var accountError = 'Connected account changed. Review the payment again.';
+          status.className = 'paybox-status error'; status.textContent = accountError; confirmCtx.fail(accountError); return;
+        }
+        if (isNative) { sendPay(directReviewTx, { addBalance: false, confirmCtx: confirmCtx }); return; }
         // ERC-20 (USDC) input → Permit2 approval/signature, then PERMIT2_PERMIT + V4_SWAP in one tx.
-        var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
+        var statusCb = function (m, kind, meta) {
+          status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
+          confirmCtx.showStatus(m, kind, meta);
+        };
         buildDirectSwapErc20Tx(reviewedChainId, ds.pool, reviewedToken.address, amt, dsMinOut, beneficiary, statusCb)
-          .then(function (tx) { sendPay(tx, { addBalance: false }); })
-          .catch(function (e) { status.className = 'paybox-status error'; status.textContent = errMessage(e, 'Could not authorize the swap.'); });
+          .then(function (tx) { sendPay(tx, { addBalance: false, confirmCtx: confirmCtx }); })
+          .catch(function (e) {
+            var message = errMessage(e, 'Could not authorize the swap.');
+            status.className = 'paybox-status error'; status.textContent = message; confirmCtx.fail(message);
+          });
       });
       return;
     }
@@ -8024,21 +8078,30 @@ function renderPayCard(project, cart) {
           ? { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: terminal }
           : { token: reviewedToken.address, spender: terminal, amount: amt.toString() }),
       args: confirmArgs,
-    }, function send() {
-      if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) { status.className = 'paybox-status error'; status.textContent = 'Connected account changed. Review the payment again.'; return; }
+    }, function send(confirmCtx) {
+      if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) {
+        var accountError = 'Connected account changed. Review the payment again.';
+        status.className = 'paybox-status error'; status.textContent = accountError; confirmCtx.fail(accountError); return;
+      }
       // Native ETH (even via the router) is paid with msg.value — no Permit2. Only ERC20 swap currencies
       // authorize through Permit2; reading allowance on the native pseudo-address returns "0x".
-      if (!viaRouter || isNative) { sendPay(txParams, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0 }); return; }
+      if (!viaRouter || isNative) { sendPay(txParams, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, confirmCtx: confirmCtx }); return; }
       // Swap-via-router: authorize with a Permit2 signature (replaces the scary router-approve tx), then send.
-      var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
+      var statusCb = function (m, kind, meta) {
+        status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
+        confirmCtx.showStatus(m, kind, meta);
+      };
       buildRouterPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb)
         .then(function (meta) {
           var p = Object.assign({}, txParams);
           p.args = args.slice();
           p.args[metaIdx] = meta;
-          sendPay(p, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0 });
+          sendPay(p, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, confirmCtx: confirmCtx });
         })
-        .catch(function (e) { status.className = 'paybox-status error'; status.textContent = errMessage(e, 'Could not authorize the payment.'); });
+        .catch(function (e) {
+          var message = errMessage(e, 'Could not authorize the payment.');
+          status.className = 'paybox-status error'; status.textContent = message; confirmCtx.fail(message);
+        });
     }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : null);
     } // proceed()
   }
@@ -8067,6 +8130,7 @@ function renderPayCard(project, cart) {
 
   function sendPay(txParams, opts) {
     opts = opts || {};
+    var confirmCtx = opts.confirmCtx || null;
     var add = !!opts.addBalance;
     var processing = add ? 'Adding to balance' : 'Payment processing';
     var confirmed = add ? 'Added to balance' : 'Payment confirmed';
@@ -8076,14 +8140,24 @@ function renderPayCard(project, cart) {
         var cls = 'paybox-status' + (kind === 'pending' ? ' pending' : '');
         if (meta && meta.phase === 'submitted') setPayStatus(cls, processing, meta);
         else { status.className = cls; status.textContent = m; }
+        if (confirmCtx) confirmCtx.showStatus(meta && meta.phase === 'submitted' ? processing : m, kind, meta);
       },
       onSuccess: function (m, meta) {
+        if (meta && meta.phase === 'safe-proposed') {
+          setPayStatus('paybox-status pending', m, meta);
+          if (confirmCtx) confirmCtx.pending(m, meta);
+          return;
+        }
         setPayStatus('paybox-status success', confirmed, meta);
+        if (confirmCtx) confirmCtx.complete(confirmed, meta);
         if (opts.clearCartOnSuccess) clearPurchasedNfts();
         if (opts.clearCartOnSuccess) refreshNftCredits();
         status.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true }));
       },
-      onError: function (m) { status.className = 'paybox-status error'; status.textContent = m; },
+      onError: function (m, meta) {
+        status.className = 'paybox-status error'; status.textContent = m;
+        if (confirmCtx) confirmCtx.fail(m, meta);
+      },
     }));
   }
 
@@ -20642,6 +20716,23 @@ export function openModal(titleText, contentNode, opts) {
 function openTxConfirm(payload, onConfirm, opts) {
   opts = opts || {};
   var content = el('div', 'pay-confirm');
+  var sequenceItems = [];
+  if (opts.sequenceSteps && opts.sequenceSteps.length) {
+    var sequence = el('div', 'pay-confirm-sequence');
+    var sequenceIntro = el('div', 'pay-confirm-sequence-intro');
+    sequenceIntro.textContent = (opts.sequenceSteps.length === 1 ? 'Your wallet will ask for one action.' : 'Your wallet may ask for up to ' + opts.sequenceSteps.length + ' actions, depending on existing approvals.') + ' This dialog stays open and advances through each one.';
+    sequence.appendChild(sequenceIntro);
+    var sequenceList = el('ol', 'pay-confirm-sequence-list');
+    opts.sequenceSteps.forEach(function (step, index) {
+      var item = el('li', 'pay-confirm-sequence-step');
+      var number = el('span', 'pay-confirm-sequence-number'); number.textContent = String(index + 1); item.appendChild(number);
+      var label = el('span'); label.textContent = step; item.appendChild(label);
+      sequenceItems.push(item);
+      sequenceList.appendChild(item);
+    });
+    sequence.appendChild(sequenceList);
+    content.appendChild(sequence);
+  }
   renderConfirmBody(content, payload, opts); // shared body: decoded summary + raw-in-details + audit link
   var status = el('div', 'modal-status tx-confirm-status');
   status.style.display = 'none';
@@ -20659,17 +20750,57 @@ function openTxConfirm(payload, onConfirm, opts) {
     canClose: function () { return !(confirm.disabled && cancel.disabled); },
   });
   cancel.addEventListener('click', modal.close);
-  function showStatus(message, kind) {
+  function setSequenceActive(index, allComplete) {
+    sequenceItems.forEach(function (item, itemIndex) {
+      var complete = !!allComplete || itemIndex < index;
+      item.classList.toggle('complete', complete);
+      item.classList.toggle('active', !allComplete && itemIndex === index);
+      var number = item.querySelector('.pay-confirm-sequence-number');
+      if (number) number.textContent = complete ? '✓' : String(itemIndex + 1);
+    });
+  }
+  function updateSequenceFromStatus(message) {
+    if (!sequenceItems.length || !message) return;
+    var text = String(message).toLowerCase();
+    var finalIndex = sequenceItems.length - 1;
+    var authorizationIndex = (opts.sequenceSteps || []).findIndex(function (step) {
+      return /authoriz|router|permit2/i.test(step);
+    });
+    if (/approv(ing|e) token|token spend|token access/.test(text)) setSequenceActive(0, false);
+    else if (/execut|simulat|wallet confirmation|confirming onchain|payment processing|adding to balance|transaction submitted|checking wallet network|switching to/.test(text)) setSequenceActive(finalIndex, false);
+    else if (authorizationIndex >= 0 && /authoriz|router|permit2/.test(text)) setSequenceActive(authorizationIndex, false);
+  }
+  setSequenceActive(0, false);
+  function showStatus(message, kind, meta) {
+    updateSequenceFromStatus(message);
     status.style.display = message ? '' : 'none';
     status.className = 'modal-status tx-confirm-status' + (kind ? (' ' + kind) : '');
     status.textContent = message || '';
+    if (message && meta && meta.hash) {
+      status.appendChild(document.createTextNode(' | '));
+      status.appendChild(renderExplorerTxLink(meta.chainId, meta.hash, truncAddr(meta.hash)));
+    }
+  }
+  function unlockWithResult(message, kind, meta) {
+    if (kind === 'success') setSequenceActive(sequenceItems.length, true);
+    showStatus(message, kind, meta);
+    confirm.style.display = 'none';
+    cancel.disabled = false;
+    cancel.textContent = kind === 'success' ? 'Done' : 'Close';
   }
   confirm.addEventListener('click', function () {
     if (opts.closeOnConfirm !== false) modal.close();
+    else {
+      confirm.disabled = true;
+      cancel.disabled = true;
+    }
     onConfirm({
       modal: modal,
       status: status,
       showStatus: showStatus,
+      complete: function (message, meta) { unlockWithResult(message || 'Payment confirmed.', 'success', meta); },
+      pending: function (message, meta) { unlockWithResult(message || 'Waiting for confirmation.', 'pending', meta); },
+      fail: function (message, meta) { unlockWithResult(message || 'The payment could not be completed.', 'error', meta); },
       confirm: confirm,
       cancel: cancel,
     });
@@ -20678,9 +20809,17 @@ function openTxConfirm(payload, onConfirm, opts) {
 
 function openPayConfirm(payload, onConfirm, opts) {
   opts = opts || {};
+  var steps = [];
+  if (payload.erc20Approval) {
+    steps.push('Approve token access if needed');
+    if (payload.erc20Approval.authorize) steps.push('Sign or confirm the swap authorization');
+  }
+  steps.push(payload['function'] === 'execute' ? 'Execute the swap' : (payload['function'] === 'addToBalanceOf' ? 'Add to the project balance' : 'Execute the payment'));
   openTxConfirm(payload, onConfirm, {
     title: opts.title || 'Confirm payment',
     confirmText: opts.confirmText || 'Confirm & Pay',
+    closeOnConfirm: false,
+    sequenceSteps: steps,
   });
 }
 

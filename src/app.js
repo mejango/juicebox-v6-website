@@ -245,6 +245,11 @@ function initTabs() {
       var amount = Number(formatUnits(BigInt(value || 0n), Number(decimals)));
       return amount.toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' ' + symbol;
     }
+    var totalBalanceOfAbi = [{
+      type: 'function', name: 'totalBalanceOf', stateMutability: 'view',
+      inputs: [{ name: 'holder', type: 'address' }, { name: 'projectId', type: 'uint256' }],
+      outputs: [{ name: '', type: 'uint256' }],
+    }];
     function appendWalletBalances(menu, account) {
       var panel = document.createElement('div');
       panel.className = 'wallet-menu-balances';
@@ -253,37 +258,72 @@ function initTabs() {
 
       var activeProject = activeProjectForWallet();
       var chainPromise = activeProject
-        ? Promise.resolve(activeProject.chainId)
-        : Promise.resolve(getWalletClient()).then(function (wallet) { return wallet && wallet.getChainId ? wallet.getChainId() : null; });
-      chainPromise.then(function (chainId) {
-        if (!panel.isConnected || !chainId || !CHAINS[chainId]) return;
-        var client = createPublicClientForChain(chainId);
-        var usdc = getChainTokens(chainId).find(function (token) { return String(token.symbol || '').toUpperCase() === 'USDC'; });
-        var reads = [
-          client.getBalance({ address: account }).then(function (value) {
-            return { label: CHAINS[chainId].nativeCurrency && CHAINS[chainId].nativeCurrency.symbol || 'ETH', value: formatMenuBalance(value, 18, CHAINS[chainId].nativeCurrency && CHAINS[chainId].nativeCurrency.symbol || 'ETH') };
-          }).catch(function () { return { label: 'Native', value: 'Unavailable' }; }),
-          usdc
-            ? client.readContract({ address: usdc.address, abi: erc20Abi, functionName: 'balanceOf', args: [account] }).then(function (value) {
-              return { label: 'USDC', value: formatMenuBalance(value, usdc.decimals, 'USDC') };
-            }).catch(function () { return { label: 'USDC', value: 'Unavailable' }; })
-            : Promise.resolve({ label: 'USDC', value: 'Unavailable' }),
-        ];
-        if (activeProject && activeProject.tokenAddress) {
-          reads.push(client.readContract({ address: activeProject.tokenAddress, abi: erc20Abi, functionName: 'balanceOf', args: [account] }).then(function (value) {
-            var symbol = activeProject.tokenSymbol || 'Project token';
-            return { label: symbol, value: formatMenuBalance(value, 18, symbol) };
-          }).catch(function () { return { label: activeProject.tokenSymbol || 'Project token', value: 'Unavailable' }; }));
-        } else if (activeProject) {
-          reads.push(Promise.resolve({ label: activeProject.tokenSymbol || 'Project token', value: 'Not deployed' }));
-        }
-        return Promise.all(reads).then(function (rows) {
+        ? Promise.resolve(activeProject.chains)
+        : Promise.resolve(getWalletClient()).then(function (wallet) {
+          return wallet && wallet.getChainId ? wallet.getChainId().then(function (chainId) { return [{ chainId: chainId, projectId: null }]; }) : [];
+        });
+      chainPromise.then(function (projectChains) {
+        if (!panel.isConnected || !projectChains || !projectChains.length) return;
+        return Promise.all(projectChains.map(function (projectChain) {
+          var chainId = Number(projectChain.chainId);
+          if (!CHAINS[chainId]) throw new Error('Unsupported chain ' + chainId);
+          var client = createPublicClientForChain(chainId);
+          var nativeSymbol = CHAINS[chainId].nativeCurrency && CHAINS[chainId].nativeCurrency.symbol || 'ETH';
+          var usdc = getChainTokens(chainId).find(function (token) { return String(token.symbol || '').toUpperCase() === 'USDC'; });
+          var nativeRead = client.getBalance({ address: account })
+            .then(function (value) { return { ok: true, value: value, symbol: nativeSymbol }; })
+            .catch(function () { return { ok: false, value: 0n, symbol: nativeSymbol }; });
+          var usdcRead = usdc
+            ? client.readContract({ address: usdc.address, abi: erc20Abi, functionName: 'balanceOf', args: [account] })
+              .then(function (value) { return { ok: true, value: value, decimals: usdc.decimals }; })
+              .catch(function () { return { ok: false, value: 0n, decimals: usdc.decimals }; })
+            : Promise.resolve({ ok: false, value: 0n, decimals: 6 });
+          var projectRead = activeProject
+            ? client.readContract({
+              address: getAddress('JBTokens', chainId),
+              abi: totalBalanceOfAbi,
+              functionName: 'totalBalanceOf',
+              args: [account, BigInt(projectChain.projectId)],
+            }).then(function (value) { return { ok: true, value: value }; })
+              .catch(function () { return { ok: false, value: 0n }; })
+            : Promise.resolve(null);
+          return Promise.all([nativeRead, usdcRead, projectRead]);
+        })).then(function (chainRows) {
           if (!panel.isConnected) return;
           panel.innerHTML = '';
           var chain = document.createElement('div');
           chain.className = 'wallet-menu-balance-chain';
-          chain.textContent = CHAINS[chainId].name || ('Chain ' + chainId);
+          chain.textContent = activeProject
+            ? 'Across ' + projectChains.length + ' project chains'
+            : (CHAINS[projectChains[0].chainId].name || ('Chain ' + projectChains[0].chainId));
           panel.appendChild(chain);
+          var native = chainRows.map(function (row) { return row[0]; });
+          var usdcs = chainRows.map(function (row) { return row[1]; });
+          var projects = chainRows.map(function (row) { return row[2]; }).filter(Boolean);
+          var nativeSymbol = native[0] && native[0].symbol || 'ETH';
+          var rows = [
+            {
+              label: nativeSymbol,
+              value: native.every(function (row) { return row.ok; })
+                ? formatMenuBalance(native.reduce(function (sum, row) { return sum + row.value; }, 0n), 18, nativeSymbol)
+                : 'Unavailable',
+            },
+            {
+              label: 'USDC',
+              value: usdcs.every(function (row) { return row.ok; })
+                ? formatMenuBalance(usdcs.reduce(function (sum, row) { return sum + row.value; }, 0n), 6, 'USDC')
+                : 'Unavailable',
+            },
+          ];
+          if (activeProject) {
+            var projectSymbol = activeProject.tokenSymbol || 'Project token';
+            rows.push({
+              label: projectSymbol,
+              value: projects.length === projectChains.length && projects.every(function (row) { return row.ok; })
+                ? formatMenuBalance(projects.reduce(function (sum, row) { return sum + row.value; }, 0n), 18, projectSymbol)
+                : 'Unavailable',
+            });
+          }
           rows.forEach(function (row) {
             var line = document.createElement('div');
             line.className = 'wallet-menu-balance-row';
