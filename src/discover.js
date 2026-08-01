@@ -10051,6 +10051,7 @@ function makeMultiselect(config) {
 }
 
 function renderActivityCard(project, opts) {
+  var ACTIVITY_POLL_MS = 15000;
   var card = el('div', 'detail-card');
   // Header row: title on the left, filter controls right-aligned.
   var head = el('div', 'activity-head');
@@ -10157,7 +10158,20 @@ function renderActivityCard(project, opts) {
     poll();
   };
 
-  load(false);
+  // Bendystraw trails confirmed chain state by a few seconds. Keep polling the
+  // open project so an event appears as soon as it is indexed, without making
+  // the user reload. Self-scheduling avoids overlapping slow requests and
+  // stops naturally once this card leaves the document.
+  load(false).then(function schedulePoll() {
+    setTimeout(function () {
+      if (!body.isConnected) return;
+      if (document.visibilityState === 'hidden') {
+        schedulePoll();
+        return;
+      }
+      load(true).then(schedulePoll);
+    }, ACTIVITY_POLL_MS);
+  });
   return card;
 }
 

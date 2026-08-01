@@ -21,6 +21,7 @@ import { renderRelayrReceiptInto } from './relayr-ui.js';
 
 var VERSION = 6;
 var ACTIVITY_PAGE = 25;
+var ACTIVITY_POLL_MS = 15000;
 
 // Account-scoped activity: actions sent by the account plus beneficiary-only
 // receipts. Every root is offset-paged so recipient history is not capped at
@@ -517,6 +518,11 @@ function renderActivityCard(address, isOwn, live) {
   var loadedCount = 0;
   var totalCount = 0;
   var loadedAny = false;
+  var loadedIds = {};
+
+  function eventKey(ev) {
+    return ev.id || ((ev.txHash || '') + ':' + Number(ev.chainId) + ':' + Number(ev.projectId));
+  }
 
   function stubFor(ev) {
     return stubs[Number(ev.chainId) + ':' + Number(ev.projectId)]
@@ -530,8 +536,11 @@ function renderActivityCard(address, isOwn, live) {
     return fetchProjectStubs(refs).then(function (map) { Object.assign(stubs, map); });
   }
 
-  function appendRows(items) {
-    items.forEach(function (ev) {
+  function appendRows(items, prepend) {
+    var ordered = prepend ? items.slice().reverse() : items;
+    ordered.forEach(function (ev) {
+      var key = eventKey(ev);
+      if (loadedIds[key]) return;
       var stub = stubFor(ev);
       var row = activityRowFromEvent(ev, stub);
       if (!row) return;
@@ -541,7 +550,9 @@ function renderActivityCard(address, isOwn, live) {
         var main = rowEl.querySelector('.activity-main');
         if (main) main.appendChild(projectLinkNode('account-activity-proj', ev.chainId, ev.projectId, stub.name));
       }
-      body.appendChild(rowEl);
+      if (prepend) body.insertBefore(rowEl, body.firstChild);
+      else body.appendChild(rowEl);
+      loadedIds[key] = true;
       loadedAny = true;
     });
   }
@@ -550,7 +561,7 @@ function renderActivityCard(address, isOwn, live) {
     more.disabled = true;
     status.style.display = '';
     status.textContent = 'Loading activity…';
-    fetchAccountActivityWindow(address).then(function (page) {
+    return fetchAccountActivityWindow(address).then(function (page) {
       totalCount = page.totalCount;
       var items = page.items.slice(loadedCount, loadedCount + ACTIVITY_PAGE);
       return loadStubs(items).then(function () { return items; });
@@ -574,7 +585,33 @@ function renderActivityCard(address, isOwn, live) {
   }
 
   more.addEventListener('click', loadPage);
-  loadPage();
+
+  // New indexed rows are prepended without disturbing pages the viewer has
+  // already loaded. Stop polling as soon as this account card is unmounted.
+  function scheduleRefresh() {
+    setTimeout(function () {
+      if (!card.isConnected || !live()) return;
+      if (document.visibilityState === 'hidden') {
+        scheduleRefresh();
+        return;
+      }
+      fetchAccountActivityWindow(address).then(function (page) {
+        if (!card.isConnected || !live()) return;
+        totalCount = page.totalCount;
+        var fresh = page.items.slice(0, ACTIVITY_PAGE).filter(function (ev) {
+          return !loadedIds[eventKey(ev)];
+        });
+        return loadStubs(fresh).then(function () {
+          if (!card.isConnected || !live()) return;
+          appendRows(fresh, true);
+          loadedCount += fresh.length;
+          if (fresh.length) status.style.display = 'none';
+          more.style.display = loadedCount < totalCount ? '' : 'none';
+        });
+      }).catch(function () {}).then(scheduleRefresh);
+    }, ACTIVITY_POLL_MS);
+  }
+  loadPage().then(scheduleRefresh);
   return card;
 }
 

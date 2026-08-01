@@ -42,6 +42,7 @@ export async function bendystrawQuery(graphql, variables) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ query: graphql, variables: variables || {} }),
+        cache: 'no-store',
         signal: AbortSignal.timeout(BENDYSTRAW_TIMEOUT_MS),
       });
       if (!RETRYABLE_STATUSES[res.status] || attempt === RETRY_DELAYS_MS.length) break;
