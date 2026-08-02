@@ -146,6 +146,7 @@ const NO_CANONICAL_ARTIFACT = {
     'PROXY_FACTORY_ABI.createProxyWithNonce',
   ],
   'src/discover.js': [
+    'v3QuoterAbi.quoteExactInputSingle',
     'v4QuoterAbi.quoteExactInputSingle',
     'urExecuteAbi.execute',
     'extsloadAbi.extsload',

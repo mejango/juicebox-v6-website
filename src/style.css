@@ -5119,6 +5119,10 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 }
 .paybox-select:hover { color: var(--c-teal); }
 .paybox-select:focus { outline: none; }
+.paybox-select:focus-visible {
+  outline: none !important;
+  color: var(--c-teal);
+}
 .paybox-amount-row { display: flex; align-items: stretch; gap: 0; }
 /* One bordered field holding the amount + an inline currency dropdown right after it. */
 .paybox-field {
@@ -5141,6 +5145,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   font-size: 13px; color: var(--muted-2); text-decoration: none; padding: 0 14px 0 0;
 }
 .paybox-curr-wrap .paybox-select:hover { color: var(--text); }
+.paybox-curr-wrap .paybox-select:focus-visible { color: var(--text); }
 .paybox-btn {
   font-family: inherit; font-size: 13px; font-weight: bold; padding: 6px 18px; flex-shrink: 0;
   border: 2px solid var(--write); background: var(--c-green-light); color: var(--c-black); cursor: pointer;
@@ -5213,6 +5218,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 }
 .paybox-memo::placeholder { color: var(--muted); }
 .paybox-memo:focus { outline: none; border-color: var(--c-black-light); }
+.paybox-memo:focus-visible { outline: none !important; border-color: var(--c-teal); }
 .paybox-status { font-size: 11px; margin-top: 6px; color: var(--muted-2); word-break: break-word; }
 .paybox-status:empty { margin-top: 0; } /* keep the pay card's bottom padding equal to the top when idle */
 .paybox-status.success { color: var(--c-teal); }

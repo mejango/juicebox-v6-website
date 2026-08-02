@@ -2,7 +2,7 @@
 // Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
-import { createPublicClient, http, keccak256, stringToHex, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
+import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { downsampleTimeSeries } from './time-series.js';
@@ -3624,8 +3624,36 @@ var V4_QUOTER_BY_CHAIN = {
   421614: '0x7de51022d70a725b508085468052e25e22b5c4c9',
 };
 // v4-periphery Actions + Universal Router Commands (canonical byte values).
-var V4_ACTION = { SWAP_EXACT_IN_SINGLE: 0x06, SETTLE_ALL: 0x0c, TAKE: 0x0e };
-var UR_CMD = { PERMIT2_PERMIT: 0x0a, V4_SWAP: 0x10 };
+var V4_ACTION = { SWAP_EXACT_IN_SINGLE: 0x06, SETTLE: 0x0b, SETTLE_ALL: 0x0c, TAKE: 0x0e };
+var UR_CMD = { V3_SWAP_EXACT_IN: 0x00, PERMIT2_PERMIT: 0x0a, WRAP_ETH: 0x0b, UNWRAP_WETH: 0x0c, V4_SWAP: 0x10 };
+var NATIVE_SWAP_BY_CHAIN = {
+  1: {
+    wrappedNative: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    bridgeToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    v3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+  },
+  10: {
+    wrappedNative: '0x4200000000000000000000000000000000000006',
+    bridgeToken: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+    v3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+  },
+  8453: {
+    wrappedNative: '0x4200000000000000000000000000000000000006',
+    bridgeToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    v3Quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+  },
+  42161: {
+    wrappedNative: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+    bridgeToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    v3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+  },
+};
+export function nativeSwapConfigForChain(chainId) {
+  return NATIVE_SWAP_BY_CHAIN[Number(chainId)] || null;
+}
+var V3_FEES = [100, 500, 3000, 10000];
+var ADDRESS_THIS = '0x0000000000000000000000000000000000000002';
+var CONTRACT_BALANCE = 1n << 255n;
 var v4QuoterAbi = [{
   type: 'function', name: 'quoteExactInputSingle', stateMutability: 'nonpayable',
   inputs: [{ name: 'params', type: 'tuple', components: [
@@ -3636,6 +3664,17 @@ var v4QuoterAbi = [{
     { name: 'zeroForOne', type: 'bool' }, { name: 'exactAmount', type: 'uint128' }, { name: 'hookData', type: 'bytes' },
   ]}],
   outputs: [{ name: 'amountOut', type: 'uint256' }, { name: 'gasEstimate', type: 'uint256' }],
+}];
+var v3QuoterAbi = [{
+  type: 'function', name: 'quoteExactInputSingle', stateMutability: 'nonpayable',
+  inputs: [{ name: 'params', type: 'tuple', components: [
+    { name: 'tokenIn', type: 'address' }, { name: 'tokenOut', type: 'address' },
+    { name: 'amountIn', type: 'uint256' }, { name: 'fee', type: 'uint24' }, { name: 'sqrtPriceLimitX96', type: 'uint160' },
+  ]}],
+  outputs: [
+    { name: 'amountOut', type: 'uint256' }, { name: 'sqrtPriceX96After', type: 'uint160' },
+    { name: 'initializedTicksCrossed', type: 'uint32' }, { name: 'gasEstimate', type: 'uint256' },
+  ],
 }];
 var urExecuteAbi = [{
   type: 'function', name: 'execute', stateMutability: 'payable',
@@ -4033,14 +4072,69 @@ function quoteDirectSwap(chainId, pool, amountIn) {
   }).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; });
 }
 
+// Quote the chain's liquid WETH/USDC V3 pools and keep the best live fee tier.
+// This is the bridge leg used when the payment and buyback-pool pair currencies differ.
+function quoteV3ExactInput(chainId, tokenIn, tokenOut, amountIn) {
+  var config = nativeSwapConfigForChain(chainId);
+  if (!config || amountIn <= 0n) return Promise.resolve(null);
+  var client = clientFor(chainId);
+  return Promise.all(
+    V3_FEES.map(function (fee) {
+      return client
+        .call({
+          to: config.v3Quoter,
+          data: encodeFunctionData({
+            abi: v3QuoterAbi,
+            functionName: "quoteExactInputSingle",
+            args: [
+              {
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                amountIn: amountIn,
+                fee: fee,
+                sqrtPriceLimitX96: 0n,
+              },
+            ],
+          }),
+        })
+        .then(function (call) {
+          if (!call.data) return null;
+          var decoded = decodeFunctionResult({
+            abi: v3QuoterAbi,
+            functionName: "quoteExactInputSingle",
+            data: call.data,
+          });
+          var amountOut = toBigInt(decoded[0]);
+          return amountOut > 0n ? { fee: fee, amountOut: amountOut } : null;
+        })
+        .catch(function () {
+          return null;
+        });
+    }),
+  ).then(function (quotes) {
+    return quotes.reduce(function (best, quote) {
+      return !quote || (best && best.amountOut >= quote.amountOut)
+        ? best
+        : quote;
+    }, null);
+  });
+}
+
 // A direct Universal Router swap must be compared using the direct V4 Quoter
 // result. `previewPayFor` describes the terminal/hook route; adding its
 // beneficiary and reserved counts does not reconstruct the output of a call
 // that bypasses `pay`, and materially underquoted Base USDC buys.
-export function directPaySwapQuoteIfBetter(payOutput, directQuote) {
+export function directPaySwapQuoteIfBetter(
+  payOutput,
+  directQuote,
+  slippageBps,
+) {
   if (directQuote == null) return null;
   var quoted = toBigInt(directQuote);
-  return quoted > toBigInt(payOutput || 0n) ? quoted : null;
+  var bps = slippageBps == null ? 100 : Number(slippageBps);
+  if (!Number.isFinite(bps) || bps < 0 || bps >= 10000) return null;
+  var minimum = quotedOutputFloor(quoted, 10000 - bps);
+  return minimum > toBigInt(payOutput || 0n) ? quoted : null;
 }
 
 // Resolve the buyback pool + swap direction for SELLING the project token (the mirror of directSwapPoolFor). The
@@ -4093,8 +4187,127 @@ function encodeV4SwapInput(pool, amountIn, minOut, recipient) {
   return encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], [actions, [swapParams, settleParams, takeParams]]);
 }
 
+// Consume the router's entire bridge-token balance inside V4. SETTLE first
+// creates PoolManager credit; SWAP with OPEN_DELTA consumes exactly that
+// credit, so the preceding V3 hop does not need to know its output onchain.
+function encodeV4SwapFromRouterBalance(pool, minOut, recipient, bridgeToken) {
+  minOut = BigInt(minOut);
+  var max128 = (1n << 128n) - 1n;
+  if (minOut <= 0n || minOut > max128)
+    throw new Error("Swap minimum is outside Uniswap V4’s uint128 range.");
+  var poolKeyParam = [
+    pool.key.currency0,
+    pool.key.currency1,
+    pool.key.fee,
+    pool.key.tickSpacing,
+    pool.key.hooks,
+  ];
+  var settleParams = encodeAbiParameters(
+    [{ type: "address" }, { type: "uint256" }, { type: "bool" }],
+    [bridgeToken, CONTRACT_BALANCE, false],
+  );
+  var swapParams = encodeAbiParameters(
+    [
+      {
+        type: "tuple",
+        components: [
+          {
+            type: "tuple",
+            components: [
+              { type: "address" },
+              { type: "address" },
+              { type: "uint24" },
+              { type: "int24" },
+              { type: "address" },
+            ],
+          },
+          { type: "bool" },
+          { type: "uint128" },
+          { type: "uint128" },
+          { type: "bytes" },
+        ],
+      },
+    ],
+    [[poolKeyParam, pool.zeroForOne, 0n, minOut, "0x"]],
+  );
+  var takeParams = encodeAbiParameters(
+    [{ type: "address" }, { type: "address" }, { type: "uint256" }],
+    [pool.tokenOut, recipient, 0n],
+  );
+  var actions =
+    "0x" +
+    pad1(V4_ACTION.SETTLE) +
+    pad1(V4_ACTION.SWAP_EXACT_IN_SINGLE) +
+    pad1(V4_ACTION.TAKE);
+  return encodeAbiParameters(
+    [{ type: "bytes" }, { type: "bytes[]" }],
+    [actions, [settleParams, swapParams, takeParams]],
+  );
+}
+
 // Native pair token → project token: single V4_SWAP, input paid via msg.value.
-function buildDirectSwapNativeTx(chainId, pool, amountIn, minOut, recipient) {
+export function buildDirectSwapNativeTx(
+  chainId,
+  pool,
+  amountIn,
+  minOut,
+  recipient,
+  inputRoute,
+) {
+  if (inputRoute && inputRoute.kind === "native-v3-v4") {
+    var config = nativeSwapConfigForChain(chainId);
+    if (!config
+      || !sameAddr(inputRoute.wrappedNative, config.wrappedNative)
+      || !sameAddr(inputRoute.bridgeToken, config.bridgeToken)) {
+      throw new Error("This native bridge route is not supported on this chain.");
+    }
+    if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId])
+      throw new Error("No supported Uniswap Universal Router on this chain.");
+    var wrapInput = encodeAbiParameters(
+      [{ type: "address" }, { type: "uint256" }],
+      [ADDRESS_THIS, amountIn],
+    );
+    var v3Input = encodeAbiParameters(
+      [
+        { type: "address" },
+        { type: "uint256" },
+        { type: "uint256" },
+        { type: "bytes" },
+        { type: "bool" },
+      ],
+      [
+        ADDRESS_THIS,
+        amountIn,
+        0n,
+        encodePacked(
+          ["address", "uint24", "address"],
+          [inputRoute.wrappedNative, inputRoute.v3Fee, inputRoute.bridgeToken],
+        ),
+        false,
+      ],
+    );
+    var v4Input = encodeV4SwapFromRouterBalance(
+      pool,
+      minOut,
+      recipient,
+      inputRoute.bridgeToken,
+    );
+    return {
+      chainId: chainId,
+      address: UNIVERSAL_ROUTER_BY_CHAIN[chainId],
+      abi: urExecuteAbi,
+      functionName: "execute",
+      args: [
+        "0x" +
+          pad1(UR_CMD.WRAP_ETH) +
+          pad1(UR_CMD.V3_SWAP_EXACT_IN) +
+          pad1(UR_CMD.V4_SWAP),
+        [wrapInput, v3Input, v4Input],
+        BigInt(Math.floor(Date.now() / 1000) + 1800),
+      ],
+      value: amountIn,
+    };
+  }
   return {
     chainId: chainId, address: UNIVERSAL_ROUTER_BY_CHAIN[chainId], abi: urExecuteAbi, functionName: 'execute',
     args: ['0x' + pad1(UR_CMD.V4_SWAP), [encodeV4SwapInput(pool, amountIn, minOut, recipient)], BigInt(Math.floor(Date.now() / 1000) + 1800)],
@@ -4255,7 +4468,40 @@ async function prepareDirectSwapErc20Authorization(chainId, token, amountIn, rec
   return plan;
 }
 
-function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber) {
+export function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber, inputRoute) {
+  if (inputRoute && inputRoute.kind === 'erc20-v3-native-v4') {
+    var config = nativeSwapConfigForChain(chainId);
+    if (!config
+      || !sameAddr(inputRoute.inputToken, config.bridgeToken)
+      || !sameAddr(inputRoute.wrappedNative, config.wrappedNative)) {
+      throw new Error('This ERC-20 bridge route is not supported on this chain.');
+    }
+    if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId])
+      throw new Error('No supported Uniswap Universal Router on this chain.');
+    var v3Input = encodeAbiParameters(
+      [{ type: 'address' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'bytes' }, { type: 'bool' }],
+      [
+        ADDRESS_THIS, amountIn, 0n,
+        encodePacked(['address', 'uint24', 'address'], [inputRoute.inputToken, inputRoute.v3Fee, inputRoute.wrappedNative]),
+        true,
+      ]
+    );
+    var unwrapInput = encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [ADDRESS_THIS, 0n]);
+    var v4Input = encodeV4SwapFromRouterBalance(pool, minOut, recipient, ZERO_ADDRESS);
+    return {
+      chainId: chainId,
+      address: UNIVERSAL_ROUTER_BY_CHAIN[chainId],
+      abi: urExecuteAbi,
+      functionName: 'execute',
+      args: [
+        '0x' + pad1(UR_CMD.V3_SWAP_EXACT_IN) + pad1(UR_CMD.UNWRAP_WETH) + pad1(UR_CMD.V4_SWAP),
+        [v3Input, unwrapInput, v4Input],
+        BigInt(now + 1800),
+      ],
+      value: 0n,
+      simulationBlockNumber: simulationBlockNumber,
+    };
+  }
   return {
     chainId: chainId,
     address: UNIVERSAL_ROUTER_BY_CHAIN[chainId],
@@ -4275,7 +4521,7 @@ function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, recipien
 // a live Permit2→Universal Router allowance or signs a gasless single allowance. Wallets which cannot sign that
 // EIP-712 payload fall back to on-chain Permit2.approve. The swap's SETTLE pulls USDC through whichever live
 // allowance was established.
-async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus, preparedPlan) {
+async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus, preparedPlan, inputRoute) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   amountIn = BigInt(amountIn); minOut = BigInt(minOut);
   var max128 = (1n << 128n) - 1n;
@@ -4303,7 +4549,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   var now = plan.now;
   function v4OnlyTx(simulationBlockNumber) {
     return buildDirectSwapErc20ExecuteTx(
-      chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber,
+      chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber, inputRoute,
     );
   }
   if (plan.permit2Covered) return v4OnlyTx();
@@ -4367,10 +4613,13 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     ]}, { type: 'bytes' }],
     [[[token, amountIn, expiration, nonce], ur, sigDeadline], signature]
   );
-  var commands = '0x' + pad1(UR_CMD.PERMIT2_PERMIT) + pad1(UR_CMD.V4_SWAP);
+  var baseTx = v4OnlyTx();
+  var baseCommands = baseTx.args[0];
+  var baseInputs = baseTx.args[1];
+  var commands = '0x' + pad1(UR_CMD.PERMIT2_PERMIT) + baseCommands.slice(2);
   return {
     chainId: chainId, address: ur, abi: urExecuteAbi, functionName: 'execute',
-    args: [commands, [permitInput, encodeV4SwapInput(pool, amountIn, minOut, recipient)], BigInt(now + 1800)],
+    args: [commands, [permitInput].concat(baseInputs), BigInt(now + 1800)],
     value: 0n,
   };
 }
@@ -7840,28 +8089,63 @@ function renderPayCard(project, cart) {
     previewTimer = setTimeout(loadPreview, 400);
   }
 
-  // Decide whether a direct AMM swap beats paying (which skims the reserved % even on the swap route).
-  // Only for plain native-token buys (no NFTs, not add-to-balance) where a buyback pool exists. When
+  // Decide whether a direct AMM swap beats paying. For a USDC-paired pool,
+  // native ETH can first bridge through the best live WETH/USDC V3 fee
+  // tier and feed the resulting USDC into the hooked V4 pool atomically.
   // The direct V4 Quoter is always authoritative. A terminal preview's
   // received+reserved figures describe `pay` and cannot stand in for the
   // direct Universal Router output.
   function maybeOfferDirectSwap(gen, amt, p) {
     if (state.mode === 'addbalance' || selectedTierIds().length) return;
-    // Input must be a directly-accepted token (a swap-via-router currency isn't the pool's pair).
-    if (!state.token || state.token.viaRouter) return;
+    if (!state.token) return;
     if (!p || p.unavailable || p.received == null) return;
     var payOut = p.received;
     var isNativeIn = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     var inputCur = isNativeIn ? ZERO_ADDRESS : state.token.address.toLowerCase();
     directSwapPoolFor(project, state.chainId).then(function (pool) {
-      // Only when the paid token IS the pool's pair token (native for ETH pools, USDC for USDC pools).
-      if (gen !== previewGen || !pool || pool.pairAddr !== inputCur) return;
-      function decide(directOut) {
+      if (gen !== previewGen || !pool) return;
+      function decide(directOut, inputRoute) {
         if (gen !== previewGen) return;
-        var winner = directPaySwapQuoteIfBetter(payOut, directOut);
-        if (winner != null) { state.directSwap = { pool: pool, out: winner }; renderFeedback(); }
+        var winner = directPaySwapQuoteIfBetter(payOut, directOut, state.slippageBps);
+        if (winner != null) {
+          state.directSwap = { pool: pool, out: winner, inputRoute: inputRoute || { kind: 'single-v4' } };
+          renderFeedback();
+        }
       }
-      quoteDirectSwap(state.chainId, pool, amt).then(decide);
+      if (pool.pairAddr === inputCur) {
+        quoteDirectSwap(state.chainId, pool, amt).then(function (out) { decide(out, { kind: 'single-v4' }); });
+        return;
+      }
+      var config = nativeSwapConfigForChain(state.chainId);
+      var canBridgeNative = !!config && isNativeIn
+        && pool.pairAddr.toLowerCase() === config.bridgeToken.toLowerCase();
+      var canBridgeUsdcToNative = !!config && !isNativeIn
+        && inputCur === config.bridgeToken.toLowerCase() && pool.pairAddr.toLowerCase() === ZERO_ADDRESS;
+      if (!config || (!canBridgeNative && !canBridgeUsdcToNative)) return;
+      var tokenIn = canBridgeNative ? config.wrappedNative : config.bridgeToken;
+      var tokenOut = canBridgeNative ? config.bridgeToken : config.wrappedNative;
+      quoteV3ExactInput(state.chainId, tokenIn, tokenOut, amt).then(function (bridge) {
+        if (!bridge || gen !== previewGen) return;
+        return quoteDirectSwap(state.chainId, pool, bridge.amountOut).then(function (out) {
+          decide(out, canBridgeNative ? {
+            kind: 'native-v3-v4',
+            wrappedNative: config.wrappedNative,
+            bridgeToken: config.bridgeToken,
+            bridgeTokenSymbol: 'USDC',
+            bridgeTokenDecimals: 6,
+            v3Fee: bridge.fee,
+            quotedBridgeAmount: bridge.amountOut,
+          } : {
+            kind: 'erc20-v3-native-v4',
+            inputToken: config.bridgeToken,
+            wrappedNative: config.wrappedNative,
+            bridgeTokenSymbol: 'ETH',
+            bridgeTokenDecimals: 18,
+            v3Fee: bridge.fee,
+            quotedBridgeAmount: bridge.amountOut,
+          });
+        });
+      });
     }).catch(function () {});
   }
 
@@ -8088,7 +8372,7 @@ function renderPayCard(project, cart) {
       var dHuman = formatAmount(amt, reviewedToken.decimals == null ? 18 : reviewedToken.decimals) + ' ' + dSymClean;
       // Native swaps are fully determined before review, so reuse this exact call after confirmation and expose
       // its calldata to txlink. ERC-20 swaps still need a wallet-bound Permit2 signature and cannot be shared yet.
-      var directReviewTx = isNative ? buildDirectSwapNativeTx(reviewedChainId, ds.pool, amt, dsMinOut, beneficiary) : null;
+      var directReviewTx = isNative ? buildDirectSwapNativeTx(reviewedChainId, ds.pool, amt, dsMinOut, beneficiary, ds.inputRoute) : null;
       var directPaymentPayload = {
         chain: dChain,
         chainId: reviewedChainId,
@@ -8102,6 +8386,9 @@ function renderPayCard(project, cart) {
         erc20Approval: isNative ? null : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: UNIVERSAL_ROUTER_BY_CHAIN[reviewedChainId] },
         args: {
           action: 'Direct AMM swap — bypasses pay so splits/reserved take nothing',
+          route: ds.inputRoute && ds.inputRoute.kind !== 'single-v4'
+            ? dSymClean + ' → ' + ds.inputRoute.bridgeTokenSymbol + ' → ' + sym
+            : dSymClean + ' → ' + sym,
           buy: sym,
           amountIn: amt.toString() + ' (' + dHuman + ')',
           minReturnedTokens: dsMinOut.toString() + ' (' + formatTokenCount(dsMinOut) + ' ' + sym + ', ' + (reviewedSlippage / 100) + '% max slippage)',
@@ -8118,7 +8405,7 @@ function renderPayCard(project, cart) {
       function openDirectSwapConfirm(plan) {
         var coveredTx = !isNative && plan && plan.permit2Covered
           ? buildDirectSwapErc20ExecuteTx(
-              reviewedChainId, ds.pool, amt, dsMinOut, beneficiary, plan.now,
+              reviewedChainId, ds.pool, amt, dsMinOut, beneficiary, plan.now, undefined, ds.inputRoute,
             )
           : null;
         var initialPayload = isNative
@@ -8145,7 +8432,7 @@ function renderPayCard(project, cart) {
           confirmCtx.showStatus(m, kind, meta);
           return meta && meta.reviewPayload ? confirmCtx.afterPaint() : undefined;
         };
-        buildDirectSwapErc20Tx(reviewedChainId, ds.pool, reviewedToken.address, amt, dsMinOut, beneficiary, statusCb, plan)
+        buildDirectSwapErc20Tx(reviewedChainId, ds.pool, reviewedToken.address, amt, dsMinOut, beneficiary, statusCb, plan, ds.inputRoute)
           .then(function (tx) {
             confirmCtx.showAction(executePayload(tx));
             confirmCtx.showStatus('Review and execute the swap.', 'pending');
