@@ -92,6 +92,14 @@ describe('operator buyback/router descriptors', () => {
     expect(at('300')).not.toThrow();
     expect(at('172800')).not.toThrow();
   });
+  it('set TWAP window pre-fills the pair token from the chain’s existing pool', () => {
+    const tokenField = POWER_SET_BUYBACK_TWAP.fields.find((f) => f.name === 'terminalToken');
+    // Without a per-chain read this defaults to the native sentinel, which reverts PoolNotSet on a
+    // USDC revnet (e.g. ART) that never initialized a native pool.
+    expect(tokenField.kind).toBe('chainAddress');
+    expect(typeof tokenField.crossChainRead).toBe('function');
+    expect(tokenField.help).toMatch(/already has a pool/i);
+  });
   it('set TWAP window resolves the pair token per chain', () => {
     const baseUsdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
     const arbUsdc = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';

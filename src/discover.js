@@ -14008,7 +14008,7 @@ export function renderBuybackRouterCard(project) {
     var desc = el('div', 'powers-desc'); desc.textContent = action.note; row.appendChild(desc);
     // Current value across chains — combined when uniform, per-chain when it differs (like the ruleset display).
     var f = (action.fields && action.fields[0]) || {};
-    if (f.crossChainRead) {
+    if (f.crossChainRead && !action.poolStateRead) {
       var cur = el('div', 'powers-desc'); cur.style.opacity = '0.8'; cur.style.marginTop = '2px'; cur.textContent = 'Current: reading across chains…'; row.appendChild(cur);
       crossChainValues(project, f, action.chainAvailable).then(function (rows) {
         var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
@@ -14019,6 +14019,7 @@ export function renderBuybackRouterCard(project) {
       });
     } else if (action.poolStateRead) {
       // Pool has no scalar getter; poolStateRead returns a per-chain summary string (initialized pairs + TWAP).
+      // A pool action reports this even when its first field also pre-fills from chain.
       var pcur = el('div', 'powers-desc'); pcur.style.opacity = '0.8'; pcur.style.marginTop = '2px'; pcur.textContent = 'Current pool: reading across chains…'; row.appendChild(pcur);
       var pchains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !action.chainAvailable || action.chainAvailable(c.id); });
       Promise.all(pchains.map(function (c) {
@@ -14274,6 +14275,24 @@ var POWER_SET_TOKEN = {
 // that reverts (and wastes a Safe approve+execute round-trip).
 function ammChainAvailable(cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; }
 
+// The pair token the project ALREADY has a pool for on a chain, so a window edit targets a live pool instead of a
+// native pool the project may never have initialized (a USDC revnet like ART has no native pool at all). Native wins
+// when both exist, and is returned as the sentinel the hook normalizes to address(0). null = no pool here.
+function initializedPoolTokenOf(project, chainId) {
+  var pid = pidOn(project, chainId);
+  return projectBuybackHook(project, chainId).then(function (hook) {
+    if (!hook || hook === ZERO_ADDRESS) return null;
+    var probes = [{ token: ZERO_ADDRESS, value: NATIVE_TOKEN }];
+    var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ token: usdc, value: usdc });
+    return Promise.all(probes.map(function (p) {
+      return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, p.token] })
+        .then(function (w) { return Number(w) > 0 ? p.value : null; }).catch(function () { return null; });
+    })).then(function (found) {
+      return found.filter(Boolean)[0] || null;
+    });
+  }).catch(function () { return null; });
+}
+
 // Per-chain buyback-pool summary. There is no scalar getter for the PoolKey (internal), so resolve the project's
 // hook and read twapWindowOf for the native + USDC pairs — a non-zero window means a pool is initialized there.
 function buybackPoolStateRead(project, chainId) {
@@ -14349,7 +14368,10 @@ export var POWER_SET_BUYBACK_TWAP = {
   note: 'Changes how far back the buyback hook averages the pool price to decide swap-vs-issue and to floor the swap. The pool must already be initialized for the pair token. Written straight to the project’s hook.',
   danger: 'Dangerous: a window longer than the pool’s price actually trends floors swaps above what the pool can fill, and every payment routed to a swap reverts. A very short window is cheaper to manipulate.',
   fields: [
-    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token — the hook stores this pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); }, help: 'The pair token whose pool window you’re changing, per selected chain. Use the native-token sentinel for native ETH pools; USDC addresses differ by chain.' },
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token — the hook stores this pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); },
+      // Pre-fill each chain with the pair token it already has a pool for — a USDC revnet has no native pool.
+      crossChainRead: initializedPoolTokenOf,
+      help: 'Pre-filled per chain with the pair token that already has a pool. Native ETH pools use the native-token sentinel; USDC addresses differ by chain.' },
     { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min) — min 300, max 172800' },
   ],
   buildArgs: function (v, cid, pid) {
