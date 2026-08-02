@@ -20263,7 +20263,13 @@ function fetchYouPosition(project) {
           // fee — matching the cash-out modal's quote. When the fee can't be computed (fee-free read
           // failed), show the gross flagged so the row carries the "before fees" qualifier.
           var disp = ambientCashOutDisplay(out[0], taxRate, out[2]);
-          return { id: cid, name: chain.name, balance: bal, credit: credit, cashout: disp.value, cashoutBeforeFees: disp.beforeFees, maxLoan: out[1], acct: acct };
+          // `borrowableAmountFrom` is gross principal. The ownership summary
+          // shows what reaches the wallet after the standard terminal fee,
+          // the REV fee, and REVLoans' minimum prepaid source fee.
+          var maxLoan = out[1] == null
+            ? null
+            : loanOpeningAmounts(out[1], LOAN_MIN_PREPAID, false).net;
+          return { id: cid, name: chain.name, balance: bal, credit: credit, cashout: disp.value, cashoutBeforeFees: disp.beforeFees, maxLoan: maxLoan, acct: acct };
         });
       });
     });
