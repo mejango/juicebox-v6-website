@@ -11174,6 +11174,13 @@ export function activityRowFromEvent(event, project) {
   };
 }
 
+// Permission grants belong to the holder/account that made them, not to the
+// project's public economic timeline. Keep mapping them for account activity,
+// but omit them from every project activity surface.
+export function isProjectFeedActivityRow(row) {
+  return !!row && row.type !== 'operator_perms';
+}
+
 
 var WEIGHT_CUT_DEN = 1000000000; // 1e9
 
@@ -17728,7 +17735,7 @@ async function fetchProjectActivity(project) {
   merged.sort(function (a, b) { return Number(b.timestamp || 0) - Number(a.timestamp || 0); });
   var bendyRows = merged.map(function (event) {
     return activityRowFromEvent(event, project);
-  }).filter(Boolean);
+  }).filter(isProjectFeedActivityRow);
 
   // Ruleset queueing isn't indexed by bendystraw (no queueRulesets ActivityEvent type), so synthesize it
   // from chain state: JBRulesets.allOf returns each configured ruleset, whose `id` IS the queue timestamp.

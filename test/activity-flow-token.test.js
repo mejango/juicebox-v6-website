@@ -4,7 +4,7 @@
 // an 18-dec context on another would otherwise mislabel remote amounts by 1e12 — those fall back to the
 // indexed USD value instead.
 import { describe, it, expect } from 'vitest';
-import { activityRowFromEvent, flowTokenFromContexts } from '../src/discover.js';
+import { activityRowFromEvent, flowTokenFromContexts, isProjectFeedActivityRow } from '../src/discover.js';
 import { NATIVE_TOKEN } from '../src/component-base.js';
 
 const USDC_BASE = { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, symbol: 'USDC', currency: 1n };
@@ -56,6 +56,26 @@ describe('flowTokenFromContexts', () => {
 });
 
 describe('activity rows across chains with differing contexts', () => {
+  it('keeps holder permission grants out of the project feed', () => {
+    const project = { chainId: 8453, tokenSymbol: 'ART' };
+    const permission = activityRowFromEvent({
+      chainId: 8453,
+      txHash: '0xpermission',
+      timestamp: 1700000000,
+      from: '0xabc0000000000000000000000000000000000abc',
+      operatorPermissionsSetEvent: {
+        account: '0xabc0000000000000000000000000000000000abc',
+        operator: '0x1111111111111111111111111111111111111111',
+        timestamp: 1700000000,
+        txHash: '0xpermission',
+      },
+    }, project);
+
+    expect(permission.type).toBe('operator_perms');
+    expect(isProjectFeedActivityRow(permission)).toBe(false);
+    expect(isProjectFeedActivityRow(activityRowFromEvent(payEventOn(8453), project))).toBe(true);
+  });
+
   it('falls back to the indexed USD value on every chain when contexts are heterogeneous', () => {
     const project = { chainId: 8453, tokenSymbol: 'REV', _flowToken: flowTokenFromContexts([[USDC_BASE], [CUSTOM_18]]) };
     const home = activityRowFromEvent(payEventOn(8453), project);

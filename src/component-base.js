@@ -1333,7 +1333,7 @@ export function executeTransaction(opts) {
     // watcher to reject before falling back. Some injected/public RPC pairs
     // leave waitForTransactionReceipt pending forever even though a direct
     // receipt lookup already sees the mined transaction.
-    return waitForTrackedTransactionReceipt(pub, hash);
+    return waitForTrackedTransactionReceipt(pub, hash, wallet, opts.chainId);
   }).then(function(receipt) {
     if (!receipt || receipt.status !== 'success') {
       var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
@@ -1364,11 +1364,86 @@ export function executeTransaction(opts) {
   }
 }
 
-function pollTransactionReceipt(client, hash, attempts, intervalMs) {
+function normalizeWalletReceipt(receipt, hash) {
+  if (!receipt) return null;
+  var rawStatus = receipt.status;
+  var succeeded = rawStatus === 'success' || rawStatus === true || rawStatus === 1 || rawStatus === 1n
+    || rawStatus === '0x1' || rawStatus === '0x01';
+  var reverted = rawStatus === 'reverted' || rawStatus === false || rawStatus === 0 || rawStatus === 0n
+    || rawStatus === '0x0' || rawStatus === '0x00';
+  var blockNumber = receipt.blockNumber;
+  if (typeof blockNumber === 'string' && /^0x[0-9a-f]+$/i.test(blockNumber)) blockNumber = BigInt(blockNumber);
+  return Object.assign({}, receipt, {
+    status: succeeded ? 'success' : (reverted ? 'reverted' : rawStatus),
+    blockNumber: blockNumber,
+    transactionHash: receipt.transactionHash || hash,
+  });
+}
+
+function walletReceipt(wallet, hash, expectedChainId) {
+  if (!wallet || typeof wallet.request !== 'function') return Promise.resolve(null);
+  var chainCheck = typeof wallet.getChainId === 'function'
+    ? wallet.getChainId().then(function (chainId) {
+        if (expectedChainId != null && Number(chainId) !== Number(expectedChainId)) return false;
+        return true;
+      })
+    : Promise.resolve(true);
+  return chainCheck.then(function (matches) {
+    if (!matches) return null;
+    return wallet.request({ method: 'eth_getTransactionReceipt', params: [hash] });
+  }).then(function (receipt) { return normalizeWalletReceipt(receipt, hash); });
+}
+
+function receiptAttempt(client, wallet, hash, expectedChainId) {
+  return new Promise(function (resolve, reject) {
+    var settled = false;
+    var pending = 0;
+    var lastError = null;
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      reject(lastError || new Error('Transaction receipt lookup timed out.'));
+    }, 10000);
+    function done(receipt) {
+      if (settled || !receipt) return false;
+      settled = true;
+      clearTimeout(timer);
+      resolve(receipt);
+      return true;
+    }
+    function missed(error) {
+      if (settled) return;
+      if (error) lastError = error;
+      pending -= 1;
+      if (pending > 0) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(lastError || new Error('Transaction receipt not found yet.'));
+    }
+    function track(promise) {
+      pending += 1;
+      Promise.resolve(promise).then(function (receipt) {
+        if (!done(receipt)) missed();
+      }).catch(missed);
+    }
+    if (client && typeof client.getTransactionReceipt === 'function') {
+      track(client.getTransactionReceipt({ hash: hash }));
+    }
+    if (wallet && typeof wallet.request === 'function') {
+      track(walletReceipt(wallet, hash, expectedChainId));
+    }
+    if (!pending) {
+      clearTimeout(timer);
+      reject(new Error('No transaction receipt provider is available.'));
+    }
+  });
+}
+
+function pollTransactionReceipt(client, wallet, hash, expectedChainId, attempts, intervalMs) {
   return new Promise(function (resolve, reject) {
     var remaining = Math.max(1, Number(attempts) || 1);
     function check() {
-      client.getTransactionReceipt({ hash: hash }).then(resolve).catch(function (error) {
+      receiptAttempt(client, wallet, hash, expectedChainId).then(resolve).catch(function (error) {
         remaining -= 1;
         if (remaining <= 0) { reject(error); return; }
         setTimeout(check, intervalMs);
@@ -1378,9 +1453,10 @@ function pollTransactionReceipt(client, hash, attempts, intervalMs) {
   });
 }
 
-export function waitForTrackedTransactionReceipt(client, hash) {
-  if (typeof client.getTransactionReceipt === 'function') {
-    return pollTransactionReceipt(client, hash, 120, 2000);
+export function waitForTrackedTransactionReceipt(client, hash, walletOverride, expectedChainId) {
+  var wallet = walletOverride === undefined ? getWalletClient() : walletOverride;
+  if (typeof client.getTransactionReceipt === 'function' || (wallet && typeof wallet.request === 'function')) {
+    return pollTransactionReceipt(client, wallet, hash, expectedChainId == null && client.chain ? client.chain.id : expectedChainId, 120, 2000);
   }
   return client.waitForTransactionReceipt({ hash: hash, timeout: 240000 });
 }

@@ -90,4 +90,40 @@ describe('transaction receipt tracking', () => {
 
     await expect(waitForTrackedTransactionReceipt(client, '0xhash')).resolves.toBe(receipt);
   });
+
+  it('uses the connected wallet receipt when the public RPC cannot see the mined transaction', async () => {
+    const client = {
+      chain: { id: 8453 },
+      getTransactionReceipt: async () => { throw new Error('Transaction receipt not found'); },
+    };
+    const wallet = {
+      getChainId: async () => 8453,
+      request: async ({ method, params }) => {
+        expect(method).toBe('eth_getTransactionReceipt');
+        expect(params).toEqual(['0xhash']);
+        return {
+          status: '0x1',
+          blockNumber: '0x1c8',
+          transactionHash: '0xhash',
+        };
+      },
+    };
+
+    await expect(waitForTrackedTransactionReceipt(client, '0xhash', wallet, 8453)).resolves.toMatchObject({
+      status: 'success',
+      blockNumber: 456n,
+      transactionHash: '0xhash',
+    });
+  });
+
+  it('does not query a wallet that is connected to a different chain', async () => {
+    const receipt = { status: 'success', blockNumber: 7n, transactionHash: '0xhash' };
+    const client = { chain: { id: 8453 }, getTransactionReceipt: async () => receipt };
+    const wallet = {
+      getChainId: async () => 1,
+      request: async () => { throw new Error('wrong-chain wallet must not be queried'); },
+    };
+
+    await expect(waitForTrackedTransactionReceipt(client, '0xhash', wallet, 8453)).resolves.toBe(receipt);
+  });
 });
