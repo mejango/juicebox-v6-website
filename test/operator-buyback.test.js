@@ -1,17 +1,17 @@
-// The operator buyback/router actions: the card must render its 3 action rows without throwing (the live render
+// The operator buyback/router actions: the card must render its 4 action rows without throwing (the live render
 // couldn't be exercised in the test browser — its project feed is empty), and each descriptor's buildArgs must
 // encode the registry call with correctly-typed args (BigInt projectId + numeric pool params).
 import { describe, it, expect } from 'vitest';
-import { renderBuybackRouterCard, POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, materializeChainValues } from '../src/discover.js';
+import { renderBuybackRouterCard, POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP, materializeChainValues } from '../src/discover.js';
 
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
 
 describe('renderBuybackRouterCard', () => {
-  it('renders the card + 3 action buttons without throwing', () => {
+  it('renders the card + 4 action buttons without throwing', () => {
     const card = renderBuybackRouterCard({ id: '5', chainId: 1, idByChain: { 1: 5 }, chains: [{ id: 1, name: 'Ethereum', projectId: 5 }] });
     expect(card.querySelector('.detail-card-title').textContent).toMatch(/Buyback . swap router/);
     const btns = [].slice.call(card.querySelectorAll('.powers-act')).map((b) => b.textContent);
-    expect(btns).toEqual(['Set buyback hook', 'Set router terminal', 'Initialize buyback pool']);
+    expect(btns).toEqual(['Set buyback hook', 'Set router terminal', 'Initialize buyback pool', 'Set TWAP window']);
   });
 });
 
@@ -75,6 +75,29 @@ describe('operator buyback/router descriptors', () => {
     };
     expect(POWER_INIT_BUYBACK_POOL.buildArgs(values, 8453, 5n)[4]).toBe(baseUsdc);
     expect(POWER_INIT_BUYBACK_POOL.buildArgs(values, 42161, 5n)[4]).toBe(arbUsdc);
+  });
+  // setTwapWindowOf is NOT on the registry — it must target the project's own resolved hook, and the hook
+  // rejects anything outside [300, 172800] seconds.
+  it('set TWAP window → the project hook’s setTwapWindowOf(projectId, terminalToken, newWindow)', () => {
+    expect(POWER_SET_BUYBACK_TWAP.contract).toBe('JBBuybackHook');
+    expect(POWER_SET_BUYBACK_TWAP.fn).toBe('setTwapWindowOf');
+    expect(typeof POWER_SET_BUYBACK_TWAP.resolveTargets).toBe('function');
+    expect(POWER_SET_BUYBACK_TWAP.buildArgs({ terminalToken: NATIVE, twapWindow: '1800' }, 1, 5n))
+      .toEqual([5n, NATIVE, 1800n]);
+  });
+  it('set TWAP window rejects windows the hook would revert on', () => {
+    const at = (twapWindow) => () => POWER_SET_BUYBACK_TWAP.buildArgs({ terminalToken: NATIVE, twapWindow }, 1, 5n);
+    expect(at('299')).toThrow(/between 300 and 172800/);
+    expect(at('172801')).toThrow(/between 300 and 172800/);
+    expect(at('300')).not.toThrow();
+    expect(at('172800')).not.toThrow();
+  });
+  it('set TWAP window resolves the pair token per chain', () => {
+    const baseUsdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+    const arbUsdc = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
+    const values = { twapWindow: '1800', terminalToken: (chainId) => chainId === 8453 ? baseUsdc : arbUsdc };
+    expect(POWER_SET_BUYBACK_TWAP.buildArgs(values, 8453, 5n)[1]).toBe(baseUsdc);
+    expect(POWER_SET_BUYBACK_TWAP.buildArgs(values, 42161, 5n)[1]).toBe(arbUsdc);
   });
   it('materializes chain-aware address values before descriptor buildArgs run', () => {
     const values = {

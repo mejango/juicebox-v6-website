@@ -420,6 +420,8 @@ var extraDataHookOfAbi = [{ type: 'function', name: 'extraDataHookOf', stateMuta
 // pair (MIN_TWAP_WINDOW is 5 min, so 0 = unset). The PoolKey (fee/tickSpacing) is stored in an internal mapping and
 // is NOT readable onchain, so this tells us "initialized + TWAP", not the exact fee/tick.
 var twapWindowOfAbi = [{ type: 'function', name: 'twapWindowOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [{ type: 'uint256' }] }];
+// setTwapWindowOf lives on the hook itself — the registry has no forwarder for it.
+var setTwapWindowOfAbi = [{ type: 'function', name: 'setTwapWindowOf', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'newWindow', type: 'uint256' }], outputs: [] }];
 
 // ---- 721 NFT tiers (Shop). Verified against nana-721-hook-v6 + REVOwner.tiered721HookOf. ----
 var REVO_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
@@ -13996,9 +13998,9 @@ export function renderBuybackRouterCard(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Buyback & swap router'; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro');
-  intro.textContent = 'Wire up the project’s buyback hook + swap router and initialize its Uniswap pool. Each runs on the chains you select, bundled into one relayr payment (or proposed to the Safe).';
+  intro.textContent = 'Wire up the project’s buyback hook + swap router, initialize its Uniswap pool, and tune the pool’s TWAP window. Each runs on the chains you select, bundled into one relayr payment (or proposed to the Safe).';
   card.appendChild(intro);
-  [POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL].forEach(function (action) {
+  [POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP].forEach(function (action) {
     var row = el('div', 'powers-row');
     var head = el('div', 'powers-head');
     var lab = el('span', 'powers-label'); lab.textContent = action.title; head.appendChild(lab);
@@ -14272,6 +14274,24 @@ var POWER_SET_TOKEN = {
 // that reverts (and wastes a Safe approve+execute round-trip).
 function ammChainAvailable(cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; }
 
+// Per-chain buyback-pool summary. There is no scalar getter for the PoolKey (internal), so resolve the project's
+// hook and read twapWindowOf for the native + USDC pairs — a non-zero window means a pool is initialized there.
+function buybackPoolStateRead(project, chainId) {
+  var pid = pidOn(project, chainId);
+  return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid]).then(function (hook) {
+    if (!hook || hook === ZERO_ADDRESS) return 'no hook set';
+    var probes = [{ label: 'native', token: ZERO_ADDRESS }];
+    var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ label: 'USDC', token: usdc });
+    return Promise.all(probes.map(function (p) {
+      return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, p.token] })
+        .then(function (w) { return { label: p.label, twap: Number(w) }; }).catch(function () { return { label: p.label, twap: 0 }; });
+    })).then(function (rows) {
+      var init = rows.filter(function (r) { return r.twap > 0; });
+      return init.length ? init.map(function (r) { return r.label + ' pool (TWAP ' + r.twap + 's)'; }).join(', ') : 'not initialized';
+    });
+  }).catch(function () { return null; });
+}
+
 export var POWER_SET_BUYBACK_HOOK = {
   title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
@@ -14295,23 +14315,7 @@ export var POWER_SET_ROUTER_TERMINAL = {
 export var POWER_INIT_BUYBACK_POOL = {
   title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
-  // Per-chain current-pool summary for the card. No scalar getter for the PoolKey (internal), so we resolve the
-  // project's hook and read twapWindowOf for the native + USDC pairs — non-zero = a pool is initialized there.
-  poolStateRead: function (project, chainId) {
-    var pid = pidOn(project, chainId);
-    return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid]).then(function (hook) {
-      if (!hook || hook === ZERO_ADDRESS) return 'no hook set';
-      var probes = [{ label: 'native', token: ZERO_ADDRESS }];
-      var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ label: 'USDC', token: usdc });
-      return Promise.all(probes.map(function (p) {
-        return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, p.token] })
-          .then(function (w) { return { label: p.label, twap: Number(w) }; }).catch(function () { return { label: p.label, twap: 0 }; });
-      })).then(function (rows) {
-        var init = rows.filter(function (r) { return r.twap > 0; });
-        return init.length ? init.map(function (r) { return r.label + ' pool (TWAP ' + r.twap + 's)'; }).join(', ') : 'not initialized';
-      });
-    }).catch(function () { return null; });
-  },
+  poolStateRead: buybackPoolStateRead,
   note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Routed through the buyback hook registry, which forwards to the project’s configured hook (your new hook once Set buyback hook executes — set the hook first). Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
   danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
   fields: [
@@ -14324,6 +14328,37 @@ export var POWER_INIT_BUYBACK_POOL = {
   buildArgs: function (v, cid, pid) {
     var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
     return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), terminalToken, BigInt(v.sqrtPriceX96)];
+  },
+};
+// JBBuybackHook._requireValidTwapWindow: 5 minutes to 2 days.
+var MIN_TWAP_WINDOW = 300, MAX_TWAP_WINDOW = 172800;
+export var POWER_SET_BUYBACK_TWAP = {
+  title: 'Set TWAP window', actionVerb: 'Set', contract: 'JBBuybackHook', abi: setTwapWindowOfAbi, fn: 'setTwapWindowOf', gas: 150000n, chainsDefault: 'all',
+  chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
+  // setTwapWindowOf is on the hook, not the registry — target the project's own resolved hook per chain.
+  resolveTargets: function (project, chainIds) {
+    return Promise.all(chainIds.map(function (cid) {
+      return projectBuybackHook(project, cid).then(function (hook) { return { cid: cid, hook: hook }; }).catch(function () { return { cid: cid, hook: null }; });
+    })).then(function (rows) {
+      var byChain = {};
+      rows.forEach(function (r) { if (r.hook && r.hook !== ZERO_ADDRESS) byChain[r.cid] = r.hook; });
+      return byChain;
+    });
+  },
+  poolStateRead: buybackPoolStateRead,
+  note: 'Changes how far back the buyback hook averages the pool price to decide swap-vs-issue and to floor the swap. The pool must already be initialized for the pair token. Written straight to the project’s hook.',
+  danger: 'Dangerous: a window longer than the pool’s price actually trends floors swaps above what the pool can fill, and every payment routed to a swap reverts. A very short window is cheaper to manipulate.',
+  fields: [
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token — the hook stores this pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); }, help: 'The pair token whose pool window you’re changing, per selected chain. Use the native-token sentinel for native ETH pools; USDC addresses differ by chain.' },
+    { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min) — min 300, max 172800' },
+  ],
+  buildArgs: function (v, cid, pid) {
+    var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
+    var window = BigInt(v.twapWindow);
+    if (window < BigInt(MIN_TWAP_WINDOW) || window > BigInt(MAX_TWAP_WINDOW)) {
+      throw new Error('The hook only accepts a TWAP window between ' + MIN_TWAP_WINDOW + ' and ' + MAX_TWAP_WINDOW + ' seconds.');
+    }
+    return [pid, terminalToken, window];
   },
 };
 
@@ -14553,13 +14588,17 @@ function openPowerModal(project, action) {
       var values;
       try { values = {}; action.fields.forEach(function (f) { values[f.name] = inputs[f.name].get(); }); }
       catch (err) { setStatus(err.message || String(err), 'error'); busy = false; return; }
-      var liveControllers = null;
+      var liveTargets = null;
       if (action.contract === 'JBController') {
-        try { liveControllers = await controllerMapFor(selected, project); }
+        try { liveTargets = await controllerMapFor(selected, project); }
         catch (controllerError) { setStatus(errMessage(controllerError, 'Could not verify the project controller.'), 'error'); busy = false; return; }
+      } else if (action.resolveTargets) {
+        // Per-project targets (e.g. the project's own buyback hook) instead of an infra address.
+        try { liveTargets = await action.resolveTargets(project, selected.map(function (c) { return c.id; })); }
+        catch (targetError) { setStatus(errMessage(targetError, 'Could not resolve the target contract.'), 'error'); busy = false; return; }
       }
       var buildCall = function (cid) {
-        var to = liveControllers ? liveControllers[cid] : getAddress(action.contract, cid);
+        var to = liveTargets ? liveTargets[cid] : getAddress(action.contract, cid);
         if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
         return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid, pidOn(project, cid)) }) };
       };
