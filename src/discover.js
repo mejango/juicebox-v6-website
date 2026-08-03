@@ -18411,6 +18411,12 @@ function renderPoolPriceCard(project) {
   var tag = el('span', 'owners-amm-tag'); tag.textContent = 'AMM';
   tag.title = 'Uniswap V4 buyback pool';
   title.appendChild(tag);
+  var poolManager = POOL_MANAGER_BY_CHAIN[project.chainId];
+  if (poolManager) {
+    var addr = addressNode(poolManager);
+    addr.classList.add('lp-amm-title-addr');
+    title.appendChild(addr);
+  }
   host.appendChild(title);
   var body = el('div', 'pool-price-body');
   body.appendChild(skel('100%', '60px'));
@@ -18472,18 +18478,16 @@ function renderOwnersAmm(project) {
   var sym = project.tokenSymbol || 'token';
   var wrap = el('div');
   var lpTitle = el('div', 'lp-amm-title');
-  var lpTitlePrefix = el('span'); lpTitlePrefix.textContent = 'Market';
+  var lpTitlePrefix = el('span'); lpTitlePrefix.textContent = 'Liquidity';
   lpTitle.appendChild(lpTitlePrefix);
-  var lpTitleText = el('span', 'owners-amm-tag'); lpTitleText.textContent = 'AMM';
+  var lpTitleText = el('span', 'owners-amm-tag'); lpTitleText.textContent = 'LP';
   lpTitleText.title = 'Uniswap V4 pool holding pooled LP liquidity';
   lpTitle.appendChild(lpTitleText);
-  var ammAddr = POOL_MANAGER_BY_CHAIN[project.chainId];
-  if (ammAddr) { var a = addressNode(ammAddr); a.classList.add('lp-amm-title-addr'); lpTitle.appendChild(a); }
   wrap.appendChild(renderMarketPriceChart(project));
   wrap.appendChild(renderPoolPriceCard(project));
   wrap.appendChild(lpTitle);
   var lpHead = el('div', 'detail-card-body owners-intro');
-  lpHead.textContent = 'The market is used to fill orders that give payers more ' + sym + ' than issuance would.';
+  lpHead.textContent = 'The tokens currently pooled across the market\u2019s active price ranges.';
   wrap.appendChild(lpHead);
   var loading = el('div', 'owners-load'); loading.appendChild(skelOwnersDistribution()); wrap.appendChild(loading);
   readLpPositions(project, project.chainId).then(function (lp) {
@@ -18495,7 +18499,7 @@ function renderOwnersAmm(project) {
     // Left column: pie, then the composition bar stacked directly on top of the liquidity-by-price chart.
     var leftCol = el('div', 'lp-amm-leftcol');
     var pie = renderLpOwnersPie(lp); if (pie) leftCol.appendChild(pie);
-    var bt = el('div', 'detail-card-title lp-amm-bartitle'); bt.textContent = 'Liquidity'; leftCol.appendChild(bt);
+    var bt = el('div', 'detail-card-title lp-amm-bartitle'); bt.textContent = 'Composition'; leftCol.appendChild(bt);
     var bar = renderLpCompositionBar(lp, sym); if (bar) leftCol.appendChild(bar);
     rowEl.appendChild(leftCol);
     // Right column: LP table.
