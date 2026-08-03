@@ -16975,16 +16975,19 @@ var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $
   + 'items { chainId address defaultAddToBalance defaultBeneficiary paymentsCount addToBalanceCount totalFacilitated totalFacilitatedUsd lastUsedAt createdAt } totalCount } }';
 // Buyback-hook AMM trades (V6 swapEvent model). Each buy/sell is a realized
 // AMM price; mints are the issuance route, not a market trade.
-var BENDYSTRAW_SWAP_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
-  + 'swapEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
+// Scoped by (chainId, poolId), never by sucker group: prices are only comparable inside one exact pool,
+// and the group id would have to come from the project row — a slow query behind a short soft timeout,
+// which silently emptied this history whenever the indexer was busy.
+export var BENDYSTRAW_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash sqrtPriceX96 projectTokenIsCurrency0 } totalCount } }';
-var BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
-  + 'swapEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
+export var BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash } totalCount } }';
-var BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
-  + 'buybackPoolEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
+export var BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'buybackPoolEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp poolId chainId initialSqrtPriceX96 projectTokenIsCurrency0 } totalCount } }';
 var BENDYSTRAW_PARTICIPANTS_BY_GROUP_QUERY = 'query($suckerGroupId: String!, $chainIds: [Int!], $version: Int!, $limit: Int!, $offset: Int!) { '
@@ -17553,19 +17556,17 @@ async function fetchSwapHistory(project) {
   var empty = { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
   var chainId = Number(project.chainId);
   if (!chainId) return empty;
-  var groupId = await resolveBendystrawSuckerGroupId(project, [chainId]);
-  if (!groupId) return empty;
 
-  // A sucker group can trade on several chains and can retain events from superseded pools. Decimals and
-  // prices are only comparable inside one exact pool, so chart the page's current chain/current pool only.
+  // The pool is the whole scope: a project can retain events from superseded pools, and decimals and
+  // prices are only comparable inside one exact pool.
   var pool = await readPoolState(project, chainId);
   if (!pool || !pool.poolId) return empty;
   var pair = pool.pair;
   var pairScale = Math.pow(10, Number(pair && pair.decimals != null ? pair.decimals : 18));
   var variables = {
-    suckerGroupId: groupId,
+    poolId: pool.poolId,
+    chainId: chainId,
     version: BENDYSTRAW_VERSION,
-    chainIds: [chainId],
   };
   var pages = await Promise.all([
     fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', variables,
@@ -18399,6 +18400,72 @@ function renderMarketPriceChart(project) {
   return host;
 }
 
+// The live pool price in both directions, plus the two prices arbitrage keeps it between.
+// The issuance quote is converted onto the pair-token axis through the same JBPrices feed the
+// terminal uses; without a feed the row is omitted rather than shown in the wrong denomination.
+function renderPoolPriceCard(project) {
+  var sym = project.tokenSymbol || 'token';
+  var host = el('div', 'pool-price');
+  var title = el('div', 'lp-amm-title');
+  var prefix = el('span'); prefix.textContent = 'Pool'; title.appendChild(prefix);
+  var tag = el('span', 'owners-amm-tag'); tag.textContent = 'AMM';
+  tag.title = 'Uniswap V4 buyback pool';
+  title.appendChild(tag);
+  host.appendChild(title);
+  var body = el('div', 'pool-price-body');
+  body.appendChild(skel('100%', '60px'));
+  host.appendChild(body);
+
+  Promise.all([
+    readAmmPrice(project, project.chainId).catch(function () { return null; }),
+    readCashoutPrice(project, project.chainId).catch(function () { return null; }),
+    readIssuancePairRate(project, project.chainId).catch(function () { return null; }),
+    readPoolState(project, project.chainId).catch(function () { return null; }),
+  ]).then(function (res) {
+    if (!host.isConnected) return;
+    var price = Number(res[0]) > 0 ? Number(res[0]) : null;
+    var cashout = Number(res[1]) > 0 ? Number(res[1]) : null;
+    var pairRate = res[2];
+    var pool = res[3];
+    if (!price || !pool) { host.remove(); return; }
+    var pairSym = (pool.pair && pool.pair.symbol) || 'terminal tokens';
+    var baseIssuance = (project.ruleset && project.ruleset.weight)
+      ? 1 / (Number(project.ruleset.weight) / 1e18)
+      : null;
+    // pairRate converts base-currency units onto the pair axis; null means no feed.
+    var issuance = baseIssuance != null && pairRate != null ? baseIssuance * pairRate : null;
+
+    body.textContent = '';
+    var main = el('div', 'pool-price-main');
+    main.textContent = '1 ' + sym + ' = ' + formatPrice(price) + ' ' + pairSym;
+    body.appendChild(main);
+    var inverse = el('div', 'pool-price-sub');
+    inverse.textContent = '1 ' + pairSym + ' = ' + formatPrice(1 / price) + ' ' + sym;
+    body.appendChild(inverse);
+
+    if (issuance || cashout) {
+      var rows = el('div', 'pool-price-rows');
+      [[issuance, 'Current issuance price'], [cashout, 'Current cash out price']].forEach(function (entry) {
+        if (!entry[0]) return;
+        var row = el('div', 'pool-price-row');
+        var label = el('span'); label.textContent = entry[1]; row.appendChild(label);
+        var value = el('span', 'pool-price-val');
+        value.textContent = formatPrice(entry[0]) + ' ' + pairSym;
+        row.appendChild(value);
+        rows.appendChild(row);
+      });
+      body.appendChild(rows);
+    }
+
+    var note = el('div', 'detail-card-body owners-intro');
+    note.textContent = 'The market fills orders that would give payers more ' + sym
+      + ' than issuance. Arbitrage keeps its price between the issuance ceiling and the cash-out floor.';
+    body.appendChild(note);
+  }).catch(function () { host.remove(); });
+
+  return host;
+}
+
 // The AMM (buyback pool) section — its own distinct section. LP ownership donut + pair-token composition
 // bar + per-LP table + liquidity-by-price depth chart. Self-contained: reads the pool directly.
 function renderOwnersAmm(project) {
@@ -18413,6 +18480,7 @@ function renderOwnersAmm(project) {
   var ammAddr = POOL_MANAGER_BY_CHAIN[project.chainId];
   if (ammAddr) { var a = addressNode(ammAddr); a.classList.add('lp-amm-title-addr'); lpTitle.appendChild(a); }
   wrap.appendChild(renderMarketPriceChart(project));
+  wrap.appendChild(renderPoolPriceCard(project));
   wrap.appendChild(lpTitle);
   var lpHead = el('div', 'detail-card-body owners-intro');
   lpHead.textContent = 'The market is used to fill orders that give payers more ' + sym + ' than issuance would.';

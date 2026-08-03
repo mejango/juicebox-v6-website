@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY,
+  BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY,
+  BENDYSTRAW_SWAP_EVENTS_QUERY,
   ammPriceFromSqrtPriceX96,
   formatPrice,
 } from '../src/discover.js';
@@ -25,6 +28,22 @@ describe('Uniswap V4 AMM price history', () => {
 
   it('shows enough precision to distinguish the ART move', () => {
     expect(formatPrice(0.0001000274)).not.toBe(formatPrice(0.0001021037));
+  });
+
+  // Scoping pool history by suckerGroupId made it depend on the indexer's project
+  // row, a slow query behind a short soft timeout. When that row failed the series
+  // came back empty and the chart claimed there were no trades.
+  it('scopes pool history by poolId, never by sucker group', () => {
+    for (const query of [
+      BENDYSTRAW_SWAP_EVENTS_QUERY,
+      BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY,
+      BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY,
+    ]) {
+      expect(query).toContain('$poolId: String!');
+      expect(query).toContain('poolId: $poolId');
+      expect(query).toContain('chainId: $chainId');
+      expect(query).not.toContain('suckerGroupId');
+    }
   });
 
   it('copies the complete Bendystraw V4 history contract into the chart build prompt', () => {
