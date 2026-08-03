@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { downsampleTimeSeries } from './time-series.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
@@ -1581,7 +1581,7 @@ function renderShopSection(project, shop, cart) {
   if (cart) cart.subscribe(updateCheckout);
   updateCheckout();
   wrap.appendChild(checkoutBar);
-  onWalletChange(function () { if (wrap.isConnected) showCredits(resolvedShop); });
+  onEffectiveAccountChange(function () { if (wrap.isConnected) showCredits(resolvedShop); });
   return wrap;
 }
 
@@ -1742,7 +1742,7 @@ function renderCustomerYou(project, mediaP) {
     }).catch(function () { if (box.isConnected) { box.innerHTML = ''; box.textContent = 'Could not load your items.'; } });
   }
   load();
-  onWalletChange(function () { if (box.isConnected) load(); });
+  onEffectiveAccountChange(function () { if (box.isConnected) load(); });
   // A redemption burns items — reload so the owned count reflects it without a manual refresh.
   var onBridge = function () { if (box.isConnected) load(); };
   document.addEventListener('jb:bridge-updated', onBridge);
@@ -8663,7 +8663,7 @@ function renderPayCard(project, cart) {
     cdTime.textContent = fmtCountdown(startsAt - Math.floor(Date.now() / 1000));
   }
 
-  onWalletChange(function () {
+  onEffectiveAccountChange(function () {
     if (!card.isConnected) return;
     refreshNftCredits();
     if (selectedTierIds().length) refreshNftCheckoutRoutes();
@@ -9930,7 +9930,7 @@ function openEditTokenModal(project) {
     }).catch(function () {});
   }
   refreshPermissionGate();
-  onWalletChange(function () { if (permissionGate.isConnected) refreshPermissionGate(); });
+  onEffectiveAccountChange(function () { if (permissionGate.isConnected) refreshPermissionGate(); });
 
   var nlbl = el('div', 'operator-edit-label'); nlbl.textContent = 'Token name'; content.appendChild(nlbl);
   var nameInput = el('input', 'operator-edit-jwt'); nameInput.type = 'text'; nameInput.placeholder = 'e.g. My Project Token';
@@ -13402,7 +13402,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
     if (!loaded || !card.isConnected) return;
     fetchSafeInfo(safe, homeChainId).then(function (info) { if (info) loadQueues(info); }).catch(function () {});
   });
-  onWalletChange(function () {
+  onEffectiveAccountChange(function () {
     if (!loaded || !card.isConnected) return;
     fetchSafeInfo(safe, homeChainId).then(function (info) { if (info) loadQueues(info); }).catch(function () {});
   });
@@ -20934,7 +20934,7 @@ function renderYouCard(project, opts) {
   };
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reconcileAfterMount);
   else Promise.resolve().then(reconcileAfterMount);
-  onWalletChange(function () { if (body.isConnected) load(); });
+  onEffectiveAccountChange(function () { if (body.isConnected) load(); });
   document.addEventListener('jb:bridge-updated', function () { if (body.isConnected) load(); });
   return wrap;
 }
@@ -21714,7 +21714,7 @@ function buildRedeemItemsModal(project, requestClose) {
   });
 
   loadItems();
-  onWalletChange(function () { if (wrap.isConnected) onChainChange(); });
+  onEffectiveAccountChange(function () { if (wrap.isConnected) onChainChange(); });
   return wrap;
 }
 
@@ -22185,7 +22185,7 @@ function buildCashOutModal(project, requestClose) {
   }
   amt.addEventListener('input', updatePreview);
   onChainChange();
-  onWalletChange(function () { if (wrap.isConnected) onChainChange(); });
+  onEffectiveAccountChange(function () { if (wrap.isConnected) onChainChange(); });
   loadBalanceTable();
   // Multi-token projects: offer a reclaim-token picker (default to the primary), then re-resolve.
   acctKindsForFunds(project).then(function (kinds) {
@@ -22850,7 +22850,7 @@ function buildLoanModal(project, requestClose) {
     refreshAccountingTokens();
   }
   onChainChange();
-  onWalletChange(function () { if (wrap.isConnected) onChainChange(); });
+  onEffectiveAccountChange(function () { if (wrap.isConnected) onChainChange(); });
 
   btn.addEventListener('click', function () {
     if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; return; }
@@ -24030,7 +24030,7 @@ function buildMoveModal(project) {
   }
 
   onFromChange();
-  onWalletChange(function () { if (wrap.isConnected) refreshBalance(); });
+  onEffectiveAccountChange(function () { if (wrap.isConnected) refreshBalance(); });
   renderBalanceTables(moveBalTable, project, sym);
   // Multi-token projects: offer a backing-token picker (default to the primary), then recompute backing.
   acctKindsForFunds(project).then(function (kinds) {

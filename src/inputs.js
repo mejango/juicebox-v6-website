@@ -3,7 +3,8 @@
 // Boring, explicit code — no magic. Every input type has its own renderer.
 
 import { renderTokenSelect } from './tokens.js';
-import { getAccount, connect, onWalletChange } from './wallet.js';
+import { connect } from './wallet.js';
+import { getEffectiveAccount, onEffectiveAccountChange } from './component-base.js';
 import { isAddress } from 'viem';
 
 let inputIdCounter = 0;
@@ -260,7 +261,7 @@ function renderAddressInput(param, context) {
     selfPill.type = 'button';
 
     function updateSelfPill() {
-      var acc = getAccount();
+      var acc = getEffectiveAccount();
       if (acc) {
         selfPill.textContent = 'self';
         selfPill.className = 'pill selected';
@@ -272,13 +273,13 @@ function renderAddressInput(param, context) {
       }
     }
     updateSelfPill();
-    onWalletChange(updateSelfPill);
+    onEffectiveAccountChange(updateSelfPill);
 
     selfPill.addEventListener('click', function() {
-      var acc = getAccount();
+      var acc = getEffectiveAccount();
       if (!acc) {
         connect().then(function() {
-          var newAcc = getAccount();
+          var newAcc = getEffectiveAccount();
           if (newAcc) input.value = newAcc;
         });
         return;

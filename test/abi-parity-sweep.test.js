@@ -161,6 +161,9 @@ const NO_CANONICAL_ARTIFACT = {
     'lpPositionViewAbi.positionInfo',
     'lpPositionViewAbi.getPoolAndPositionInfo',
     'lpPositionViewAbi.getPositionLiquidity',
+    // Uniswap's StateView lens — periphery, so no Juicebox artifact ships its ABI.
+    'lpStateViewAbi.getPositionInfo',
+    'lpStateViewAbi.getFeeGrowthInside',
   ],
 };
 

@@ -2,7 +2,7 @@
 // Shared building blocks for all component widgets
 
 import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected, proposeSafeTransactions, waitForSafeInitialization } from './wallet.js';
-import { getViewAs, VIEW_AS_TX_ERROR } from './view-as.js';
+import { getViewAs, onViewAsChange, VIEW_AS_TX_ERROR } from './view-as.js';
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
@@ -58,6 +58,22 @@ export { getViewAs, setViewAs, clearViewAs, onViewAsChange, VIEW_AS_TX_ERROR } f
 // and is refused while view-as is active.
 export function getEffectiveAccount() {
   return getViewAs() || getAccount();
+}
+
+/**
+ * Subscribe to changes in the account the UI DISPLAYS. Entering or leaving
+ * "View as" changes that account without any wallet event, so a view that only
+ * listens to the wallet keeps rendering the previous account — the whole page
+ * is supposed to read as the selected one. Transaction paths keep listening to
+ * the wallet alone.
+ */
+export function onEffectiveAccountChange(fn) {
+  var unsubscribeWallet = onWalletChange(fn);
+  var unsubscribeViewAs = onViewAsChange(fn);
+  return function unsubscribeEffectiveAccount() {
+    unsubscribeWallet();
+    unsubscribeViewAs();
+  };
 }
 export { CHAINS, getManifestChains, getChainTokens };
 export { parseAmount, formatAmount };
