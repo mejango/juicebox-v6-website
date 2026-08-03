@@ -20894,6 +20894,13 @@ function renderYouCard(project, opts) {
           : 'Cash outs and loans unlock ' + formatDateShort(delay) + '. Locked values estimate what you could redeem or borrow then.';
         body.appendChild(note);
       }
+      // Your LP positions, listed like your loans: one row per position, with what it has earned and the two
+      // actions its owner can take. The per-chain LP cell above is only a count.
+      if (showLp) {
+        var myLpWrap = el('div', 'you-loans');
+        body.appendChild(myLpWrap);
+        renderYourLpPositions(project, rows, acct, myLpWrap, function () { if (seq === loadSeq) load(); });
+      }
       // Your open loans (owner == connected wallet) + per-loan repay. Custom projects have no loans.
       if (!noLoans) {
         var myLoansWrap = el('div', 'you-loans');
@@ -25393,6 +25400,107 @@ async function refreshLpPositionForRemoval(chainId, pos, expectedAccount) {
 }
 
 // Modal: the connected wallet's LP positions on a chain (current + old pools), each with a Remove (burn) action.
+// "Your LP positions": every position the connected wallet owns in this project's pools, across chains, with its
+// unclaimed fees and the two owner actions. Renders nothing when the wallet has no positions — an unreadable chain
+// says so rather than silently contributing an empty list.
+function renderYourLpPositions(project, rows, acct, host, onDone) {
+  var sym = project.tokenSymbol || 'tokens';
+  var chainIds = (rows || []).map(function (r) { return r.id; }).filter(function (cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; });
+  if (!chainIds.length) return;
+  Promise.all(chainIds.map(function (cid) {
+    return readUserLpPositions(project, cid, acct)
+      .then(function (ps) { return { cid: cid, positions: ps || [] }; })
+      .catch(function () { return { cid: cid, positions: [], failed: true }; });
+  })).then(function (perChain) {
+    if (!host.isConnected) return;
+    var found = [];
+    var failed = [];
+    perChain.forEach(function (entry) {
+      if (entry.failed) { failed.push(entry.cid); return; }
+      entry.positions.forEach(function (pos) { found.push({ cid: entry.cid, pos: pos }); });
+    });
+    if (!found.length && !failed.length) return;
+    host.innerHTML = '';
+    var title = el('div', 'you-loans-title'); title.textContent = 'Your LP positions'; host.appendChild(title);
+    if (failed.length) {
+      var warn = el('div', 'you-footnote');
+      warn.textContent = 'Could not verify the complete LP history on ' + failed.map(chainNameOf).join(', ') + '.';
+      host.appendChild(warn);
+    }
+    if (!found.length) return;
+    var wrap = el('div', 'owners-table-wrap lp-pos-table-wrap');
+    var table = el('div', 'owners-table lp-pos-table');
+    var head = el('div', 'owners-row owners-head');
+    ['Position', 'Chain', 'Holdings', 'Unclaimed fees', ''].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
+    table.appendChild(head);
+    found.forEach(function (entry) {
+      var pos = entry.pos, cid = entry.cid;
+      var tr = el('div', 'owners-row');
+      var idC = el('span'); idC.textContent = '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? '' : ' (old pool)'); tr.appendChild(idC);
+      var chainC = el('span'); chainC.appendChild(chainLogo(cid, null)); var nm = el('span'); nm.textContent = ' ' + chainNameOf(cid); chainC.appendChild(nm); tr.appendChild(chainC);
+      var holdC = el('span', 'owners-balance');
+      holdC.textContent = formatTokens(pos.tokAmt) + ' ' + sym + ' + ' + formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol);
+      tr.appendChild(holdC);
+      var feeC = el('span', 'owners-balance'); feeC.textContent = 'reading…'; tr.appendChild(feeC);
+      var actC = el('span');
+      var claim = el('button', 'detail-check-btn'); claim.textContent = 'Claim fees'; claim.disabled = true; actC.appendChild(claim);
+      var manage = el('button', 'detail-check-btn'); manage.textContent = 'Remove';
+      manage.addEventListener('click', function () { openRemoveLiquidityModal(project, cid, onDone); });
+      actC.appendChild(manage);
+      tr.appendChild(actC);
+      table.appendChild(tr);
+      readLpPositionFees(cid, pos).then(function (fees) {
+        if (!feeC.isConnected) return;
+        if (!fees) { feeC.textContent = 'unavailable'; return; }
+        if (fees.pairFees <= 0n && fees.tokFees <= 0n) { feeC.textContent = 'none yet'; return; }
+        feeC.textContent = formatTokens(fees.tokFees) + ' ' + sym + ' + ' + formatBalance(fees.pairFees, pos.pair.decimals, pos.pair.symbol);
+        claim.disabled = false;
+        claim.addEventListener('click', function () {
+          if (claim.disabled) return;
+          openLpClaimConfirm(project, cid, pos, acct, fees, function () { if (onDone) onDone(); });
+        });
+      }).catch(function () { if (feeC.isConnected) feeC.textContent = 'could not read'; });
+    });
+    wrap.appendChild(table);
+    host.appendChild(wrap);
+  }).catch(function () {});
+}
+
+// Confirm + send an LP fee claim. Shared by the remove-liquidity modal and the "Your LP positions" table so both
+// present the same reviewed calldata.
+function openLpClaimConfirm(project, chainId, pos, acct, claimable, onClaimed) {
+  var sym = project.tokenSymbol || 'tokens';
+  var prep = prepareCollectLpFees(chainId, pos, acct);
+  var feesH = formatTokens(claimable.tokFees) + ' ' + sym + ' + ' + formatBalance(claimable.pairFees, pos.pair.decimals, pos.pair.symbol);
+  openTxConfirm({
+    summary: {
+      action: 'Claim your LP fees from the ' + sym + '/' + pos.pair.symbol + ' pool',
+      rows: [
+        ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
+        ['You receive', '≈ ' + feesH + ' (whatever the pool has accrued at execution)'],
+        ['Liquidity', 'untouched — this claims fees only'],
+        ['To', acct],
+        ['Deadline', prep.smartWallet ? '30 days — survives a multisig signing queue' : '~20 minutes'],
+      ],
+    },
+    chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
+    'function': 'modifyLiquidities', value: '0',
+    calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
+    position: { actions: 'DECREASE_LIQUIDITY 0, TAKE_PAIR (0x0111)', tokenId: pos.tokenId.toString(), expectedReturns: feesH, recipient: acct },
+    args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days — survives a multisig signing queue' : '20 min') + ')' },
+  }, function (ctx) {
+    ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Claiming fees…', 'pending');
+    lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet }).then(function (hash) {
+      ctx.modal.close();
+      if (onClaimed) onClaimed(hash);
+    }).catch(function (e) {
+      ctx.confirm.disabled = false; ctx.cancel.disabled = false;
+      if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
+      var msg = errMessage(e, 'Claim failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
+    });
+  });
+}
+
 function openRemoveLiquidityModal(project, chainId, onDone) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
@@ -25429,37 +25537,11 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
       showFees();
       claim.addEventListener('click', function () {
         if (claim.disabled || !claimable) return;
-        var prep = prepareCollectLpFees(chainId, pos, acct);
-        var feesH = formatTokens(claimable.tokFees) + ' ' + sym + ' + ' + formatBalance(claimable.pairFees, pos.pair.decimals, pos.pair.symbol);
-        openTxConfirm({
-          summary: {
-            action: 'Claim your LP fees from the ' + sym + '/' + pos.pair.symbol + ' pool',
-            rows: [
-              ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
-              ['You receive', '≈ ' + feesH + ' (whatever the pool has accrued at execution)'],
-              ['Liquidity', 'untouched — this claims fees only'],
-              ['To', acct],
-              ['Deadline', prep.smartWallet ? '30 days — survives a multisig signing queue' : '~20 minutes'],
-            ],
-          },
-          chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
-          'function': 'modifyLiquidities', value: '0',
-          calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
-          position: { actions: 'DECREASE_LIQUIDITY 0, TAKE_PAIR (0x0111)', tokenId: pos.tokenId.toString(), expectedReturns: feesH, recipient: acct },
-          args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days — survives a multisig signing queue' : '20 min') + ')' },
-        }, function (ctx) {
-          ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Claiming fees…', 'pending');
-          lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet }).then(function (hash) {
-            ctx.modal.close();
-            rmStatus.className = 'modal-status success'; rmStatus.style.display = '';
-            rmStatus.innerHTML = ''; rmStatus.appendChild(document.createTextNode('Fees claimed | TX: ')); rmStatus.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
-            claim.disabled = true; showFees();
-            if (onDone) onDone();
-          }).catch(function (e) {
-            ctx.confirm.disabled = false; ctx.cancel.disabled = false;
-            if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
-            var msg = errMessage(e, 'Claim failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
-          });
+        openLpClaimConfirm(project, chainId, pos, acct, claimable, function (hash) {
+          rmStatus.className = 'modal-status success'; rmStatus.style.display = '';
+          rmStatus.innerHTML = ''; rmStatus.appendChild(document.createTextNode('Fees claimed | TX: ')); rmStatus.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
+          claim.disabled = true; showFees();
+          if (onDone) onDone();
         });
       });
       row.appendChild(claim);
