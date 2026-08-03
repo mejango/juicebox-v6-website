@@ -24763,7 +24763,9 @@ export function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
     if (bands[j].liq <= 0) continue;
     var h = (bands[j].liq / maxL) * plotH, x = padL + j * bw;
     var color = (amm && bands[j].mid < amm) ? '#6ec4c4' : '#cca080'; // below price: teal-light, above: orange-light
-    svg += '<rect x="' + x.toFixed(1) + '" y="' + (plotTop + plotH - h).toFixed(1) + '" width="' + Math.max(0.5, bw - 0.5).toFixed(1) + '" height="' + h.toFixed(1) + '" fill="' + color + '" opacity="0.5"/>';
+    // data-band ties a bar back to its band: bars are only emitted where there IS
+    // liquidity, so the element order does not track the band index.
+    svg += '<rect data-band="' + j + '" x="' + x.toFixed(1) + '" y="' + (plotTop + plotH - h).toFixed(1) + '" width="' + Math.max(0.5, bw - 0.5).toFixed(1) + '" height="' + h.toFixed(1) + '" fill="' + color + '" opacity="0.5"/>';
   }
   // Markers: dashed line spans the bars; label sits in the row ABOVE the bars (no overlap).
   function marker(spec, label) {
@@ -24778,11 +24780,18 @@ export function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
   var title = el('div', 'detail-card-title lp-depth-title'); title.textContent = 'Depth'; panel.appendChild(title);
   var holder = el('div', 'lp-depth-holder'); holder.innerHTML = svg;
   var tip = el('div', 'lp-depth-tip'); tip.style.display = 'none'; holder.appendChild(tip);
+  var bars = [].slice.call(holder.querySelectorAll('rect[data-band]'));
+  function highlightBand(idx) {
+    bars.forEach(function (bar) {
+      bar.setAttribute('opacity', Number(bar.getAttribute('data-band')) === idx ? '0.95' : '0.5');
+    });
+  }
   holder.addEventListener('mousemove', function (e) {
     var rect = holder.getBoundingClientRect();
     var vx = (e.clientX - rect.left) / rect.width * W;
     var idx = Math.floor((vx - padL) / bw);
-    if (idx < 0 || idx >= N) { tip.style.display = 'none'; return; }
+    if (idx < 0 || idx >= N) { tip.style.display = 'none'; highlightBand(-1); return; }
+    highlightBand(idx);
     var b = bands[idx];
     var hasLiq = b.eth > 0n || b.rev > 0n || b.liq > 0;
     var sideTxt = amm ? (b.mid < amm ? ' | buy-side' : ' | sell-side') : '';
@@ -24796,7 +24805,7 @@ export function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
     tip.style.display = '';
     tip.style.left = Math.max(2, Math.min(rect.width - 150, e.clientX - rect.left + 10)) + 'px';
   });
-  holder.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
+  holder.addEventListener('mouseleave', function () { tip.style.display = 'none'; highlightBand(-1); });
   panel.appendChild(holder);
   return panel;
 }
