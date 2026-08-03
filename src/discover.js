@@ -7038,6 +7038,14 @@ export function groupProjectDeployments(deployments) {
   return groups;
 }
 
+// Discover may paint a stored project row immediately, but a cold cache must
+// wait for the live row before deciding omnichain identity. The ordinary
+// project display is allowed to soft-timeout; grouping is not, because a slow
+// `suckerGroupId` must never masquerade as several unrelated projects.
+export async function resolveDiscoverIdentityRecord(initial, fresh) {
+  return initial || await fresh;
+}
+
 // Enumerate projects across every chain. JBProjects.count is only the upper bound: a project NFT can exist
 // before the project has any JBDirectory state. Treat it as live only once controllerOf(projectId) is set,
 // then use Bendystraw's suckerGroupId—not the numeric ID—to identify linked deployments.
@@ -7054,11 +7062,17 @@ function buildGroups() {
     var live = (await Promise.all(candidates.map(async function (candidate) {
       var ok = await hasDirectoryController(candidate.chain.id, candidate.projectId);
       if (!ok) return null;
-      var record = await fetchBendystrawProjectRecord(candidate.projectId, candidate.chain.id, function (fresh, shown) {
+      var initial = await fetchBendystrawProjectRecord(candidate.projectId, candidate.chain.id, function (fresh, shown) {
         var before = shown && shown.suckerGroupId || null;
         var after = fresh && fresh.suckerGroupId || null;
-        if (before !== after) scheduleProjectGroupRefresh();
+        // Cold grouping below already waits for `fresh`. Only a stored row can
+        // have painted an identity that needs a background regroup.
+        if (shown && before !== after) scheduleProjectGroupRefresh();
       });
+      var record = await resolveDiscoverIdentityRecord(
+        initial,
+        fetchFreshBendystrawProjectRecord(candidate.projectId, candidate.chain.id),
+      );
       return { chainId: candidate.chain.id, name: candidate.chain.name, projectId: candidate.projectId, suckerGroupId: record && record.suckerGroupId || null };
     }))).filter(Boolean);
     return groupProjectDeployments(live);
@@ -7451,16 +7465,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     }
     if (overflowButton) {
       var overflowActive = overflowTabNames.indexOf(tabName) !== -1;
-      overflowButton.classList.toggle('active', overflowActive);
+      overflowButton.classList.toggle('active', overflowActive && overflowButton.getAttribute('aria-expanded') !== 'true');
       overflowButton.setAttribute('aria-label', 'More project sections' + (overflowActive ? ', current: ' + tabName : ''));
-    }
-    if (overflowItems) {
-      for (var oi = 0; oi < overflowItems.length; oi++) {
-        var selected = overflowItems[oi].dataset.tab === tabName;
-        overflowItems[oi].classList.toggle('active', selected);
-        if (selected) overflowItems[oi].setAttribute('aria-current', 'page');
-        else overflowItems[oi].removeAttribute('aria-current');
-      }
     }
   }
   function selectProjectTab(tabName) {
@@ -7488,48 +7494,32 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   overflowButton.type = 'button';
   overflowButton.textContent = '⋮';
   overflowButton.setAttribute('aria-label', 'More project sections');
-  overflowButton.setAttribute('aria-haspopup', 'menu');
   overflowButton.setAttribute('aria-expanded', 'false');
+  overflowButton.dataset.overflowOrientation = 'vertical';
   overflow.appendChild(overflowButton);
-  var overflowMenu = el('div', 'detail-tab-overflow-menu');
-  overflowMenu.setAttribute('role', 'menu');
-  overflowMenu.setAttribute('aria-label', 'More project sections');
-  overflowMenu.hidden = true;
   var overflowItems = [];
   overflowTabNames.forEach(function (tabName) {
-    var item = el('button', 'detail-tab-overflow-item');
+    var item = el('button', 'detail-tab-btn detail-tab-overflow-item');
     item.type = 'button';
     item.textContent = tabName;
     item.dataset.tab = tabName;
-    item.setAttribute('role', 'menuitem');
+    item.setAttribute('role', 'tab');
+    item.setAttribute('aria-selected', 'false');
+    item.hidden = true;
     item.addEventListener('click', function () {
-      overflowMenu.hidden = true;
-      overflowButton.setAttribute('aria-expanded', 'false');
       selectProjectTab(tabName);
-      overflowButton.focus();
     });
     overflowItems.push(item);
-    overflowMenu.appendChild(item);
+    tabRow.appendChild(item);
   });
-  overflow.appendChild(overflowMenu);
   overflowButton.addEventListener('click', function () {
-    overflowMenu.hidden = !overflowMenu.hidden;
-    overflowButton.setAttribute('aria-expanded', overflowMenu.hidden ? 'false' : 'true');
-    if (!overflowMenu.hidden && overflowItems[0]) overflowItems[0].focus();
-  });
-  overflow.addEventListener('keydown', function (event) {
-    if (event.key !== 'Escape' || overflowMenu.hidden) return;
-    event.preventDefault();
-    overflowMenu.hidden = true;
-    overflowButton.setAttribute('aria-expanded', 'false');
-    overflowButton.focus();
-  });
-  overflow.addEventListener('focusout', function () {
-    setTimeout(function () {
-      if (overflow.contains(document.activeElement)) return;
-      overflowMenu.hidden = true;
-      overflowButton.setAttribute('aria-expanded', 'false');
-    }, 0);
+    var expanded = overflowButton.getAttribute('aria-expanded') !== 'true';
+    overflowButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    overflowButton.dataset.overflowOrientation = expanded ? 'horizontal' : 'vertical';
+    overflowButton.textContent = expanded ? '⋯' : '⋮';
+    for (var oi = 0; oi < overflowItems.length; oi++) overflowItems[oi].hidden = !expanded;
+    var currentOverflow = overflowTabNames.indexOf(_activeDetail && _activeDetail.current) !== -1;
+    overflowButton.classList.toggle('active', currentOverflow && !expanded);
   });
   tabBar.appendChild(overflow);
   // Resolve the 721 hook: fill the optimistic Shop tab with real content, or remove it if the project
@@ -12940,7 +12930,7 @@ function renderProjectDraftExport(project) {
   body.appendChild(intro);
   var status = el('div', 'operator-edit-status'); body.appendChild(status);
   var actions = el('div', 'operator-edit-actions extras-actions');
-  var button = el('a', 'operator-cta operator-edit-submit'); button.href = '#'; button.textContent = 'Export .jb'; actions.appendChild(button);
+  var button = el('a', 'operator-cta'); button.href = '#'; button.textContent = 'Export .jb'; actions.appendChild(button);
   body.appendChild(actions); card.appendChild(body);
   var busy = false;
   button.addEventListener('click', function (event) {

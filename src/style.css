@@ -3787,9 +3787,13 @@ input[type="checkbox"].field {
   min-width: 0;
   gap: 0;
   border-bottom: none;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.project-detail-tabs::-webkit-scrollbar { display: none; }
 
 .detail-tab-btn {
+  flex: 0 0 auto;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
@@ -3801,6 +3805,7 @@ input[type="checkbox"].field {
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
 }
 
 .detail-tab-btn:hover {
@@ -3822,20 +3827,7 @@ input[type="checkbox"].field {
 .detail-tab-overflow-button:hover,
 .detail-tab-overflow-button.active { color: var(--c-teal); }
 .detail-tab-overflow-button.active { border-bottom-color: var(--c-teal); }
-.detail-tab-overflow-menu {
-  position: absolute; z-index: 30; top: calc(100% + 4px); right: 0;
-  min-width: 132px; padding: 4px 0; border: 1px solid var(--c-orange-light);
-  background: var(--card-bg); box-shadow: 0 10px 28px rgba(30, 25, 20, 0.16);
-}
-.detail-tab-overflow-menu[hidden] { display: none; }
-.detail-tab-overflow-item {
-  display: block; width: 100%; min-height: 38px; padding: 8px 13px;
-  border: none; background: none; color: var(--muted-2); text-align: left;
-  font-family: inherit; font-size: 11px; font-weight: bold; line-height: 1.4;
-  text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;
-}
-.detail-tab-overflow-item:hover { color: var(--c-teal); background: var(--depth-bg-0); }
-.detail-tab-overflow-item.active { color: var(--c-teal); background: var(--depth-bg-0); }
+.detail-tab-overflow-item[hidden] { display: none; }
 
 /* Owners subtabs: lazy panes (All / Market / Settlement / Splits / Auto Issuance / Loans). */
 .owners-subtabs {

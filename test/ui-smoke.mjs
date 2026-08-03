@@ -108,7 +108,20 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     // 1b. Payer-address copy names the exact direct-transfer and admin boundaries.
     await Q(page, '() => { document.querySelector(".discover-card:not(.discover-card--loading)").click(); return 1; }');
     await page.waitForTimeout(500);
-    await Q(page, '() => { document.querySelector(".detail-tab-overflow-button").click(); document.querySelector(".detail-tab-overflow-item[data-tab=Extras]").click(); return 1; }');
+    const inlineOverflow = await Q(page, `() => {
+      const toggle = document.querySelector('.detail-tab-overflow-button');
+      const extras = document.querySelector('.detail-tab-overflow-item[data-tab=Extras]');
+      toggle.click();
+      const expanded = !extras.hidden && toggle.dataset.overflowOrientation === 'horizontal';
+      toggle.click();
+      const collapsed = extras.hidden && toggle.dataset.overflowOrientation === 'vertical';
+      toggle.click();
+      extras.click();
+      return { expanded, collapsed, stillExpanded: !extras.hidden };
+    }`);
+    check('project admin tabs expand inline and collapse only from the ellipsis',
+      inlineOverflow.expanded && inlineOverflow.collapsed && inlineOverflow.stillExpanded,
+      JSON.stringify(inlineOverflow));
     await page.waitForTimeout(250);
     await Q(page, '() => { [...document.querySelectorAll(".extras-card button")].find(b=>b.textContent.trim()==="Create payer address").click(); return 1; }');
     const payerCopy = await Q(page, '() => { const card=document.querySelector(".extras-card"); const modal=document.querySelector(".modal-dialog"); const editable=modal.querySelector(".extras-editable-row input"); editable.click(); return { title:card.querySelector(".detail-card-title").textContent.trim(), body:card.textContent+modal.textContent, admin:modal.textContent }; }');

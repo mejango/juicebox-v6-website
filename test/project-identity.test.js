@@ -1,8 +1,41 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { groupProjectDeployments, pidOn, projectIdsByChainFromSuckerGroup } from '../src/discover.js';
+import {
+  groupProjectDeployments,
+  pidOn,
+  projectIdsByChainFromSuckerGroup,
+  resolveDiscoverIdentityRecord,
+} from '../src/discover.js';
 
 describe('cross-chain project identity', () => {
+  it('waits for a cold live row instead of treating indexer latency as no sucker group', async () => {
+    var resolveFresh;
+    var fresh = new Promise((resolve) => { resolveFresh = resolve; });
+    var pending = resolveDiscoverIdentityRecord(null, fresh);
+    var settled = false;
+    pending.then(() => { settled = true; });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveFresh({ suckerGroupId: 'group-a' });
+    await expect(pending).resolves.toEqual({ suckerGroupId: 'group-a' });
+  });
+
+  it('can group delayed live rows into one omnichain card', async () => {
+    const rows = await Promise.all([
+      resolveDiscoverIdentityRecord(null, Promise.resolve({ suckerGroupId: 'group-a' })),
+      resolveDiscoverIdentityRecord(null, Promise.resolve({ suckerGroupId: 'group-a' })),
+    ]);
+    const groups = groupProjectDeployments([
+      { chainId: 1, projectId: 7, suckerGroupId: rows[0].suckerGroupId },
+      { chainId: 10, projectId: 12, suckerGroupId: rows[1].suckerGroupId },
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].idByChain).toEqual({ 1: 7, 10: 12 });
+  });
+
   it('groups only deployments with the same verified sucker group', () => {
     const groups = groupProjectDeployments([
       { chainId: 1, projectId: 7, name: 'Ethereum', suckerGroupId: 'group-a' },
