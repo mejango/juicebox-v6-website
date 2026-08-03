@@ -24634,16 +24634,30 @@ async function readLpPositions(project, chainId) {
     var client = clientFor(chainId);
     var empty = { owners: [], totalEth: 0n, totalRev: 0n, poolPrice: poolPrice, count: 0, positions: [], pair: pair, pairIsC0: pairIsC0 };
 
-    var tokenIds = await lpPoolPositionTokenIds(chainId, pm, posm, poolId);
-    if (!tokenIds.length) return empty;
-    var det = await lpReadPositionDetails(client, posm, tokenIds, poolId);
+    // The index answers this in one query; the log scan stays as the fallback for a pool it hasn't
+    // reached (or a bendystraw outage), so the Market tab never renders an empty pool by mistake.
+    var indexed = await indexedPoolPositions(chainId, poolId);
+    var det = indexed
+      ? indexed.map(function (row) {
+          return {
+            tokenId: toBigInt(row.tokenId), owner: row.owner, liquidity: toBigInt(row.liquidity), info: 1n,
+            tickLower: Number(row.tickLower), tickUpper: Number(row.tickUpper),
+            claimed0: toBigInt(row.feesClaimed0), claimed1: toBigInt(row.feesClaimed1),
+          };
+        })
+      : null;
+    if (!det) {
+      var tokenIds = await lpPoolPositionTokenIds(chainId, pm, posm, poolId);
+      if (!tokenIds.length) return empty;
+      det = await lpReadPositionDetails(client, posm, tokenIds, poolId);
+    }
 
     var totalEth = 0n, totalRev = 0n, byOwner = {}, positions = [];
     var pairScale = Math.pow(10, pairDec);
     det.forEach(function (p) {
       if (!p.owner || p.liquidity <= 0n || p.info === 0n) return;
-      var tickUpper = Number(lpSignExtend24((p.info >> 32n) & 0xffffffn));
-      var tickLower = Number(lpSignExtend24((p.info >> 8n) & 0xffffffn));
+      var tickUpper = p.tickUpper != null ? p.tickUpper : Number(lpSignExtend24((p.info >> 32n) & 0xffffffn));
+      var tickLower = p.tickLower != null ? p.tickLower : Number(lpSignExtend24((p.info >> 8n) & 0xffffffn));
       var amounts = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), p.liquidity);
       // amount0/amount1 are currency-ordered; map to pair ("eth") and project token ("rev").
       var pairAmt = pairIsC0 ? amounts.amount0 : amounts.amount1;
@@ -24652,8 +24666,12 @@ async function readLpPositions(project, chainId) {
       positions.push({ tickLower: tickLower, tickUpper: tickUpper, liquidity: p.liquidity, eth: pairAmt, rev: tokAmt });
       var val = Number(pairAmt) / pairScale + (Number(tokAmt) / 1e18) * poolPrice; // value in pair-token terms
       var k = p.owner.toLowerCase();
-      if (!byOwner[k]) byOwner[k] = { address: p.owner, valueEth: 0, eth: 0n, rev: 0n, positions: 0 };
+      if (!byOwner[k]) byOwner[k] = { address: p.owner, valueEth: 0, eth: 0n, rev: 0n, positions: 0, claimedPair: null, claimedTok: null };
       byOwner[k].valueEth += val; byOwner[k].eth += pairAmt; byOwner[k].rev += tokAmt; byOwner[k].positions++;
+      if (p.claimed0 != null) {
+        byOwner[k].claimedPair = (byOwner[k].claimedPair || 0n) + (pairIsC0 ? p.claimed0 : p.claimed1);
+        byOwner[k].claimedTok = (byOwner[k].claimedTok || 0n) + (pairIsC0 ? p.claimed1 : p.claimed0);
+      }
     });
     var owners = Object.keys(byOwner).map(function (k) { return byOwner[k]; }).sort(function (a, b) { return b.valueEth - a.valueEth; });
     return { owners: owners, totalEth: totalEth, totalRev: totalRev, poolPrice: poolPrice, sqrtP: sqrtP, count: owners.length, positions: positions, pair: pair, pairIsC0: pairIsC0 };
@@ -25259,6 +25277,28 @@ async function lpScanPoolPositions(project, chainId, hookAddr, hookIsCurrent) {
     var pairIsC0 = (c0 === pair.addr);
     var sp = Number(sqrtP) / Math.pow(2, 96), rawP = sp * sp;
     var poolPrice = (pairIsC0 ? (rawP > 0 ? 1 / rawP : 0) : rawP) * Math.pow(10, 18 - pair.decimals);
+    var base = { key: key, poolId: poolId, hookIsCurrent: hookIsCurrent, oracleHook: key.hooks,
+      pairIsC0: pairIsC0, poolPrice: poolPrice, pair: pair };
+    var describe = function (tokenId, owner, tickLower, tickUpper, liquidity, claimed0, claimed1) {
+      var amt = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), liquidity);
+      return Object.assign({}, base, {
+        tokenId: tokenId, owner: owner, tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity,
+        pairAmt: pairIsC0 ? amt.amount0 : amt.amount1, tokAmt: pairIsC0 ? amt.amount1 : amt.amount0,
+        // Fees already taken, from the index. Undefined when it hasn't indexed this pool — the UI then
+        // shows only what's currently unclaimed rather than a lifetime total it can't verify.
+        claimedPair: claimed0 == null ? undefined : (pairIsC0 ? claimed0 : claimed1),
+        claimedTok: claimed0 == null ? undefined : (pairIsC0 ? claimed1 : claimed0),
+      });
+    };
+
+    var indexed = await indexedPoolPositions(chainId, poolId);
+    if (indexed) {
+      return indexed.map(function (row) {
+        return describe(toBigInt(row.tokenId), row.owner, Number(row.tickLower), Number(row.tickUpper),
+          toBigInt(row.liquidity), toBigInt(row.feesClaimed0), toBigInt(row.feesClaimed1));
+      }).filter(function (p) { return p.liquidity > 0n; });
+    }
+
     var tokenIds = await lpPoolPositionTokenIds(chainId, pm, posm, poolId);
     if (!tokenIds.length) return [];
     var det = await lpReadPositionDetails(client, posm, tokenIds, poolId);
@@ -25267,11 +25307,7 @@ async function lpScanPoolPositions(project, chainId, hookAddr, hookIsCurrent) {
       if (!p.owner || p.liquidity <= 0n || p.info === 0n) return;
       var tickUpper = Number(lpSignExtend24((p.info >> 32n) & 0xffffffn));
       var tickLower = Number(lpSignExtend24((p.info >> 8n) & 0xffffffn));
-      var amt = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), p.liquidity);
-      out.push({ tokenId: p.tokenId, owner: p.owner, key: key, poolId: poolId, hookIsCurrent: hookIsCurrent, oracleHook: key.hooks,
-        tickLower: tickLower, tickUpper: tickUpper, liquidity: p.liquidity,
-        pairAmt: pairIsC0 ? amt.amount0 : amt.amount1, tokAmt: pairIsC0 ? amt.amount1 : amt.amount0,
-        pairIsC0: pairIsC0, poolPrice: poolPrice, pair: pair });
+      out.push(describe(p.tokenId, p.owner, tickLower, tickUpper, p.liquidity, null, null));
     });
     return out;
   } catch (e) { throw e; }
@@ -25289,6 +25325,28 @@ async function readUserLpPositions(project, chainId, account) {
   if (oldHook && lc(oldHook) !== lc(newHook)) tasks.push(lpScanPoolPositions(project, chainId, oldHook, false));
   var all = [].concat.apply([], await Promise.all(tasks));
   return all.filter(function (p) { return p.owner && lc(p.owner) === lc(account); });
+}
+
+// Indexed LP positions (bendystraw `buyback_pool_position`). One query replaces walking ModifyLiquidity logs
+// back to the pool's Initialize, and carries `feesClaimed*`, which no client can derive: the pool overwrites a
+// position's fee checkpoint on every collect, so live state only ever shows what is currently unclaimed.
+var BENDYSTRAW_LP_POSITIONS_QUERY = 'query($chainId: Int!, $poolId: String!, $limit: Int!, $offset: Int!) { '
+  + 'buybackPoolPositions(where: { chainId: $chainId, poolId: $poolId, burned: false }, '
+  + 'orderBy: "tokenId", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { tokenId owner tickLower tickUpper liquidity feesClaimed0 feesClaimed1 } totalCount } }';
+
+// The pool's positions from the index, or null when it has nothing for this pool — which reads the same as
+// "not indexed yet", so the caller falls back to the onchain scan rather than showing an empty pool.
+async function indexedPoolPositions(chainId, poolId) {
+  try {
+    var page = await fetchBendystrawCollectionPages(BENDYSTRAW_LP_POSITIONS_QUERY, 'buybackPoolPositions', {
+      chainId: chainId, poolId: poolId,
+    }, 250);
+    var items = (page && page.items) || [];
+    return items.length ? items : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 var lpStateViewAbi = [
@@ -25431,7 +25489,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
     var wrap = el('div', 'owners-table-wrap lp-pos-table-wrap');
     var table = el('div', 'owners-table lp-pos-table');
     var head = el('div', 'owners-row owners-head');
-    ['Position', 'Chain', 'Holdings', 'Unclaimed fees', ''].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
+    ['Position', 'Chain', 'Holdings', 'Unclaimed fees', 'Lifetime fees', ''].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
     table.appendChild(head);
     found.forEach(function (entry) {
       var pos = entry.pos, cid = entry.cid;
@@ -25442,6 +25500,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
       holdC.textContent = formatTokens(pos.tokAmt) + ' ' + sym + ' + ' + formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol);
       tr.appendChild(holdC);
       var feeC = el('span', 'owners-balance'); feeC.textContent = 'reading…'; tr.appendChild(feeC);
+      var lifeC = el('span', 'owners-balance'); lifeC.textContent = pos.claimedPair == null ? '—' : 'reading…'; tr.appendChild(lifeC);
       var actC = el('span');
       var claim = el('button', 'detail-check-btn'); claim.textContent = 'Claim fees'; claim.disabled = true; actC.appendChild(claim);
       var manage = el('button', 'detail-check-btn'); manage.textContent = 'Remove';
@@ -25452,8 +25511,22 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
       readLpPositionFees(cid, pos).then(function (fees) {
         if (!feeC.isConnected) return;
         if (!fees) { feeC.textContent = 'unavailable'; return; }
-        if (fees.pairFees <= 0n && fees.tokFees <= 0n) { feeC.textContent = 'none yet'; return; }
+        if (fees.pairFees <= 0n && fees.tokFees <= 0n) {
+          feeC.textContent = 'none yet';
+          if (pos.claimedPair != null) {
+            lifeC.textContent = (pos.claimedPair > 0n || pos.claimedTok > 0n)
+              ? formatTokens(pos.claimedTok) + ' ' + sym + ' + ' + formatBalance(pos.claimedPair, pos.pair.decimals, pos.pair.symbol)
+              : 'none yet';
+          }
+          return;
+        }
         feeC.textContent = formatTokens(fees.tokFees) + ' ' + sym + ' + ' + formatBalance(fees.pairFees, pos.pair.decimals, pos.pair.symbol);
+        // The pool forgets what a position already took, so lifetime is only
+        // knowable where the index has been accumulating it.
+        if (pos.claimedPair != null) {
+          lifeC.textContent = formatTokens(pos.claimedTok + fees.tokFees) + ' ' + sym + ' + '
+            + formatBalance(pos.claimedPair + fees.pairFees, pos.pair.decimals, pos.pair.symbol);
+        }
         claim.disabled = false;
         claim.addEventListener('click', function () {
           if (claim.disabled) return;
