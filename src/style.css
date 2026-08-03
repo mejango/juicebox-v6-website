@@ -3775,10 +3775,17 @@ input[type="checkbox"].field {
 
 
 /* Sub-tabs */
+.project-detail-tabbar {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 16px;
+}
 .project-detail-tabs {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   gap: 0;
-  margin-bottom: 16px;
   border-bottom: none;
 }
 
@@ -3804,6 +3811,31 @@ input[type="checkbox"].field {
   color: var(--c-teal);
   border-bottom-color: var(--c-teal);
 }
+
+.detail-tab-overflow { position: relative; flex: 0 0 auto; margin-left: auto; }
+.detail-tab-overflow-button {
+  width: 42px; min-height: 40px; padding: 3px 10px 7px;
+  border: none; border-bottom: 2px solid transparent; background: none;
+  color: var(--muted-2); font-family: inherit; font-size: 22px; font-weight: bold;
+  line-height: 1; cursor: pointer;
+}
+.detail-tab-overflow-button:hover,
+.detail-tab-overflow-button.active { color: var(--c-teal); }
+.detail-tab-overflow-button.active { border-bottom-color: var(--c-teal); }
+.detail-tab-overflow-menu {
+  position: absolute; z-index: 30; top: calc(100% + 4px); right: 0;
+  min-width: 132px; padding: 4px 0; border: 1px solid var(--c-orange-light);
+  background: var(--card-bg); box-shadow: 0 10px 28px rgba(30, 25, 20, 0.16);
+}
+.detail-tab-overflow-menu[hidden] { display: none; }
+.detail-tab-overflow-item {
+  display: block; width: 100%; min-height: 38px; padding: 8px 13px;
+  border: none; background: none; color: var(--muted-2); text-align: left;
+  font-family: inherit; font-size: 11px; font-weight: bold; line-height: 1.4;
+  text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;
+}
+.detail-tab-overflow-item:hover { color: var(--c-teal); background: var(--depth-bg-0); }
+.detail-tab-overflow-item.active { color: var(--c-teal); background: var(--depth-bg-0); }
 
 /* Owners subtabs: lazy panes (All / Market / Settlement / Splits / Auto Issuance / Loans). */
 .owners-subtabs {
@@ -6037,7 +6069,8 @@ select.create-input-auto { width: auto; max-width: 100%; }
 
   /* Detail subtab row — space it from the stacked Pay card above, and scroll horizontally
      the same way as the top nav (Activity adds a 6th tab on phones). */
-  .project-detail-tabs { overflow-x: auto; scrollbar-width: none; margin-top: 18px; }
+  .project-detail-tabbar { margin-top: 18px; }
+  .project-detail-tabs { overflow-x: auto; scrollbar-width: none; }
   .project-detail-tabs::-webkit-scrollbar { display: none; }
   .detail-tab-btn { flex: 0 0 auto; white-space: nowrap; }
 

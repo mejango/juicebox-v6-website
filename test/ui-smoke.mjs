@@ -108,9 +108,10 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     // 1b. Payer-address copy names the exact direct-transfer and admin boundaries.
     await Q(page, '() => { document.querySelector(".discover-card:not(.discover-card--loading)").click(); return 1; }');
     await page.waitForTimeout(500);
-    await Q(page, '() => { [...document.querySelectorAll(".detail-tab-btn")].find(b=>b.textContent.trim()==="Extras").click(); return 1; }');
+    await Q(page, '() => { document.querySelector(".detail-tab-overflow-button").click(); document.querySelector(".detail-tab-overflow-item[data-tab=Extras]").click(); return 1; }');
     await page.waitForTimeout(250);
-    const payerCopy = await Q(page, '() => { const card=document.querySelector(".extras-card"); const body=card.textContent; const editable=card.querySelector(".extras-editable-row input"); editable.click(); return { title:card.querySelector(".detail-card-title").textContent.trim(), body, admin:card.textContent }; }');
+    await Q(page, '() => { [...document.querySelectorAll(".extras-card button")].find(b=>b.textContent.trim()==="Create payer address").click(); return 1; }');
+    const payerCopy = await Q(page, '() => { const card=document.querySelector(".extras-card"); const modal=document.querySelector(".modal-dialog"); const editable=modal.querySelector(".extras-editable-row input"); editable.click(); return { title:card.querySelector(".detail-card-title").textContent.trim(), body:card.textContent+modal.textContent, admin:modal.textContent }; }');
     check('payer address copy specifies native ETH, direct ERC-20, immutable defaults, and admin powers',
       payerCopy.title === 'Payer address' && payerCopy.body.includes('native token (ETH)')
         && payerCopy.body.includes('ERC-20 tokens directly') && payerCopy.body.includes('are permanent')

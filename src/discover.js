@@ -7402,7 +7402,13 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   tabs.push(ownerTabName); // Owner/Operator stays last, after Shop and Extras.
   // Phones: Activity is the first subtab and the default (the left-column card is omitted above).
   if (activityAsTab) { builders.Activity = function () { return activityCardEl; }; tabs.unshift('Activity'); }
+  var overflowTabNames = ['Extras', ownerTabName];
+  var visibleTabs = tabs.filter(function (name) { return overflowTabNames.indexOf(name) === -1; });
+  var tabBar = el('div', 'project-detail-tabbar');
   var tabRow = el('div', 'project-detail-tabs');
+  tabRow.setAttribute('role', 'tablist');
+  tabRow.setAttribute('aria-label', 'Project sections');
+  tabBar.appendChild(tabRow);
   var contentArea = el('div', 'project-detail-content');
   attachCardPromptLinks(wrap); // every card across the whole detail (tabs + activity + side cards) gets a link
   var built = {};
@@ -7438,21 +7444,94 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     contentArea.innerHTML = '';
     contentArea.appendChild(built[tabName]);
     var btns = tabRow.querySelectorAll('.detail-tab-btn');
-    for (var b = 0; b < btns.length; b++) btns[b].classList.toggle('active', btns[b].textContent === tabName);
+    for (var b = 0; b < btns.length; b++) {
+      var isActiveTab = btns[b].textContent === tabName;
+      btns[b].classList.toggle('active', isActiveTab);
+      btns[b].setAttribute('aria-selected', isActiveTab ? 'true' : 'false');
+    }
+    if (overflowButton) {
+      var overflowActive = overflowTabNames.indexOf(tabName) !== -1;
+      overflowButton.classList.toggle('active', overflowActive);
+      overflowButton.setAttribute('aria-label', 'More project sections' + (overflowActive ? ', current: ' + tabName : ''));
+    }
+    if (overflowItems) {
+      for (var oi = 0; oi < overflowItems.length; oi++) {
+        var selected = overflowItems[oi].dataset.tab === tabName;
+        overflowItems[oi].classList.toggle('active', selected);
+        if (selected) overflowItems[oi].setAttribute('aria-current', 'page');
+        else overflowItems[oi].removeAttribute('aria-current');
+      }
+    }
   }
-  for (var i = 0; i < tabs.length; i++) {
+  function selectProjectTab(tabName) {
+    showTab(tabName);
+    // A subtabbed section sets _activeDetail.subtab during build; include it so refresh restores both.
+    routerSetHash(projectHash(project, tabName, _activeDetail && _activeDetail.subtab));
+  }
+  for (var i = 0; i < visibleTabs.length; i++) {
     (function (tabName) {
       var btn = document.createElement('button');
       btn.className = 'detail-tab-btn';
       btn.textContent = tabName;
+      btn.type = 'button';
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', 'false');
       btn.addEventListener('click', function () {
-        showTab(tabName);
-        // A subtabbed section sets _activeDetail.subtab during build; include it so refresh restores both.
-        routerSetHash(projectHash(project, tabName, _activeDetail && _activeDetail.subtab));
+        selectProjectTab(tabName);
       });
       tabRow.appendChild(btn);
-    })(tabs[i]);
+    })(visibleTabs[i]);
   }
+
+  var overflow = el('div', 'detail-tab-overflow');
+  var overflowButton = el('button', 'detail-tab-overflow-button');
+  overflowButton.type = 'button';
+  overflowButton.textContent = '⋮';
+  overflowButton.setAttribute('aria-label', 'More project sections');
+  overflowButton.setAttribute('aria-haspopup', 'menu');
+  overflowButton.setAttribute('aria-expanded', 'false');
+  overflow.appendChild(overflowButton);
+  var overflowMenu = el('div', 'detail-tab-overflow-menu');
+  overflowMenu.setAttribute('role', 'menu');
+  overflowMenu.setAttribute('aria-label', 'More project sections');
+  overflowMenu.hidden = true;
+  var overflowItems = [];
+  overflowTabNames.forEach(function (tabName) {
+    var item = el('button', 'detail-tab-overflow-item');
+    item.type = 'button';
+    item.textContent = tabName;
+    item.dataset.tab = tabName;
+    item.setAttribute('role', 'menuitem');
+    item.addEventListener('click', function () {
+      overflowMenu.hidden = true;
+      overflowButton.setAttribute('aria-expanded', 'false');
+      selectProjectTab(tabName);
+      overflowButton.focus();
+    });
+    overflowItems.push(item);
+    overflowMenu.appendChild(item);
+  });
+  overflow.appendChild(overflowMenu);
+  overflowButton.addEventListener('click', function () {
+    overflowMenu.hidden = !overflowMenu.hidden;
+    overflowButton.setAttribute('aria-expanded', overflowMenu.hidden ? 'false' : 'true');
+    if (!overflowMenu.hidden && overflowItems[0]) overflowItems[0].focus();
+  });
+  overflow.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || overflowMenu.hidden) return;
+    event.preventDefault();
+    overflowMenu.hidden = true;
+    overflowButton.setAttribute('aria-expanded', 'false');
+    overflowButton.focus();
+  });
+  overflow.addEventListener('focusout', function () {
+    setTimeout(function () {
+      if (overflow.contains(document.activeElement)) return;
+      overflowMenu.hidden = true;
+      overflowButton.setAttribute('aria-expanded', 'false');
+    }, 0);
+  });
+  tabBar.appendChild(overflow);
   // Resolve the 721 hook: fill the optimistic Shop tab with real content, or remove it if the project
   // has no hook and can't get one (revnets always keep it — operators can add tiers even before any exist).
   fetchProjectTiers(project).then(function (shop) {
@@ -7478,7 +7557,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // non-Safe controllers (see renderBackOfficeSection). This also keeps the tab reachable when the indexer is
   // down and the operator can't be resolved — the actions self-gate on connect.
 
-  rightCol.appendChild(tabRow);
+  rightCol.appendChild(tabBar);
   _activeDetail = { key: detailKey, showTab: showTab, current: startTab, project: project, isMobile: activityAsTab };
   showTab(startTab);
   rightCol.appendChild(contentArea);
