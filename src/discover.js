@@ -6,6 +6,7 @@ import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult,
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { downsampleTimeSeries } from './time-series.js';
+import { cacheValidated } from './cache.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
@@ -4963,6 +4964,34 @@ var allOfAbi = [{
     { name: 'metadata', type: 'uint256' },
   ]}],
 }];
+var latestRulesetIdOfAbi = [{
+  type: 'function', name: 'latestRulesetIdOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }],
+  outputs: [{ type: 'uint256' }],
+}];
+
+/**
+ * The project's full ruleset history, served from the last session whenever it
+ * provably has not grown.
+ *
+ * Every stored ruleset row is immutable — JBRulesets.queueFor only ever mints a
+ * strictly-new id and no path rewrites an existing row — so the only way this
+ * list changes is by gaining one. `latestRulesetIdOf` is a single word read
+ * that detects exactly that, replacing a paginated multicall on every load.
+ * For a revnet it can never move at all: its stages are queued once at
+ * deployFor and no revnet actor holds QUEUE_RULESETS.
+ */
+async function readAllRulesetsCached(chainId, projectId) {
+  return cacheValidated(
+    'rulesets',
+    DISCOVER_NETWORK + ':' + chainId + ':' + String(projectId),
+    function () {
+      return read(chainId, 'JBRulesets', latestRulesetIdOfAbi, 'latestRulesetIdOf', [BigInt(projectId)]);
+    },
+    function () { return readAllRulesets(chainId, projectId); }
+  );
+}
+
 async function readAllRulesets(chainId, projectId) {
   var out = [], startingId = 0n, seen = {};
   while (true) {
@@ -6405,7 +6434,7 @@ async function fetchProject(id, chainId) {
     }).catch(function () {}));
 
   // Stages = the project's queued rulesets (revnet stage timeline).
-  jobs.push(readAllRulesets(chainId, pid)
+  jobs.push(readAllRulesetsCached(chainId, pid)
     .then(function (rs) { project.stages = rs; }).catch(function () {}));
 
   // Loan exposure (RevLoans). Reverts for non-loan-source projects — caught.
