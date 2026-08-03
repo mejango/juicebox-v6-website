@@ -5085,6 +5085,26 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 }
 .issuance-range-btn.active { color: var(--c-teal); border-color: var(--c-teal); }
 .issuance-chart { width: 100%; }
+
+/* Standalone market price chart (Owners → Market) — scaled to the trades, not the issuance ladder. */
+.market-chart { margin: 0 0 22px; }
+.market-chart-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.market-chart-price { font-size: 22px; font-weight: bold; margin: 4px 0 2px; }
+.market-chart-change { font-size: 12px; font-weight: bold; color: var(--muted-2); min-height: 16px; }
+.market-chart-change.is-up { color: var(--c-teal); }
+.market-chart-change.is-down { color: var(--c-orange); }
+.market-chart-ranges { margin: 0; }
+.market-chart-body { margin-top: 10px; }
+.market-chart-holder { width: 100%; position: relative; }
+.market-chart-svg { display: block; width: 100%; height: auto; }
+.market-chart-svg text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; fill: var(--c-black-light); }
+.market-chart-tip {
+  position: absolute; top: 4px; pointer-events: none; background: var(--c-black); color: var(--card-bg);
+  font-size: 11px; line-height: 1.35; padding: 5px 8px; border-radius: 0; white-space: nowrap; z-index: 5;
+}
+.market-chart-tip-price { font-weight: bold; }
+.market-chart-tip-when { opacity: 0.85; }
+
 /* Price chart dropped because the issuance unit can't convert onto the pair-token axis (no feed). */
 .price-chart-unavailable { padding: 22px 14px; font-size: 12px; color: var(--muted); text-align: center; }
 

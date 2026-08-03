@@ -18239,6 +18239,166 @@ function renderOwnersAll(project) {
   return wrap;
 }
 
+var MARKET_CHART_RANGES = [
+  { label: '1D', seconds: 86400 },
+  { label: '7D', seconds: 7 * 86400 },
+  { label: '30D', seconds: 30 * 86400 },
+  { label: '3M', seconds: 91 * 86400 },
+  { label: '1Y', seconds: 365 * 86400 },
+  { label: 'All', seconds: 0 },
+];
+
+// The market price on its own terms (Owners → Market, top card). The Overview chart anchors its
+// vertical scale to the issuance ladder, which flattens real market movement; this one scales to the
+// trades themselves: the pool's registration price, each swap's exact post-trade spot, and the live
+// slot0 price at Now.
+function renderMarketPriceChart(project) {
+  var sym = project.tokenSymbol || 'token';
+  var W = 640, H = 220, padL = 8, padR = 8, padT = 12, padB = 22;
+  var host = el('div', 'market-chart');
+  var head = el('div', 'market-chart-head');
+  var headline = el('div', 'market-chart-headline');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Market price'; headline.appendChild(title);
+  var priceLine = el('div', 'market-chart-price'); headline.appendChild(priceLine);
+  var changeLine = el('div', 'market-chart-change'); headline.appendChild(changeLine);
+  head.appendChild(headline);
+  var pills = el('div', 'issuance-ranges market-chart-ranges'); head.appendChild(pills);
+  host.appendChild(head);
+  var body = el('div', 'market-chart-body'); body.appendChild(skel('100%', '200px')); host.appendChild(body);
+
+  var range = 30 * 86400;
+  var series = [];     // observed AMM spots, ascending
+  var live = 0;
+  var pairSym = '';
+  var ready = false;
+
+  MARKET_CHART_RANGES.forEach(function (spec) {
+    var button = el('button', 'issuance-range-btn');
+    button.type = 'button';
+    button.textContent = spec.label;
+    button._seconds = spec.seconds;
+    button.addEventListener('click', function () { range = spec.seconds; syncPills(); draw(); });
+    pills.appendChild(button);
+  });
+  function syncPills() {
+    [].slice.call(pills.children).forEach(function (button) {
+      var active = button._seconds === range;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+  syncPills();
+
+  function draw() {
+    if (!ready || !host.isConnected) return;
+    var now = Math.floor(Date.now() / 1000);
+    var first = series.length ? series[0].timestamp : now;
+    var t0 = Math.min(now - 1, range === 0 ? first : Math.max(first, now - range));
+    // The last observation before the window opens carries the line in at its true level.
+    var before = null, pts = [];
+    series.forEach(function (point) {
+      if (point.timestamp < t0) { before = point; return; }
+      if (point.timestamp <= now) pts.push({ timestamp: point.timestamp, value: point.value });
+    });
+    if (before) pts.unshift({ timestamp: t0, value: before.value });
+    if (live > 0) pts.push({ timestamp: now, value: live });
+
+    priceLine.textContent = live > 0 ? formatPrice(live) + ' ' + pairSym + '/' + sym : '—';
+    var opening = pts.length ? pts[0].value : live;
+    var change = opening > 0 && live > 0 ? (live - opening) / opening : 0;
+    changeLine.textContent = pts.length > 1
+      ? (change >= 0 ? '+' : '−') + Math.abs(change * 100).toFixed(Math.abs(change) < 0.1 ? 2 : 1) + '%'
+        + ' over ' + (range === 0 ? 'all time' : 'this range')
+      : '';
+    changeLine.className = 'market-chart-change'
+      + (pts.length > 1 && change > 0 ? ' is-up' : pts.length > 1 && change < 0 ? ' is-down' : '');
+
+    body.textContent = '';
+    if (pts.length < 2) {
+      var note = el('div', 'detail-card-body owners-intro');
+      note.textContent = 'No trades in this range yet — the price above is the live pool price.';
+      body.appendChild(note);
+      return;
+    }
+
+    var low = Infinity, high = 0;
+    pts.forEach(function (point) { low = Math.min(low, point.value); high = Math.max(high, point.value); });
+    var pad = high > low ? (high - low) * 0.12 : Math.max(high * 0.1, 1e-18);
+    var yMin = Math.max(0, low - pad), yMax = high + pad;
+    var xOf = function (t) { return padL + (W - padL - padR) * (t - t0) / Math.max(1, now - t0); };
+    var yOf = function (v) { return padT + (H - padT - padB) * (1 - (v - yMin) / Math.max(yMax - yMin, 1e-18)); };
+    var line = pts.map(function (point) { return xOf(point.timestamp).toFixed(1) + ',' + yOf(point.value).toFixed(1); }).join(' ');
+    var floorY = (H - padB).toFixed(1);
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="market-chart-svg" role="img">'
+      + '<defs><linearGradient id="market-chart-fill" x1="0" y1="0" x2="0" y2="1">'
+      + '<stop offset="0%" stop-color="#b8602e" stop-opacity="0.22"/>'
+      + '<stop offset="100%" stop-color="#b8602e" stop-opacity="0"/></linearGradient></defs>'
+      + '<line x1="' + padL + '" y1="' + floorY + '" x2="' + (W - padR) + '" y2="' + floorY + '" stroke="#e0d6cc" stroke-width="1"/>'
+      + '<polygon points="' + xOf(pts[0].timestamp).toFixed(1) + ',' + floorY + ' ' + line + ' ' + xOf(now).toFixed(1) + ',' + floorY + '" fill="url(#market-chart-fill)"/>'
+      + '<polyline points="' + line + '" fill="none" stroke="#b8602e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+      + '<line class="market-chart-cursor" x1="0" y1="' + padT + '" x2="0" y2="' + floorY + '" stroke="#9c8a7a" stroke-width="1" stroke-dasharray="3 3" style="display:none"/>'
+      + '<circle class="market-chart-dot" cx="' + xOf(now).toFixed(1) + '" cy="' + yOf(pts[pts.length - 1].value).toFixed(1) + '" r="4" fill="#b8602e" stroke="#fff" stroke-width="1.5"/>'
+      + '<text x="' + (padL + 2) + '" y="' + (padT + 10) + '" font-size="12" fill="#7d6858">' + formatPrice(yMax) + '</text>'
+      + '<text x="' + (padL + 2) + '" y="' + (H - padB - 4) + '" font-size="12" fill="#7d6858">' + formatPrice(yMin) + '</text>'
+      + '<text x="' + padL + '" y="' + (H - 6) + '" font-size="12" fill="#7d6858">' + priceChartAxisLabel(t0, now - t0) + '</text>'
+      + '<text x="' + (W - padR) + '" y="' + (H - 6) + '" font-size="12" fill="#7d6858" text-anchor="end">Now</text>'
+      + '</svg>';
+    var holder = el('div', 'market-chart-holder');
+    holder.innerHTML = svg;
+    // setAttribute, not string interpolation — sym/pairSym are project-controlled ERC-20 symbols.
+    holder.querySelector('svg').setAttribute('aria-label', sym + ' market price in ' + pairSym);
+    var tip = el('div', 'market-chart-tip'); tip.style.display = 'none'; holder.appendChild(tip);
+    var cursor = holder.querySelector('.market-chart-cursor');
+    var dot = holder.querySelector('.market-chart-dot');
+    holder.addEventListener('mousemove', function (e) {
+      var rect = holder.getBoundingClientRect();
+      var fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      var t = t0 + fraction * (now - t0);
+      var nearest = pts[0];
+      pts.forEach(function (point) {
+        if (Math.abs(point.timestamp - t) < Math.abs(nearest.timestamp - t)) nearest = point;
+      });
+      cursor.setAttribute('x1', xOf(nearest.timestamp).toFixed(1));
+      cursor.setAttribute('x2', xOf(nearest.timestamp).toFixed(1));
+      cursor.style.display = '';
+      dot.setAttribute('cx', xOf(nearest.timestamp).toFixed(1));
+      dot.setAttribute('cy', yOf(nearest.value).toFixed(1));
+      // textContent, not innerHTML — sym/pairSym are project-controlled ERC-20 symbols (XSS sink otherwise).
+      tip.textContent = '';
+      var tipPrice = el('div', 'market-chart-tip-price');
+      tipPrice.textContent = formatPrice(nearest.value) + ' ' + pairSym + '/' + sym;
+      var tipWhen = el('div', 'market-chart-tip-when');
+      tipWhen.textContent = priceChartAxisLabel(nearest.timestamp, Math.min(now - t0, 2 * 86400));
+      tip.appendChild(tipPrice); tip.appendChild(tipWhen);
+      tip.style.display = '';
+      tip.style.left = Math.max(2, Math.min(rect.width - 160, e.clientX - rect.left + 12)) + 'px';
+    });
+    holder.addEventListener('mouseleave', function () {
+      tip.style.display = 'none';
+      cursor.style.display = 'none';
+      dot.setAttribute('cx', xOf(now).toFixed(1));
+      dot.setAttribute('cy', yOf(pts[pts.length - 1].value).toFixed(1));
+    });
+    body.appendChild(holder);
+  }
+
+  Promise.all([
+    readAmmPrice(project, project.chainId).catch(function () { return null; }),
+    fetchSwapHistory(project).catch(function () { return null; }),
+  ]).then(function (res) {
+    if (!host.isConnected) return;
+    var swaps = res[1] || { series: [], pair: null };
+    live = Number(res[0]) > 0 ? Number(res[0]) : 0;
+    series = swaps.series || [];
+    pairSym = (swaps.pair && swaps.pair.symbol) || 'ETH';
+    ready = true;
+    if (!live && !series.length) { host.remove(); return; }
+    draw();
+  }).catch(function () { host.remove(); });
+
+  return host;
+}
+
 // The AMM (buyback pool) section — its own distinct section. LP ownership donut + pair-token composition
 // bar + per-LP table + liquidity-by-price depth chart. Self-contained: reads the pool directly.
 function renderOwnersAmm(project) {
@@ -18252,6 +18412,7 @@ function renderOwnersAmm(project) {
   lpTitle.appendChild(lpTitleText);
   var ammAddr = POOL_MANAGER_BY_CHAIN[project.chainId];
   if (ammAddr) { var a = addressNode(ammAddr); a.classList.add('lp-amm-title-addr'); lpTitle.appendChild(a); }
+  wrap.appendChild(renderMarketPriceChart(project));
   wrap.appendChild(lpTitle);
   var lpHead = el('div', 'detail-card-body owners-intro');
   lpHead.textContent = 'The market is used to fill orders that give payers more ' + sym + ' than issuance would.';
