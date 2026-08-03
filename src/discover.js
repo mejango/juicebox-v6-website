@@ -18240,6 +18240,25 @@ function renderOwnersAll(project) {
   return wrap;
 }
 
+// Ghost cards: the same shape the resolved cards take, so the tab does not reflow when they land.
+function marketChartGhost() {
+  var ghost = el('div', 'chart-ghost');
+  ghost.appendChild(skel('44%', '26px', 'chart-ghost-price'));
+  ghost.appendChild(skel('26%', '13px', 'chart-ghost-change'));
+  ghost.appendChild(skel('100%', '200px', 'chart-ghost-plot'));
+  return ghost;
+}
+
+function poolPriceGhost() {
+  var ghost = el('div', 'chart-ghost');
+  ghost.appendChild(skel('38%', '18px', 'chart-ghost-price'));
+  ghost.appendChild(skel('28%', '13px', 'chart-ghost-change'));
+  ghost.appendChild(skel('100%', '1px', 'chart-ghost-rule'));
+  ghost.appendChild(skel('100%', '13px', 'chart-ghost-change'));
+  ghost.appendChild(skel('100%', '13px', 'chart-ghost-change'));
+  return ghost;
+}
+
 var MARKET_CHART_RANGES = [
   { label: '1D', seconds: 86400 },
   { label: '7D', seconds: 7 * 86400 },
@@ -18265,7 +18284,7 @@ function renderMarketPriceChart(project) {
   head.appendChild(headline);
   var pills = el('div', 'issuance-ranges market-chart-ranges'); head.appendChild(pills);
   host.appendChild(head);
-  var body = el('div', 'market-chart-body'); body.appendChild(skel('100%', '200px')); host.appendChild(body);
+  var body = el('div', 'market-chart-body'); body.appendChild(marketChartGhost()); host.appendChild(body);
 
   var range = 30 * 86400;
   var series = [];     // observed AMM spots, ascending
@@ -18419,7 +18438,7 @@ function renderPoolPriceCard(project) {
   }
   host.appendChild(title);
   var body = el('div', 'pool-price-body');
-  body.appendChild(skel('100%', '60px'));
+  body.appendChild(poolPriceGhost());
   host.appendChild(body);
 
   Promise.all([

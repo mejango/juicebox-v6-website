@@ -5105,6 +5105,13 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .market-chart-tip-price { font-weight: bold; }
 .market-chart-tip-when { opacity: 0.85; }
 
+/* Ghost cards for the price/pool cards — the same shape their resolved form takes. */
+.chart-ghost { display: flex; flex-direction: column; gap: 8px; }
+.chart-ghost-price { margin: 0; }
+.chart-ghost-change { margin: 0; }
+.chart-ghost-plot { margin-top: 6px; }
+.chart-ghost-rule { margin: 6px 0 2px; opacity: 0.5; }
+
 /* Pool card — live price both directions + the ceiling/floor it trades between. */
 .pool-price { margin: 0 0 22px; }
 .pool-price-body { margin-top: 8px; }
