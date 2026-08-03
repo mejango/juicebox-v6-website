@@ -25487,7 +25487,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
     }
     if (!found.length) return;
     var wrap = el('div', 'owners-table-wrap lp-pos-table-wrap');
-    var table = el('div', 'owners-table lp-pos-table');
+    var table = el('div', 'owners-table lp-pos-table lp-mine-table');
     var head = el('div', 'owners-row owners-head');
     ['Position', 'Chain', 'Holdings', 'Unclaimed fees', 'Lifetime fees', ''].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
     table.appendChild(head);
@@ -25501,7 +25501,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
       tr.appendChild(holdC);
       var feeC = el('span', 'owners-balance'); feeC.textContent = 'reading…'; tr.appendChild(feeC);
       var lifeC = el('span', 'owners-balance'); lifeC.textContent = pos.claimedPair == null ? '—' : 'reading…'; tr.appendChild(lifeC);
-      var actC = el('span');
+      var actC = el('span', 'lp-mine-actions');
       var claim = el('button', 'detail-check-btn'); claim.textContent = 'Claim fees'; claim.disabled = true; actC.appendChild(claim);
       var manage = el('button', 'detail-check-btn'); manage.textContent = 'Remove';
       manage.addEventListener('click', function () { openRemoveLiquidityModal(project, cid, onDone); });

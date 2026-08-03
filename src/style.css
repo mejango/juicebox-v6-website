@@ -3574,6 +3574,11 @@ input[type="checkbox"].field {
 .lp-amm-bartitle { margin: 14px 0 8px; } /* appearance via .detail-card-title */
 .lp-pos-table { min-width: 320px; }
 .lp-pos-table .owners-row { grid-template-columns: 1.6fr 1fr 1fr 0.6fr; }
+/* "Your LP positions" carries two more columns than the pool tables, plus its
+   actions — without its own template the cells wrap onto a second row. */
+.lp-mine-table { min-width: 720px; }
+.lp-mine-table .owners-row { grid-template-columns: 0.8fr 0.9fr 1.4fr 1.2fr 1.2fr auto; }
+.lp-mine-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
 /* Loans table — 8 columns (Address, Collateral, Borrowed, Opened, Prepaid, Prepaid until, Outstanding fee, Expires). */
 .loans-table { min-width: 860px; }
