@@ -4,6 +4,7 @@ import {
   cacheGet,
   cacheSerialize,
   cacheSet,
+  cacheStale,
   cacheValidated,
 } from '../src/cache.js';
 
@@ -68,5 +69,38 @@ describe('cross-session cache', () => {
   it('skips entries over the per-entry budget rather than blowing the quota', () => {
     cacheSet('rulesets', 'huge', { blob: 'x'.repeat(500000) });
     expect(cacheGet('rulesets', 'huge')).toBeUndefined();
+  });
+
+  it('returns a stale value synchronously, then stores and reports the fresh value', async () => {
+    cacheSet('projects', 'mainnet:1:7', { name: 'Old', supply: 1n });
+    var resolveFresh;
+    var load = vi.fn(() => new Promise((resolve) => { resolveFresh = resolve; }));
+    var onFresh = vi.fn();
+
+    var stale = cacheStale('projects', 'mainnet:1:7', load, onFresh);
+    expect(stale).toEqual({ name: 'Old', supply: 1n });
+    expect(load).toHaveBeenCalledOnce();
+    expect(onFresh).not.toHaveBeenCalled();
+
+    resolveFresh({ name: 'New', supply: 2n });
+    await vi.waitFor(() => expect(onFresh).toHaveBeenCalledWith({ name: 'New', supply: 2n }));
+    expect(cacheGet('projects', 'mainnet:1:7')).toEqual({ name: 'New', supply: 2n });
+  });
+
+  it('keeps stale data unconfirmed when the background refresh fails', async () => {
+    cacheSet('projects', 'mainnet:1:7', { name: 'Still readable' });
+    var onFresh = vi.fn();
+
+    expect(cacheStale(
+      'projects',
+      'mainnet:1:7',
+      async () => { throw new Error('indexer unavailable'); },
+      onFresh,
+    )).toEqual({ name: 'Still readable' });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onFresh).not.toHaveBeenCalled();
+    expect(cacheGet('projects', 'mainnet:1:7')).toEqual({ name: 'Still readable' });
   });
 });

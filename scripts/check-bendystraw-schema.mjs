@@ -151,17 +151,15 @@ async function liveSchema(endpoint) {
 
 // Documents that query fields an unmerged indexer PR adds. They are exercised at runtime behind a
 // fallback — a schema error degrades to the onchain read — so shipping them ahead of the indexer is
-// safe, but they cannot be validated until it deploys. Each entry names the PR that removes it, and
-// the check FAILS once the field exists, so the list cannot quietly rot.
+// safe, but they cannot be validated until it deploys. Entries can be scoped to one endpoint while
+// a schema rolls out; the check FAILS once that endpoint serves the field, so the list cannot rot.
 const PENDING_SCHEMA_FIELDS = [
   {
     field: 'buybackPoolPositions',
-    reason: 'peripheralist/bendystraw#24 — LP positions and lifetime fees',
+    endpoint: 'https://bendystraw.up.railway.app/graphql',
+    reason: 'peripheralist/bendystraw#24 — production rollout',
   },
 ]
-
-const isPending = (message) =>
-  PENDING_SCHEMA_FIELDS.some(({ field }) => message.includes(`"${field}"`))
 
 for (const endpoint of ['https://bendystraw.up.railway.app/graphql', 'https://testnet.bendystraw.xyz/graphql']) {
   const schema = await liveSchema(endpoint)
@@ -169,16 +167,19 @@ for (const endpoint of ['https://bendystraw.up.railway.app/graphql', 'https://te
     validate(schema, parsed).map(error => `${location}: ${error.message}`),
   )
   const live = new Set(Object.keys(schema.getQueryType()?.getFields() ?? {}))
-  const shipped = PENDING_SCHEMA_FIELDS.filter(({ field }) => live.has(field))
+  const pending = PENDING_SCHEMA_FIELDS.filter(entry => entry.endpoint === endpoint)
+  const shipped = pending.filter(({ field }) => live.has(field))
   if (shipped.length) {
     throw new Error(
       `${endpoint} now serves ${shipped.map(({ field }) => field).join(', ')} — ` +
         'drop it from PENDING_SCHEMA_FIELDS so the document is validated again',
     )
   }
-  const blocking = errors.filter(error => !isPending(error))
+  const blocking = errors.filter(error =>
+    !pending.some(({ field }) => error.includes(`"${field}"`)),
+  )
   if (blocking.length) throw new Error(`${endpoint} schema mismatch:\n${blocking.join('\n')}`)
-  for (const { field, reason } of PENDING_SCHEMA_FIELDS) {
+  for (const { field, reason } of pending) {
     console.log(`Pending on ${endpoint}: ${field} (${reason})`)
   }
 }

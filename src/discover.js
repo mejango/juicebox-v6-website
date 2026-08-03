@@ -6,7 +6,7 @@ import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult,
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { downsampleTimeSeries } from './time-series.js';
-import { cacheValidated } from './cache.js';
+import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
@@ -1893,7 +1893,10 @@ function resolveSplitProject(projectId, chainId) {
   var key = chainId + ':' + projectId;
   if (_splitProjCache[key]) return _splitProjCache[key];
   var p = (async function () {
-    var indexed = fetchBendystrawProjectRecord(projectId, chainId);
+    // This mapping reaches multi-chain reads and transactions. A cached
+    // suckerGroupId is useful for display, but cannot authorize another
+    // deployment until Bendystraw confirms it in this session.
+    var indexed = fetchFreshBendystrawProjectRecord(projectId, chainId);
     var current = preferredSplitProjectInfo(projectId, chainId).catch(function () { return null; });
     var pair = await Promise.all([indexed, current]);
     var proj = pair[0];
@@ -6253,6 +6256,8 @@ async function controllerMapFor(chains, projectOrId) {
 
 var _bendystrawProjectRecordCache = {};
 var _preferredProjectMetadataCache = {};
+var _staleBendystrawProjectRecords = typeof WeakSet === 'undefined' ? null : new WeakSet();
+var BENDYSTRAW_PROJECT_CACHE_NAMESPACE = 'bendystraw-project';
 var INDEXED_PROJECT_METADATA_FIELDS = [
   'name', 'description', 'projectTagline', 'logoUri', 'coverImageUri', 'infoUri', 'payDisclosure',
   'twitter', 'farcaster', 'discord', 'telegram', 'domain', 'tags', 'tokens',
@@ -6290,17 +6295,76 @@ export function projectMetadataFromBendystraw(row) {
   };
 }
 
-function fetchBendystrawProjectRecord(id, chainId) {
+function fetchBendystrawProjectRecord(id, chainId, onFresh) {
   var key = DISCOVER_NETWORK + ':' + chainId + ':' + id;
-  if (_bendystrawProjectRecordCache[key]) return _bendystrawProjectRecordCache[key];
-  _bendystrawProjectRecordCache[key] = optionalWithin(
-    bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
-      projectId: Number(id), chainId: Number(chainId), version: BENDYSTRAW_VERSION,
-    }).then(function (data) { return data && data.project || null; }).catch(function () { return null; }),
-    INDEXED_STATS_TIMEOUT_MS,
-    null
-  );
-  return _bendystrawProjectRecordCache[key];
+  var existing = _bendystrawProjectRecordCache[key];
+  if (existing) {
+    if (onFresh && existing.refreshing) existing.listeners.push(onFresh);
+    return existing.initial;
+  }
+
+  var entry = { initial: null, fresh: null, listeners: onFresh ? [onFresh] : [], refreshing: true };
+  _bendystrawProjectRecordCache[key] = entry;
+  var request = bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
+    projectId: Number(id), chainId: Number(chainId), version: BENDYSTRAW_VERSION,
+  }).then(function (data) {
+    var row = data && data.project;
+    // An indexed miss cannot disprove a previously observed project row. Keep
+    // the stale value visibly unconfirmed instead of replacing it with null.
+    if (!row) throw new Error('Bendystraw project row unavailable');
+    return row;
+  });
+  entry.fresh = request;
+
+  var stale = cacheStale(BENDYSTRAW_PROJECT_CACHE_NAMESPACE, key, function () {
+    return request;
+  }, function (fresh) {
+    var initiallyShown = entry.initial;
+    entry.initial = Promise.resolve(fresh);
+    entry.fresh = entry.initial;
+    entry.refreshing = false;
+    delete _preferredProjectMetadataCache[key];
+    delete _splitProjCache[chainId + ':' + id];
+    Promise.resolve(initiallyShown).then(function (shown) {
+      if (shown === fresh) { entry.listeners = []; return; }
+      var listeners = entry.listeners.slice();
+      entry.listeners = [];
+      listeners.forEach(function (listener) {
+        try { listener(fresh, shown); } catch (_) {}
+      });
+    });
+  });
+
+  if (stale !== undefined) {
+    if (_staleBendystrawProjectRecords && stale && typeof stale === 'object') {
+      _staleBendystrawProjectRecords.add(stale);
+    }
+    entry.initial = Promise.resolve(stale);
+  } else {
+    // Cold loads retain the existing soft timeout, but the underlying request
+    // keeps running. If it wins later, listeners still receive a second update.
+    entry.initial = optionalWithin(request, INDEXED_STATS_TIMEOUT_MS, null);
+  }
+  request.catch(function () {
+    entry.refreshing = false;
+    // A later caller gets another chance to confirm the stale row.
+    if (_bendystrawProjectRecordCache[key] === entry) delete _bendystrawProjectRecordCache[key];
+  });
+  return entry.initial;
+}
+
+function fetchFreshBendystrawProjectRecord(id, chainId) {
+  fetchBendystrawProjectRecord(id, chainId);
+  var key = DISCOVER_NETWORK + ':' + chainId + ':' + id;
+  var entry = _bendystrawProjectRecordCache[key];
+  return entry && entry.fresh
+    ? entry.fresh.catch(function () { return null; })
+    : Promise.resolve(null);
+}
+
+function bendystrawProjectRecordIsStale(record) {
+  return !!(_staleBendystrawProjectRecords && record && typeof record === 'object'
+    && _staleBendystrawProjectRecords.has(record));
 }
 
 async function fetchOnchainProjectMetadata(id, chainId) {
@@ -6374,8 +6438,9 @@ export function applyProjectMetadata(project, record) {
 
 // Fetch the full project record: Bendystraw-first display metadata/aggregates plus live contract state.
 // Never throws — missing pieces come back null so a single failed read can't blank the whole card.
-async function fetchProject(id, chainId) {
+async function fetchProjectOnce(id, chainId) {
   var pid = BigInt(id);
+  var indexedProjectRecord = null;
   var project = {
     id: id,
     chainId: chainId,
@@ -6418,6 +6483,7 @@ async function fetchProject(id, chainId) {
 
   jobs.push(fetchBendystrawProjectRecord(id, chainId)
     .then(function (record) {
+      indexedProjectRecord = record;
       if (record && Number(record.createdAt) > 0) project.createdAt = Number(record.createdAt);
     }).catch(function () {}));
 
@@ -6504,7 +6570,30 @@ async function fetchProject(id, chainId) {
   // Project metadata owns the project name. The ERC-20 name, handle, symbol, and id are progressively weaker
   // fallbacks for projects whose indexed and onchain URI metadata are both absent.
   if (!project.name) project.name = project.handle || project.tokenName || project.tokenSymbol || ('Project #' + id);
+  project._bendystrawRevalidating = bendystrawProjectRecordIsStale(indexedProjectRecord);
+  project._bendystrawConfirmed = !!indexedProjectRecord && !project._bendystrawRevalidating;
   return project;
+}
+
+// `fetchProjectOnce` builds the first paint. The project-row request is shared
+// with this subscription; when stale data (or a cold soft-timeout fallback)
+// was shown first, rebuild the data model once and let the caller patch only
+// its display DOM in place.
+function fetchProject(id, chainId, onFresh) {
+  var initial = fetchProjectOnce(id, chainId);
+  if (onFresh) subscribeProjectRefresh(id, chainId, onFresh, initial);
+  return initial;
+}
+
+function subscribeProjectRefresh(id, chainId, onFresh, ready) {
+  fetchBendystrawProjectRecord(id, chainId, function () {
+    Promise.resolve(ready).then(function () {
+      // Let the initial render's promise handlers commit their DOM first.
+      return new Promise(function (resolve) { setTimeout(resolve, 0); });
+    }).then(function () {
+      return fetchProjectOnce(id, chainId);
+    }).then(onFresh).catch(function () {});
+  });
 }
 
 // -- State --
@@ -6515,6 +6604,7 @@ var _groups = null; // cached buildGroups result
 var _activeDetail = null; // { key, showTab, project, isMobile } for the currently open project detail
 var _projectRefreshTimer = null;
 var _projectRefreshSeq = 0;
+var _groupRefreshTimer = null;
 
 // Header wallet menus live outside the Discover renderer. Expose only the
 // active project's balance metadata rather than leaking the mutable detail
@@ -6571,6 +6661,73 @@ function notifyProjectUpdated(project) {
 
 function sameProjectDeployment(a, b) {
   return !!a && !!b && Number(a.chainId) === Number(b.chainId) && String(a.id) === String(b.id);
+}
+
+var PROJECT_DISPLAY_FIELDS = [
+  'name', 'description', 'descriptionHtml', 'tagline', 'logoUri', 'coverImageUri', 'infoUri',
+  'twitter', 'farcaster', 'discord', 'telegram', 'whatsapp', 'domain', 'payDisclosure', 'tags',
+  'tokens', 'metadataUri', 'projectMetadata', 'projectMetadataSource', 'handle', 'metaSymbol',
+  'storeCategories', 'indexedStats', 'createdAt', '_bendystrawRevalidating', '_bendystrawConfirmed',
+];
+
+function applyProjectDisplayRefresh(project, fresh) {
+  PROJECT_DISPLAY_FIELDS.forEach(function (field) { project[field] = fresh[field]; });
+  // Credits-only projects can use the mutable metadata symbol as their label.
+  // A deployed ERC-20 symbol remains authoritative and is never replaced here.
+  if (!project.tokenAddress) project.tokenSymbol = fresh.tokenSymbol;
+  if (fresh._transactionScopeConfirmed) {
+    project.idByChain = Object.assign({}, fresh.idByChain || {});
+    project.chains = (fresh.chains || []).slice();
+    project._transactionScopeConfirmed = true;
+  }
+  return project;
+}
+
+function prepareProjectTransactionScope(project) {
+  if (project._bendystrawConfirmed) {
+    if (project._transactionScopeConfirmed) return Promise.resolve(project);
+    // Grid grouping is allowed to be stale. Force projectIdByChain() through
+    // the freshly confirmed sucker-group path instead of accepting that map.
+    delete project.idByChain;
+    return attachProjectChainIds(project).then(function (scoped) {
+      scoped._transactionScopeConfirmed = true;
+      return scoped;
+    });
+  }
+  // Cached/cold-timeout grouping is display-only. Until the live project row
+  // confirms its sucker group, every action fails closed to the route's exact
+  // home deployment.
+  var home = Number(project.chainId);
+  project.idByChain = {}; project.idByChain[home] = Number(project.id);
+  project.chains = [{ id: home, name: chainNameOf(home), projectId: Number(project.id) }];
+  project._transactionScopeConfirmed = false;
+  return Promise.resolve(project);
+}
+
+function refreshActiveProjectDisplay(fresh) {
+  if (!_activeDetail || !sameProjectDeployment(_activeDetail.project, fresh)) return;
+  if (fresh._bendystrawConfirmed && !fresh._transactionScopeConfirmed) {
+    prepareProjectTransactionScope(fresh).then(refreshActiveProjectDisplay);
+    return;
+  }
+  var detail = _container && _container.querySelector('.project-detail');
+  if (detail && typeof detail._refreshProjectDisplay === 'function') {
+    detail._refreshProjectDisplay(fresh);
+  } else {
+    applyProjectDisplayRefresh(_activeDetail.project, fresh);
+  }
+}
+
+// `suckerGroupId` is point-in-time. If confirmation changes it, rebuild the
+// grid grouping; defer while a detail is open so a background refresh never
+// tears down a transaction form.
+function scheduleProjectGroupRefresh() {
+  if (_groupRefreshTimer) return;
+  _groupRefreshTimer = setTimeout(function () {
+    _groupRefreshTimer = null;
+    _groups = null;
+    if (!_activeDetail && _container) renderDiscoverTab();
+  }, 100);
 }
 
 export function invalidateDiscoverProjects() {
@@ -6658,15 +6815,28 @@ export function applyDiscoverRoute(route) {
     if (!g) { showProjectGrid(true); return; }
     var urlChain = chainId;
     var fk = urlChain + '-' + id;
-    var p = _cache[fk] ? Promise.resolve(_cache[fk]) : fetchProject(id, urlChain).then(function (d) { _cache[fk] = d; return d; });
-    p.then(function (project) {
+    function applyFreshProject(fresh) {
+      fresh.chains = g.chains;
+      delete fresh.idByChain;
+      fresh._urlChainId = urlChain;
+      attachProjectChainIds(fresh).then(function () {
+        fresh._transactionScopeConfirmed = true;
+        _cache[fk] = fresh;
+        refreshActiveProjectDisplay(fresh);
+      });
+    }
+    var p = _cache[fk]
+      ? Promise.resolve(_cache[fk])
+      : fetchProject(id, urlChain).then(function (d) { _cache[fk] = d; return d; });
+    var shown = p.then(function (project) {
       project.chains = g.chains;
       project.idByChain = Object.assign({}, g.idByChain);
       project._urlChainId = urlChain;
       // Resolve the sucker-group-authoritative chains + per-chain ids before rendering so every money-path
       // read/tx targets the right project on each chain (never a coincidental same-id project).
-      return attachProjectChainIds(project).then(function () { showProjectDetail(project, tab, true, sub); });
+      return prepareProjectTransactionScope(project).then(function () { showProjectDetail(project, tab, true, sub); });
     }).catch(function () { showProjectGrid(true); });
+    subscribeProjectRefresh(id, urlChain, applyFreshProject, shown);
   });
 }
 
@@ -6808,7 +6978,7 @@ function renderGrid() {
       loadGroupCard(g, card, grid, function () {
         pendingCards--;
         applySearch();
-      });
+      }, applySearch);
     });
     applySearch();
   }).catch(function () {
@@ -6884,24 +7054,49 @@ function buildGroups() {
     var live = (await Promise.all(candidates.map(async function (candidate) {
       var ok = await hasDirectoryController(candidate.chain.id, candidate.projectId);
       if (!ok) return null;
-      var record = await fetchBendystrawProjectRecord(candidate.projectId, candidate.chain.id);
+      var record = await fetchBendystrawProjectRecord(candidate.projectId, candidate.chain.id, function (fresh, shown) {
+        var before = shown && shown.suckerGroupId || null;
+        var after = fresh && fresh.suckerGroupId || null;
+        if (before !== after) scheduleProjectGroupRefresh();
+      });
       return { chainId: candidate.chain.id, name: candidate.chain.name, projectId: candidate.projectId, suckerGroupId: record && record.suckerGroupId || null };
     }))).filter(Boolean);
     return groupProjectDeployments(live);
   });
 }
 
-function loadGroupCard(g, skeleton, grid, onSettled) {
+function loadGroupCard(g, skeleton, grid, onSettled, onUpdated) {
   var key = g.primary.id + '-' + g.primary.projectId;
-  var promise = _cache[key] ? Promise.resolve(_cache[key]) : fetchProject(g.primary.projectId, g.primary.id).then(function (data) {
+  var current = skeleton;
+  function decorate(project) {
+    project.chains = g.chains;
+    project.idByChain = Object.assign({}, g.idByChain);
+    return project;
+  }
+  function update(fresh) {
+    decorate(fresh);
+    _cache[key] = fresh;
+    refreshActiveProjectDisplay(fresh);
+    if (current.parentNode === grid) {
+      var next = renderProjectCard(fresh);
+      grid.replaceChild(next, current);
+      current = next;
+      if (onUpdated) onUpdated();
+    }
+  }
+  var promise = _cache[key] ? Promise.resolve(_cache[key]) : fetchProject(g.primary.projectId, g.primary.id, update).then(function (data) {
     _cache[key] = data;
     return data;
   });
+  if (_cache[key] && _cache[key]._bendystrawRevalidating) {
+    subscribeProjectRefresh(g.primary.projectId, g.primary.id, update, promise);
+  }
   promise.then(function (project) {
-    project.chains = g.chains;
-    project.idByChain = Object.assign({}, g.idByChain);
-    if (skeleton.parentNode !== grid) return;
-    grid.replaceChild(renderProjectCard(project), skeleton);
+    decorate(project);
+    if (current.parentNode !== grid) return;
+    var next = renderProjectCard(project);
+    grid.replaceChild(next, current);
+    current = next;
     if (onSettled) onSettled();
   }).catch(function () {
     if (skeleton.parentNode === grid) {
@@ -6928,7 +7123,7 @@ function renderSkeletonCard() {
 }
 
 function renderProjectCard(project) {
-  var card = el('div', 'discover-card');
+  var card = el('div', 'discover-card' + (project._bendystrawRevalidating ? ' revalidating' : ''));
   card.dataset.search = [
     project.name,
     project.tokenSymbol,
@@ -6942,7 +7137,9 @@ function renderProjectCard(project) {
   }).join(',');
   card.dataset.metadataSource = project.projectMetadataSource || 'none';
   card.style.cursor = 'pointer';
-  card.addEventListener('click', function () { showProjectDetail(project); });
+  card.addEventListener('click', function () {
+    prepareProjectTransactionScope(project).then(function () { showProjectDetail(project); });
+  });
 
   var cardLbl = function (text) { var s = el('span', 'discover-card-lbl'); s.textContent = text; return s; };
 
@@ -7073,6 +7270,11 @@ function showProjectGrid(fromRoute) {
   var detail = _container.querySelector('.project-detail');
   if (detail) detail.remove();
   _activeDetail = null;
+  if (!_groups) {
+    renderDiscoverTab();
+    if (!fromRoute) routerSetHash('#discover');
+    return;
+  }
   _gridWrapper.style.display = '';
   if (!fromRoute) routerSetHash('#discover');
 }
@@ -7204,6 +7406,19 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   var contentArea = el('div', 'project-detail-content');
   attachCardPromptLinks(wrap); // every card across the whole detail (tabs + activity + side cards) gets a link
   var built = {};
+  wrap._refreshProjectDisplay = function (fresh) {
+    applyProjectDisplayRefresh(project, fresh);
+    wrap.dataset.metadataSource = project.projectMetadataSource || 'none';
+    var nextHeader = renderDetailHeader(project);
+    if (headerEl.parentNode) headerEl.parentNode.replaceChild(nextHeader, headerEl);
+    headerEl = nextHeader;
+
+    // Overview may be connected or retained in the lazy-tab cache. Replace
+    // only its display-only About card; payment and operator forms stay put.
+    var overview = built.Overview;
+    var oldAbout = overview && overview.querySelector('.detail-about-card');
+    if (oldAbout && oldAbout.parentNode) oldAbout.parentNode.replaceChild(renderAboutCard(project), oldAbout);
+  };
   // Resolve the initial tab (from a deep link) case-insensitively; fall back to the first tab.
   var startTab = tabs[0];
   // Preserve links created while the revnet holder tab briefly used "Tokens".
@@ -8714,7 +8929,7 @@ function payMinTokens(p, slippageBps) {
 
 // Compact rich header: symbol + name + chains, a balance/supply stat line, and an owner/operator/site line.
 function renderDetailHeader(project) {
-  var header = el('div', 'project-detail-header');
+  var header = el('div', 'project-detail-header' + (project._bendystrawRevalidating ? ' revalidating' : ''));
 
   // Top: logo + project title, vertically centered to each other.
   var topRow = el('div', 'detail-head-top');
@@ -8821,7 +9036,7 @@ function renderAboutSection(project) {
 
 // Unified project profile — everything the "Edit project" modal writes, stacked, with a single Edit CTA.
 function renderAboutCard(project) {
-  var card = el('div', 'detail-card');
+  var card = el('div', 'detail-card detail-about-card' + (project._bendystrawRevalidating ? ' revalidating' : ''));
   var t = el('div', 'detail-card-title'); t.textContent = 'About'; card.appendChild(t);
   var body = el('div', 'detail-card-body');
 
@@ -12676,16 +12891,29 @@ function renderExtrasSection(project) {
   intro.textContent = 'Pay this project by sending the native token (ETH) to a dedicated payer address. Sending ERC-20 tokens directly to it does not trigger a payment. Anyone can create any number of payer addresses.';
   body.appendChild(intro);
 
+  var openActions = el('div', 'operator-edit-actions extras-actions');
+  var openPayerForm = el('button', 'operator-cta'); openPayerForm.type = 'button'; openPayerForm.textContent = 'Create payer address';
+  openActions.appendChild(openPayerForm);
+  body.appendChild(openActions);
+
+  // Build the transaction form once, but keep it detached until the secondary
+  // action opens a native top-layer dialog. All existing validation, review,
+  // and deploy handlers below continue to own these exact nodes.
+  var form = el('div', 'modal-body operator-edit extras-body');
+  var dialogIntro = el('div', 'extras-payer-copy');
+  dialogIntro.textContent = 'Configure how incoming ETH is handled, who receives tokens, and where the payer address is deployed.';
+  form.appendChild(dialogIntro);
+
   var tokenLabel = project.tokenSymbol || project.tokenName || 'Token';
 
-  var modeLabel = el('div', 'operator-edit-label extras-label'); modeLabel.textContent = 'Behavior'; body.appendChild(modeLabel);
+  var modeLabel = el('div', 'operator-edit-label extras-label'); modeLabel.textContent = 'Behavior'; form.appendChild(modeLabel);
   var modeSelect = el('select', 'operator-edit-jwt extras-select extras-behavior-select');
   var payOpt = document.createElement('option'); payOpt.value = 'pay'; payOpt.textContent = 'Pay';
   var balanceOpt = document.createElement('option'); balanceOpt.value = 'balance'; balanceOpt.textContent = 'Add to balance';
   modeSelect.appendChild(payOpt); modeSelect.appendChild(balanceOpt);
-  body.appendChild(modeSelect);
+  form.appendChild(modeSelect);
   var modeHint = el('div', 'extras-payer-sub');
-  body.appendChild(modeHint);
+  form.appendChild(modeHint);
   function syncModeHint() {
     modeHint.textContent = modeSelect.value === 'balance'
       ? 'Adds funds to the project without minting tokens.'
@@ -12694,12 +12922,12 @@ function renderExtrasSection(project) {
   modeSelect.addEventListener('change', syncModeHint);
   syncModeHint();
 
-  var beneficiaryLabel = el('div', 'operator-edit-label extras-label'); beneficiaryLabel.textContent = tokenLabel + ' beneficiary'; body.appendChild(beneficiaryLabel);
+  var beneficiaryLabel = el('div', 'operator-edit-label extras-label'); beneficiaryLabel.textContent = tokenLabel + ' beneficiary'; form.appendChild(beneficiaryLabel);
   var originalRow = el('label', 'extras-checkbox-row');
   var originalCb = document.createElement('input'); originalCb.type = 'checkbox'; originalCb.checked = true;
   originalRow.appendChild(originalCb);
   var originalText = el('span'); originalText.textContent = 'Original payer'; originalRow.appendChild(originalText);
-  body.appendChild(originalRow);
+  form.appendChild(originalRow);
   var beneficiaryFields = el('div', 'extras-conditional-fields');
   var beneficiaryShared = el('div', 'extras-shared-address');
   var beneficiaryInput = el('input', 'operator-edit-jwt extras-address');
@@ -12732,25 +12960,25 @@ function renderExtrasSection(project) {
     onClose: function () { beneficiaryShared.style.display = ''; },
   });
   beneficiaryFields.appendChild(beneficiaryPerChain.node);
-  body.appendChild(beneficiaryFields);
+  form.appendChild(beneficiaryFields);
   function syncBeneficiaryFields() {
     beneficiaryFields.style.display = originalCb.checked ? 'none' : '';
   }
   originalCb.addEventListener('change', syncBeneficiaryFields);
   syncBeneficiaryFields();
 
-  var memoLabel = el('div', 'operator-edit-label extras-label'); memoLabel.textContent = 'Default memo'; body.appendChild(memoLabel);
+  var memoLabel = el('div', 'operator-edit-label extras-label'); memoLabel.textContent = 'Default memo'; form.appendChild(memoLabel);
   var memoInput = el('input', 'operator-edit-jwt extras-memo');
   memoInput.type = 'text';
   memoInput.placeholder = 'optional memo attached to payments';
   memoInput.value = '';
-  body.appendChild(memoInput);
+  form.appendChild(memoInput);
 
   var editableRow = el('label', 'extras-checkbox-row extras-editable-row');
   var editableCb = document.createElement('input'); editableCb.type = 'checkbox'; editableCb.checked = false;
   editableRow.appendChild(editableCb);
   var editableText = el('span'); editableText.textContent = 'Editable'; editableRow.appendChild(editableText);
-  body.appendChild(editableRow);
+  form.appendChild(editableRow);
   var ownerFields = el('div', 'extras-conditional-fields extras-owner-fields');
   var ownerShared = el('div', 'extras-shared-address');
   var ownerInput = el('input', 'operator-edit-jwt extras-address');
@@ -12778,10 +13006,10 @@ function renderExtrasSection(project) {
   var ownerExplainer = el('div', 'extras-payer-sub');
   ownerExplainer.textContent = 'The address admin can later change this payer address’s destination project, Pay/Add to Balance behavior, beneficiary, memo, and metadata, or transfer or renounce the admin role. The role does not receive payments or control either project.';
   ownerFields.appendChild(ownerExplainer);
-  body.appendChild(ownerFields);
+  form.appendChild(ownerFields);
   var immutableExplainer = el('div', 'extras-payer-sub');
   immutableExplainer.textContent = 'Off by default: no address admin. This payer address’s destination project, Pay/Add to Balance behavior, beneficiary, memo, and metadata are permanent.';
-  body.appendChild(immutableExplainer);
+  form.appendChild(immutableExplainer);
   function syncEditableFields() {
     ownerFields.style.display = editableCb.checked ? '' : 'none';
     immutableExplainer.style.display = editableCb.checked ? 'none' : '';
@@ -12806,9 +13034,9 @@ function renderExtrasSection(project) {
   advanced.appendChild(metadataInput);
   var metadataHint = el('div', 'extras-payer-sub'); metadataHint.textContent = 'Hex bytes forwarded to pay/addToBalance. Leave 0x unless you need custom terminal metadata.';
   advanced.appendChild(metadataHint);
-  body.appendChild(advanced);
+  form.appendChild(advanced);
 
-  var clbl = el('div', 'operator-edit-label extras-label'); clbl.textContent = 'Deploy on'; body.appendChild(clbl);
+  var clbl = el('div', 'operator-edit-label extras-label'); clbl.textContent = 'Deploy on'; form.appendChild(clbl);
   var chainBox = el('div', 'splits-edit-chains');
   var chainChecks = chains.map(function (c) {
     var deployer = getAddress('JBProjectPayerDeployer', c.id);
@@ -12827,11 +13055,11 @@ function renderExtrasSection(project) {
     chainBox.appendChild(row);
     return { chain: c, cb: cb, deployer: deployer };
   });
-  body.appendChild(chainBox);
+  form.appendChild(chainBox);
 
   // Surface identical already-deployed payers so nobody redeploys one they could just reuse — matching
   // behavior + beneficiary on any selected chain. Skipped while an ENS beneficiary hasn't resolved.
-  var dupNote = el('div', 'create-banner'); dupNote.style.display = 'none'; body.appendChild(dupNote);
+  var dupNote = el('div', 'create-banner'); dupNote.style.display = 'none'; form.appendChild(dupNote);
   var existingPayerRows = [];
   function syncDuplicateNote() {
     var wantBalance = modeSelect.value === 'balance';
@@ -12860,11 +13088,11 @@ function renderExtrasSection(project) {
   beneficiaryInput.addEventListener('input', syncDuplicateNote);
   chainChecks.forEach(function (r) { r.cb.addEventListener('change', syncDuplicateNote); });
 
-  var status = el('div', 'operator-edit-status'); body.appendChild(status);
+  var status = el('div', 'operator-edit-status'); form.appendChild(status);
   var actions = el('div', 'operator-edit-actions extras-actions');
   var deploy = el('button', 'operator-cta operator-edit-submit'); deploy.textContent = 'Deploy payer address';
   actions.appendChild(deploy);
-  body.appendChild(actions);
+  form.appendChild(actions);
   var payerList = renderProjectPayerAddresses(project);
   body.appendChild(payerList);
   card.appendChild(body);
@@ -12872,6 +13100,15 @@ function renderExtrasSection(project) {
 
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
+  var payerDialog = null;
+  openPayerForm.addEventListener('click', function () {
+    if (payerDialog && payerDialog.dialog && payerDialog.dialog.isConnected) return;
+    payerDialog = openDialog('Create payer address', {
+      canClose: function () { return !busy; },
+      onClose: function () { payerDialog = null; },
+    });
+    payerDialog.panel.appendChild(form);
+  });
   function selectedChains() {
     return chainChecks.filter(function (r) { return r.cb.checked && !r.cb.disabled; }).map(function (r) { return r.chain; });
   }

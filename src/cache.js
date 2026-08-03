@@ -78,6 +78,35 @@ export function cacheClear(namespace) {
 }
 
 /**
+ * Return the last stored value immediately, then confirm it in the background.
+ *
+ * `onFresh` receives the live value after it has been stored. A failed refresh
+ * leaves the stale entry alone and never calls `onFresh`, so the render layer
+ * can keep its `.revalidating` affordance instead of silently blessing old
+ * data as current.
+ */
+export function cacheStale(namespace, key, load, onFresh) {
+  var stale = cacheGet(namespace, key);
+  var pending;
+  try {
+    // Invoke the loader now. Besides making the refresh start immediately,
+    // this lets callers share the same promise with a cold-load soft timeout.
+    pending = load();
+  } catch (_) {
+    return stale;
+  }
+  Promise.resolve(pending).then(function (value) {
+    // `undefined` is the cache miss sentinel and cannot be serialized.
+    if (value === undefined) return;
+    cacheSet(namespace, key, value);
+    if (onFresh) onFresh(value);
+  }).catch(function () {
+    // Stale remains explicitly unconfirmed; callers decide when to retry.
+  });
+  return stale;
+}
+
+/**
  * Serve a cached payload when a cheap validator proves it is still current,
  * the way an ETag does. `loadValidator` should be a single cheap read; the
  * expensive `load` only runs when the validator moved or is unavailable.
