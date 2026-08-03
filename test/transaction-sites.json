@@ -2,76 +2,180 @@
   "version": 1,
   "sites": {
     "src/burn-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Burn"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Burn"
+      ]
     },
     "src/cashout-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Cash out"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Cash out"
+      ]
     },
     "src/component-base.js": {
-      "counts": { "executeTransaction": 1, "proposeSafeTransactions": 1, "rpcSendMethod": 1, "writeContract": 2 },
-      "actions": ["Reviewed direct write boundary", "Safe proposal / confirmation / execution"]
+      "counts": {
+        "executeTransaction": 1,
+        "proposeSafeTransactions": 1,
+        "providerRequest": 1,
+        "rpcSendMethod": 1,
+        "writeContract": 2
+      },
+      "actions": [
+        "Reviewed direct write boundary",
+        "Safe proposal / confirmation / execution"
+      ]
     },
     "src/create-flow.js": {
-      "counts": { "executeTransaction": 1, "relayrPay": 1, "relayrPostBundle": 1 },
-      "actions": ["Launch project", "Deploy revnet", "Relayr forwarded bundle / payment"]
+      "counts": {
+        "executeTransaction": 1,
+        "relayrPay": 1,
+        "relayrPostBundle": 1
+      },
+      "actions": [
+        "Launch project",
+        "Deploy revnet",
+        "Relayr forwarded bundle / payment"
+      ]
     },
     "src/deploy-erc20-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Deploy ERC-20"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Deploy ERC-20"
+      ]
     },
     "src/discover.js": {
-      "counts": { "approveSafeHashOnChain": 1, "confirmSafeTx": 1, "executeSafeTx": 3, "executeTransaction": 20, "proposeSafeTx": 1, "providerRequest": 2, "relayrPay": 3, "relayrPostBundle": 3, "sendTransaction": 1, "signTypedData": 3, "writeContract": 4 },
-      "actions": ["Project management actions", "Reviewed single-chain direct write", "Relayr forwarded bundle / payment", "Safe proposal / confirmation / execution", "Permit2 and direct approvals"]
+      "counts": {
+        "approveSafeHashOnChain": 1,
+        "confirmSafeTx": 1,
+        "executeSafeTx": 3,
+        "executeTransaction": 20,
+        "proposeSafeTx": 1,
+        "providerRequest": 2,
+        "relayrPay": 3,
+        "relayrPostBundle": 3,
+        "sendTransaction": 1,
+        "signTypedData": 3,
+        "writeContract": 4
+      },
+      "actions": [
+        "Project management actions",
+        "Reviewed single-chain direct write",
+        "Relayr forwarded bundle / payment",
+        "Safe proposal / confirmation / execution",
+        "Permit2 and direct approvals"
+      ]
     },
     "src/form.js": {
-      "counts": { "writeContract": 1 },
-      "actions": ["Generic ABI contract write"]
+      "counts": {
+        "writeContract": 1
+      },
+      "actions": [
+        "Generic ABI contract write"
+      ]
     },
     "src/launch-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Launch project"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Launch project"
+      ]
     },
     "src/mint-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Mint"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Mint"
+      ]
     },
     "src/pay-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Pay"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Pay"
+      ]
     },
     "src/payouts-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Send payouts"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Send payouts"
+      ]
     },
     "src/permissions-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Set permissions"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Set permissions"
+      ]
     },
     "src/queue-ruleset-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Queue rulesets"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Queue rulesets"
+      ]
     },
     "src/relayr.js": {
-      "counts": { "relayrPay": 2, "relayrPostBundle": 2, "sendTransaction": 1, "signTypedData": 1 },
-      "actions": ["Relayr forwarded bundle / payment"]
+      "counts": {
+        "relayrPay": 2,
+        "relayrPostBundle": 2,
+        "sendTransaction": 1,
+        "signTypedData": 1
+      },
+      "actions": [
+        "Relayr forwarded bundle / payment"
+      ]
     },
     "src/reserved-component.js": {
-      "counts": { "executeTransaction": 1 },
-      "actions": ["Send reserved"]
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Send reserved"
+      ]
     },
     "src/safe-app.js": {
-      "counts": { "proposeSafeTransactions": 1, "rpcSendMethod": 1 },
-      "actions": ["Safe proposal / confirmation / execution"]
+      "counts": {
+        "proposeSafeTransactions": 1,
+        "rpcSendMethod": 1
+      },
+      "actions": [
+        "Safe proposal / confirmation / execution"
+      ]
     },
     "src/safe.js": {
-      "counts": { "approveSafeHashOnChain": 1, "confirmSafeTx": 1, "executeSafeTx": 1, "proposeSafeTx": 1, "signTypedData": 1, "writeContract": 1 },
-      "actions": ["Safe proposal / confirmation / execution"]
+      "counts": {
+        "approveSafeHashOnChain": 1,
+        "confirmSafeTx": 1,
+        "executeSafeTx": 1,
+        "proposeSafeTx": 1,
+        "signTypedData": 1,
+        "writeContract": 1
+      },
+      "actions": [
+        "Safe proposal / confirmation / execution"
+      ]
     },
     "src/wallet.js": {
-      "counts": { "providerRequest": 6 },
-      "actions": ["Wallet connection / network request"]
+      "counts": {
+        "providerRequest": 6
+      },
+      "actions": [
+        "Wallet connection / network request"
+      ]
     }
   }
 }

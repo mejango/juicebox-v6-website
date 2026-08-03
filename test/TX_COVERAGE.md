@@ -46,7 +46,7 @@ one cannot silently enter the app.
 | Safe proposal / confirmation / execution | Safe App and Safe service boundaries | Proposal hashes remain distinct from execution; exact `execTransaction` tuples, signatures, nonce, confirmation, and receipt status are tested. |
 | Permit2 and direct approvals | reviewed approval helpers | Canonical Permit2 domain/spender, amount/deadline/nonce, account rechecks, simulations, post-receipt allowance checks, valid-allowance reuse, and typed-signature fallback to an approval-block-anchored on-chain authorization are tested. |
 | Project management actions | `discover.js` reviewed action handlers | Individual ABI builders are tracked above; all submission paths must remain behind the shared review, Safe, or Relayr boundaries. |
-| Wallet connection / network request | EIP-1193 provider requests | Only account permission, account enumeration, and chain switching are allowed here; all write/sign APIs are inventoried separately. |
+| Wallet connection / network request | EIP-1193 provider requests | Only account permission, account enumeration, chain switching, and the chain-gated `eth_getTransactionReceipt` poll are allowed here; all write/sign APIs are inventoried separately. |
 
 Plus create-flow encoding invariants (**U**): custom-token currency id consistency, `splitState` per recipient
 type, split-group sums, the approval-hook (preset/custom/per-chain) + split-lock encoding, the deploy preflight
