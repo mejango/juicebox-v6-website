@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { COMPONENT_SPECS } from '../src/component-base.js';
 
-const KEYS = ['payouts', 'launch', 'queue-ruleset'];
+const KEYS = ['payouts', 'allowance', 'launch', 'queue-ruleset'];
 
 describe('COMPONENT_SPECS fund-access decimals prose', () => {
   for (const key of KEYS) {

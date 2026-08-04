@@ -21831,19 +21831,21 @@ function renderBridgeTransactionsTable(rows, project) {
 // gotchas that make it correct and safe (defined once in COMPONENT_SPECS).
 var TITLE_CONCEPT = {
   'issuance, cash out, and amm price history': 'price-history',
-  'cash out': 'cashout', 'get a loan': 'loan', 'repay loan': 'loan', 'move between chains': 'move',
-  'distribute payouts': 'payouts', 'use surplus allowance': 'payouts', 'queue ruleset': 'queue-ruleset',
+  'cash out': 'cashout', 'redeem items': 'cashout', 'get a loan': 'loan', 'repay loan': 'loan', 'move between chains': 'move',
+  'claim credits': 'claim-tokens', 'mint tokens': 'mint',
+  'distribute payouts': 'payouts', 'use surplus allowance': 'allowance', 'queue ruleset': 'queue-ruleset',
   'add operator': 'permissions', 'edit permissions': 'permissions',
   'set token name & symbol': 'deploy-erc20',     // this branch genuinely deploys the ERC-20
   'edit token name & symbol': 'token-metadata',  // deployed branch is setTokenMetadataOf, NOT deployERC20For
   'add items for sale': 'items-for-sale', 'confirm add items': 'items-for-sale',
-  'transfer ownership': 'transfer-ownership', 'transfer operator': 'transfer-operator',
+  'transfer ownership': 'transfer-ownership', 'transfer project ownership': 'transfer-ownership',
+  'transfer operator': 'transfer-operator', 'transfer revnet operator': 'transfer-operator',
   'edit project': 'edit-project', 'add accounting token': 'accounting-token',
   'project payer address': 'project-payer',
   'edit splits': 'split-groups', 'edit reserved recipients': 'split-groups',
-  'add market liquidity': 'add-liquidity', 'add liquidity': 'add-liquidity',
+  'add market liquidity': 'add-liquidity', 'add liquidity': 'add-liquidity', 'remove liquidity': 'add-liquidity',
 };
-function conceptForTitle(title) {
+export function conceptForTitle(title) {
   var k = (title || '').trim().toLowerCase();
   if (TITLE_CONCEPT[k]) return TITLE_CONCEPT[k];
   if (k.indexOf('payout splits') >= 0) return 'split-groups'; // dynamic "Edit <SYM> payout splits" title

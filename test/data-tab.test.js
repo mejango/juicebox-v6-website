@@ -104,6 +104,10 @@ describe('Data tab variable coercion', () => {
     expect(prompt).toContain('single Project chain');
     expect(prompt).toContain('multi-select Result chains');
     expect(prompt).toContain('suckerGroupId');
+    expect(prompt).toContain('https://github.com/Bananapus/juice-sdk-v4');
+    expect(prompt).toContain('@bananapus/nana-sdk-core');
+    expect(prompt).toContain('packages/core/src/utils/bendystraw.ts');
+    expect(prompt).toContain('normalizeBendystrawEndpoint');
   });
 
   it('exposes Bendystraw pool registration and exact post-swap AMM history', async () => {

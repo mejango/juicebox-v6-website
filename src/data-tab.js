@@ -624,6 +624,10 @@ export function buildDataQueryPrompt(query) {
     '- Include loading, empty, GraphQL error, and HTTP error states.',
     '- Support limit/offset pagination when those variables exist.',
     '- Render addresses, timestamps, chain names, transaction hashes, and amounts according to each column format.',
+    '- Treat the GraphQL document, response path, variable contract, column formats, and indexed-data semantics above as one versioned interface. Do not rename fields, invent fallback fields, or silently reinterpret nullable legacy rows.',
+    '- POST JSON with explicit GraphQL and JSON Accept/Content-Type headers; enforce a timeout and response-size bound; retry only bounded transient HTTP/network failures; surface GraphQL errors even when HTTP is 200.',
+    '- Ignore or cancel stale responses after the network, project chain, project ID, filters, page, or query changes. Reset pagination when scope changes and do not merge rows from different requests.',
+    '- Render all indexed strings as untrusted text, validate addresses and numeric inputs before querying, and keep endpoint credentials out of user-entered variables and logs.',
   ];
   if (variableNames.has('projectId') && variableNames.has('chainId')) {
     requirements.push('- Keep Project ID beside a visible, single-select Project chain control.');
@@ -635,7 +639,15 @@ export function buildDataQueryPrompt(query) {
   lines.push.apply(lines, requirements);
   lines.push('',
     'Reference implementation: https://github.com/mejango/juicescan — read src/data-tab.js, src/bendystraw-client.js, src/bendystraw-format.js, and data/bendystraw-queries.json.',
-    'Bendystraw schema: https://bendystraw-dev.up.railway.app/schema');
+    'Juice SDK: https://github.com/Bananapus/juice-sdk-v4 — package `@bananapus/nana-sdk-core`. Inspect `packages/core/src/utils/bendystraw.ts` and the root exports `normalizeBendystrawEndpoint`, `selectBendystrawEndpoint`, `bendystrawDataHasFields`, cache-policy helpers, and project-ref filter helpers before writing equivalent plumbing. The SDK does not replace the exact query/variables/columns above; use its applicable endpoint, validation, filter, and cache primitives deliberately, and use Juicescan as the query/UI reference.',
+    'Bendystraw schema: https://bendystraw-dev.up.railway.app/schema',
+    '',
+    'Verification required:',
+    '- Add request-shape tests for the exact query and variables above, response-path/column-format tests with bigint-sized fixtures, and UI tests for loading, empty, pagination, stale responses, HTTP errors, GraphQL errors, timeout, malformed JSON, and nullable legacy rows.',
+    '- Validate the document against the current Bendystraw schema and exercise it on the selected network. If the live schema differs from this copied query, report the mismatch instead of guessing a replacement.',
+    '- Finish with the exact files changed, tests run, and any intentionally unsupported field or state.',
+    '',
+    'Live behavior to match: ' + (typeof location !== 'undefined' ? location.href : '(open this Juicescan data query in a browser)'));
   return lines.join('\n');
 }
 
