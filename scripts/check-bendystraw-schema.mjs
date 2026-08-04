@@ -153,13 +153,7 @@ async function liveSchema(endpoint) {
 // fallback — a schema error degrades to the onchain read — so shipping them ahead of the indexer is
 // safe, but they cannot be validated until it deploys. Entries can be scoped to one endpoint while
 // a schema rolls out; the check FAILS once that endpoint serves the field, so the list cannot rot.
-const PENDING_SCHEMA_FIELDS = [
-  {
-    field: 'buybackPoolPositions',
-    endpoint: 'https://bendystraw.up.railway.app/graphql',
-    reason: 'peripheralist/bendystraw#24 — production rollout',
-  },
-]
+const PENDING_SCHEMA_FIELDS = []
 
 for (const endpoint of ['https://bendystraw.up.railway.app/graphql', 'https://testnet.bendystraw.xyz/graphql']) {
   const schema = await liveSchema(endpoint)
