@@ -2953,24 +2953,29 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     var opBox = el('div', 'tier-detail-op');
     var opStatus = el('div', 'modal-status'); opStatus.style.display = 'none';
     if (fl.allowOwnerMint && tier.remaining > 0) {
-      var mintBtn = el('button', 'create-btn primary tier-detail-mint'); mintBtn.textContent = 'Mint to beneficiary';
+      var mintBlock = el('div', 'tier-detail-op-action');
+      var mintBtn = el('button', 'create-btn primary small tier-detail-mint'); mintBtn.textContent = 'Mint to beneficiary';
       mintBtn.addEventListener('click', function () { openMintTierModal(project, tier, nameEl.textContent || ('Item ' + tier.id)); });
-      opBox.appendChild(mintBtn);
-      var mintNote = el('div', 'operator-flag-sub');
+      mintBlock.appendChild(mintBtn);
+      var mintNote = el('div', 'tier-detail-op-note');
       mintNote.textContent = 'Consumes inventory on one selected chain, collects no payment, and cannot be undone.';
-      opBox.appendChild(mintNote);
+      mintBlock.appendChild(mintNote);
+      opBox.appendChild(mintBlock);
     }
+    var dField = el('div', 'create-field tier-detail-discount-field');
+    var dLab = el('label', 'create-label'); dLab.textContent = 'Discount (% off)'; dField.appendChild(dLab);
     var dRow = el('div', 'tier-detail-op-row');
-    var dLab = el('span', 'tier-detail-fact-l'); dLab.textContent = 'Discount % off'; dRow.appendChild(dLab);
     var dInput = document.createElement('input'); dInput.type = 'number'; dInput.min = '0'; dInput.max = '100'; dInput.step = '1';
-    dInput.value = String(Number(tier.discountPercent || 0) / 2); dInput.className = 'tier-detail-op-input'; dRow.appendChild(dInput);
-    var dBtn = el('button', 'create-btn'); dBtn.textContent = 'Set';
+    dInput.id = 'tier-discount-' + project.chainId + '-' + tier.id;
+    dLab.htmlFor = dInput.id;
+    dInput.value = String(Number(tier.discountPercent || 0) / 2); dInput.className = 'field create-input tier-detail-discount-input'; dRow.appendChild(dInput);
+    var dBtn = el('button', 'create-btn small'); dBtn.textContent = 'Set';
     if (fl.cantIncreaseDiscountPercent) dBtn.title = 'This item is discount-capped — you can only lower it.';
     dBtn.addEventListener('click', function () {
       submitSetTierDiscount(project, tier, Number(dInput.value), opStatus)
         .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely update the discount.'), 'error'); });
     });
-    dRow.appendChild(dBtn); opBox.appendChild(dRow);
+    dRow.appendChild(dBtn); dField.appendChild(dRow); opBox.appendChild(dField);
     var rmBtn = el('button', 'create-btn ghost tier-detail-remove'); rmBtn.textContent = fl.cantBeRemoved ? 'Cannot be removed' : 'Remove item';
     rmBtn.disabled = !!fl.cantBeRemoved;
     if (!fl.cantBeRemoved) rmBtn.addEventListener('click', function () {

@@ -4997,9 +4997,14 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .tier-detail-supply-row, .tier-detail-fact { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 2px 0; }
 .tier-detail-supply-chain { display: inline-flex; align-items: center; gap: 3px; }
 .tier-detail-supply-val, .tier-detail-fact-l { color: var(--muted-2); }
-.tier-detail-op { display: flex; flex-direction: column; gap: 8px; }
+.tier-detail-op { display: flex; flex-direction: column; gap: 14px; }
+.tier-detail-op-action { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.tier-detail-mint { align-self: flex-start; }
+.tier-detail-op-note { max-width: 38rem; color: var(--muted-2); font-size: 11px; line-height: 1.45; }
 .tier-detail-op-row { display: flex; align-items: center; gap: 8px; }
 .tier-detail-op-input { width: 70px; }
+.tier-detail-discount-field { margin: 0; }
+.tier-detail-op-row .tier-detail-discount-input { flex: 0 0 88px; width: 88px; min-width: 0; box-sizing: border-box; }
 .tier-detail-remove { align-self: flex-start; }
 .tier-detail-buy { display: flex; align-items: center; gap: 8px; }
 .tier-detail-soldout { font-size: 12px; color: var(--muted-2); }
