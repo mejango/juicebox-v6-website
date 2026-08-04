@@ -188,6 +188,8 @@ describe('source-of-truth data guards', () => {
     });
     expect(priceChartTimeBounds(now - 2 * year, now, 1, true).t0).toBe(now - year);
     expect(priceChartTimeBounds(now - 2 * year, now, 0, true).t0).toBe(now - 2 * year);
+    expect(priceChartTimeBounds(now - 2 * year, now, 1 / (365 * 24), true).t0).toBeCloseTo(now - 3600);
+    expect(priceChartTimeBounds(now - 2 * year, now, 6 / (365 * 24), true).t0).toBeCloseTo(now - 6 * 3600);
   });
 
   it('keeps resolved market outliers from flattening the issuance-price steps', () => {

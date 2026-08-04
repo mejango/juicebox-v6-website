@@ -11470,7 +11470,8 @@ export function activityRowFromEvent(event, project) {
     var sw = event.swapEvent;
     return { type: 'swap', direction: 'in', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
       account: sw.from || sw.caller || event.from, from: sw.from || event.from,
-      baseAmount: '', tokenAmount: sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) : '',
+      baseAmount: activityFlowAmount(project, sw.terminalTokenAmount, null),
+      tokenAmount: sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) : '',
       action: 'bought ' + sym + ' via the buyback pool', memo: '' };
   }
   if (event.buybackPoolEvent) {
@@ -16381,6 +16382,8 @@ function renderPriceChart(project, stages) {
   var cashout = null;    // current cash out floor (pair token/project token), filled in lazily
   var cashoutHistory = [];
   var ammHistory = [];   // initial + exact post-trade AMM spot prices from Bendystraw
+  var ammPairSym = 'terminal tokens';
+  var ammChipTail = '';
   var curYears = 1;
   // Order: Issuance, Cash out, then AMM price.
   var issChip = chip('Issuance price', 'pc-issuance', true,
@@ -16396,7 +16399,7 @@ function renderPriceChart(project, stages) {
   // Under a unit mismatch the chip keeps its loading ghost until the JBPrices conversion resolves.
   if (!unitMismatch) { if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—'; }
 
-  var ranges = [['1D', 1 / 365], ['7D', 7 / 365], ['30D', 30 / 365], ['3M', 0.25], ['1Y', 1], ['All', 0]];
+  var ranges = [['1H', 1 / (365 * 24)], ['6H', 6 / (365 * 24)], ['1D', 1 / 365], ['7D', 7 / 365], ['30D', 30 / 365], ['3M', 0.25], ['1Y', 1], ['All', 0]];
   var rangeRow = el('div', 'issuance-ranges price-ranges');
   var chartWrap = el('div', 'issuance-chart price-chart');
   var chartReady = !unitMismatch; // a mismatched chart waits for the conversion (or is dropped) — the axis stays single-unit
@@ -16462,6 +16465,7 @@ function renderPriceChart(project, stages) {
     // relabel USDC volume/liquidity as ETH.
     var pair = swaps.pair || (lp && lp.pair) || null;
     var pairSym = pair ? pair.symbol : 'terminal tokens';
+    ammPairSym = pairSym;
     var pairScale = pair ? Math.pow(10, Number(pair.decimals)) : null;
     // Plot indexed AMM spot prices as a time series; extend it to the live pool price.
     if (swaps.series && swaps.series.length) {
@@ -16502,7 +16506,8 @@ function renderPriceChart(project, stages) {
     var liq = (lp && pairScale && (lp.totalRev > 0n || lp.totalEth > 0n))
       ? formatCompactTokenAmount(lp.totalRev) + ' ' + sym + ' + ' + formatPrice(Number(lp.totalEth) / pairScale) + ' ' + pairSym
       : '';
-    if (amm) setChipVal(ammChip, formatPrice(amm), liq ? 'on ' + liq + ' liq' : '');
+    ammChipTail = liq ? 'on ' + liq + ' liq' : '';
+    if (amm) setChipVal(ammChip, formatPrice(amm), ammChipTail);
     else ammChip._val.textContent = swaps.count ? '—' : 'No liquidity yet';
     if (cashout) setChipVal(cashChip, formatPrice(cashout), 'before fees'); else cashChip._val.textContent = '—';
     // The floor's asymptote lives in the hover tip and the dashed chart line — not as a legend row.
@@ -16520,6 +16525,52 @@ function renderPriceChart(project, stages) {
     }
     // (The liquidity-by-price depth chart lives in the Owners → AMM section, not here.)
   });
+
+  // Keep the active chart caught up with a busy pool. Bendystraw supplies the exact post-trade history;
+  // slot0 supplies the authoritative live endpoint while the newest swap is still being indexed.
+  var priceRefreshPending = false;
+  var priceRefreshTimer;
+  function refreshLivePrice() {
+    if (!card.isConnected) {
+      window.clearInterval(priceRefreshTimer);
+      document.removeEventListener('visibilitychange', onPriceVisibilityChange);
+      return;
+    }
+    if (document.visibilityState === 'hidden' || priceRefreshPending) return;
+    priceRefreshPending = true;
+    Promise.all([
+      readAmmPrice(project, project.chainId),
+      fetchSwapHistory(project).catch(function () { return null; }),
+    ]).then(function (res) {
+      if (!card.isConnected) return;
+      var live = res[0], swaps = res[1];
+      now = Math.floor(Date.now() / 1000);
+      if (swaps) {
+        ammHistory = (swaps.series || []).slice();
+        if (swaps.pair) ammPairSym = swaps.pair.symbol;
+      }
+      if (live && live > 0) {
+        amm = live;
+        ammHistory.push({ timestamp: now, value: live });
+        ammChip.classList.remove('muted'); ammChip.classList.add('active');
+        setChipVal(ammChip, formatPrice(live), ammChipTail);
+        var tradeNote = swaps && swaps.count
+          ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
+            + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + ammPairSym + ' volume | '
+          : '';
+        ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now — set by trading, and kept between the issuance price (mint instead) and the cash out floor (cash out instead) by arbitrage. '
+          + tradeNote + '~' + formatPrice(live) + ' ' + ammPairSym + ' / ' + sym + '.');
+        draw();
+      }
+    }).catch(function () {
+      // Keep the last known-good chart; the next foreground tick retries.
+    }).finally(function () { priceRefreshPending = false; });
+  }
+  function onPriceVisibilityChange() {
+    if (document.visibilityState === 'visible') refreshLivePrice();
+  }
+  priceRefreshTimer = window.setInterval(refreshLivePrice, 15000);
+  document.addEventListener('visibilitychange', onPriceVisibilityChange);
   return card;
 }
 

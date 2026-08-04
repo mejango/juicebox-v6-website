@@ -29,6 +29,22 @@ function payEventOn(chainId) {
   };
 }
 
+function buybackEventOn(chainId) {
+  return {
+    chainId: chainId,
+    txHash: '0xbb',
+    timestamp: 1700000000,
+    from: '0xabc0000000000000000000000000000000000abc',
+    swapEvent: {
+      terminalTokenAmount: '1859478',
+      projectTokenAmount: '4000000000000000000000',
+      from: '0xabc0000000000000000000000000000000000abc',
+      timestamp: 1700000000,
+      txHash: '0xbb',
+    },
+  };
+}
+
 describe('flowTokenFromContexts', () => {
   it('rejects the token label when chains disagree on decimals (6-dec USDC vs 18-dec context)', () => {
     expect(flowTokenFromContexts([[USDC_BASE], [CUSTOM_18]])).toBeNull();
@@ -93,5 +109,18 @@ describe('activity rows across chains with differing contexts', () => {
     expect(home.baseAmount).toContain('2.5');
     expect(remote.baseAmount).toContain('USDC');
     expect(remote.baseAmount).toContain('2.5');
+  });
+
+  it('shows the terminal-token amount paid for a buyback order', () => {
+    const project = { chainId: 8453, tokenSymbol: 'ART', _flowToken: flowTokenFromContexts([[USDC_BASE]]) };
+    const row = activityRowFromEvent(buybackEventOn(8453), project);
+    expect(row.baseAmount).toBe('1.86 USDC');
+    expect(row.tokenAmount).toBe('4k');
+    expect(row.action).toBe('bought ART via the buyback pool');
+  });
+
+  it('does not guess the buyback terminal token when accounting contexts are ambiguous', () => {
+    const project = { chainId: 8453, tokenSymbol: 'ART', _flowToken: null };
+    expect(activityRowFromEvent(buybackEventOn(8453), project).baseAmount).toBe('');
   });
 });
