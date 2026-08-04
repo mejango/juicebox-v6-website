@@ -68,6 +68,18 @@ describe('copy build prompts', () => {
     expect(prompt).toContain('jbMultiTerminalAbi');
   });
 
+  it('explains both shop transfer gates and the safe owner-mint path', () => {
+    const prompt = componentReproPrompt('Mint item', 'items-for-sale');
+    expect(prompt).toContain('transfersPausable alone does not make an item non-transferable');
+    expect(prompt).toContain('active ruleset/stage metadata bit 0');
+    expect(prompt).toContain('MINT_721');
+    expect(prompt).toContain('repeating the uint16 tier ID');
+    expect(prompt).toContain('build721RulesetMetadata');
+    expect(prompt).toContain('decode721RulesetMetadata');
+    expect(prompt).toContain('jb721TiersHookAbi');
+    expect(conceptForTitle('Mint item #7')).toBe('items-for-sale');
+  });
+
   it('maps action modal titles to the complete matching feature contract', () => {
     expect(conceptForTitle('Redeem items')).toBe('cashout');
     expect(conceptForTitle('Claim credits')).toBe('claim-tokens');

@@ -25,6 +25,7 @@ Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg a
 | Claim credits | `JBController.claimTokensFor` | `buildClaimTokensArgs` | **U** |
 | Distribute auto issuance | `REVOwner.autoIssueFor` | `buildAutoIssueArgs` | **U** |
 | Add / remove shop items | `JB721TiersHook.adjustTiers` | `buildAdjustTiersArgs` | **U** (all tier fields + remove ids) |
+| Mint shop item without payment | `JB721TiersHook.mintFor` | `buildOwnerMintTierIds` | **U** (repeated uint16 quantity, bounds, exact ABI round trip) |
 | Set permissions | `JBPermissions.setPermissionsFor` | `buildSetPermissionsArgs` | **U** (ids vs JBPermissionIds.sol) |
 | Borrow | `REVLoans.borrowFrom` | `buildBorrowArgs` | **U** (+ slippage floor wired) |
 | Repay | `REVLoans.repayLoan` | `buildRepayArgs` | **U** |

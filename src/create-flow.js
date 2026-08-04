@@ -28,6 +28,7 @@ import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, r
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { build721RulesetMetadata } from './nft721-ruleset.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1389,7 +1390,7 @@ export function createStage() {
     payoutCurrency: 1,       // payout-limit denomination (ETH=1 / USD=2) — JBCurrencyAmount.currency
     // token — by default the project issues 10,000 tokens per ETH/USD
     tokenMode: 'custom', weight: '10000', reservedPercent: 0, weightCutPercent: 0, issuanceCutOn: false,
-    cashOutEnabled: false, cashOutTaxRate: 0, allowOwnerMinting: false, pauseTransfers: false,
+    cashOutEnabled: false, cashOutTaxRate: 0, allowOwnerMinting: false, pauseTransfers: false, pause721Transfers: false,
     // Queue-prefill-only fields which have no concise control but must survive an edit unchanged.
     useTotalSurplusForCashOuts: true, ownerMustSendPayouts: false, metadataExtra: 0,
     reservedRecipients: [], tokenAdvancedOpen: false,
@@ -1881,6 +1882,7 @@ function stageSummaryRaw(stage, idx, state) {
   // Noteworthy flags.
   if (stage.allowOwnerMinting) parts.push('project owner can mint tokens');
   if (stage.pauseTransfers) parts.push('token credit transfers paused');
+  if (stage.pause721Transfers) parts.push('eligible shop item transfers paused');
   if (stage.pausePay) parts.push('payments paused');
   if (stage.holdFees) parts.push('fees held');
   if (stage.allowTerminalMigration) parts.push('terminal migration allowed');
@@ -2558,6 +2560,13 @@ function tokenSection(stage, render, state, stageIdx) {
     ? 'Internal project credits can be transferred until they are claimed as ERC-20 tokens.'
     : 'This stage issues no credits. Existing credits from earlier stages can still be transferred.';
   wrap.appendChild(toggleRow('Pause internal credit transfers', dz('Existing internal credits can’t be transferred. Claimed ERC-20 tokens remain transferable.', transferCopy), t.pauseTransfers, function (v) { t.pauseTransfers = v; }));
+  var itemTransferOff = state.projectType === 'revnet'
+    ? 'Eligible items remain transferable during this precommitted stage.'
+    : 'Eligible items remain transferable during this ruleset.';
+  wrap.appendChild(toggleRow('Pause eligible shop item transfers', dz(
+    'Items created with “Transfers pausable” can’t move between wallets. Minting and burning still work.',
+    itemTransferOff,
+  ), t.pause721Transfers, function (v) { t.pause721Transfers = v; }));
   return wrap;
 }
 
@@ -4222,7 +4231,10 @@ function buildRevStage(state, stage, idx, chainId, start) {
     issuanceCutFrequency: cutFreq,
     issuanceCutPercent: cutPercent,
     cashOutTaxRate: taxRate,
-    extraMetadata: 0,
+    extraMetadata: build721RulesetMetadata({
+      metadata: Number(stage.metadataExtra) || 0,
+      pauseTransfers: !!stage.pause721Transfers,
+    }),
   };
 }
 
@@ -4287,7 +4299,10 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   rs.pauseCreditTransfers = !!stage.pauseTransfers;
   rs.useTotalSurplusForCashOuts = !!stage.useTotalSurplusForCashOuts;
   rs.ownerMustSendPayouts = !!stage.ownerMustSendPayouts;
-  rs.metadataExtra = Number(stage.metadataExtra) || 0;
+  rs.metadataExtra = build721RulesetMetadata({
+    metadata: Number(stage.metadataExtra) || 0,
+    pauseTransfers: !!stage.pause721Transfers,
+  });
   rs.useDataHookForCashOut = storeRedeem;
 
   // Queue-only 721-shop choice. The discover Rulesets tab sets state.shopChoice; the LAUNCH path leaves it

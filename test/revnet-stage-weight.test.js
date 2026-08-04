@@ -59,4 +59,13 @@ describe('buildRevnetArgs — stage initialIssuance encoding', () => {
     const back = decodeFunctionData({ abi: tx.abi, data });
     expect(back.args[1].stageConfigurations[1].initialIssuance).toBe(1n);
   });
+
+  it('encodes the shop transfer pause in each precommitted stage without erasing other metadata bits', () => {
+    const state = revState('');
+    state.stages[0].metadataExtra = 1 << 2;
+    state.stages[0].pause721Transfers = true;
+    const { stages } = stagesOf(state);
+    expect(stages[0].extraMetadata).toBe(5);
+    expect(stages[1].extraMetadata).toBe(0);
+  });
 });

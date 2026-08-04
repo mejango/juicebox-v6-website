@@ -55,7 +55,7 @@
         "approveSafeHashOnChain": 1,
         "confirmSafeTx": 1,
         "executeSafeTx": 3,
-        "executeTransaction": 20,
+        "executeTransaction": 21,
         "proposeSafeTx": 1,
         "providerRequest": 2,
         "relayrPay": 3,

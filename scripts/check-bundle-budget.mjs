@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const budgets = {
-  'dist/app.js': { raw: 8_600_000, gzip: 1_200_000 },
+  // Stage-level 721 transfer controls and the reviewed owner-mint flow add a
+  // small amount of deliberate wallet UI to the monolithic client bundle.
+  'dist/app.js': { raw: 8_600_000, gzip: 1_210_000 },
   'dist/style.css': { raw: 240_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },

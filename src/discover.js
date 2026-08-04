@@ -20,6 +20,7 @@ import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-componen
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
 import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
@@ -456,6 +457,10 @@ var TIER721_CONFIG_FLAGS_ABI = [{
 }];
 var TIER721_PRICING_CONTEXT_ABI = [{ type: 'function', name: 'pricingContext', stateMutability: 'view', inputs: [], outputs: [{ name: 'currency', type: 'uint256' }, { name: 'decimals', type: 'uint256' }] }];
 var TIER721_PAY_CREDITS_ABI = [{ type: 'function', name: 'payCreditsOf', stateMutability: 'view', inputs: [{ name: 'addr', type: 'address' }], outputs: [{ type: 'uint256' }] }];
+var TIER721_MINT_FOR_ABI = [{
+  type: 'function', name: 'mintFor', stateMutability: 'nonpayable',
+  inputs: [{ name: 'tierIds', type: 'uint16[]' }, { name: 'beneficiary', type: 'address' }], outputs: [],
+}];
 var TIER721_RESOLVER_ABI = [{ type: 'function', name: 'tokenUriOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'string' }] }];
 
 async function readAllActiveTiers(client, store, hook) {
@@ -941,6 +946,23 @@ export function buildSetDiscountConfig(tierId, pctOff) {
   return { tierId: Number(tierId), discountPercent: pctOffToDiscountPercent(pctOff) };
 }
 
+// The transfer pause is an active-ruleset bit, not a permanent property of the
+// collection. A tier only stops moving when this bit AND its immutable
+// `transfersPausable` flag are both set. Keep an unreadable state distinct from
+// `false` so the storefront never claims transfers are enabled on an RPC error.
+async function current721TransferPause(project) {
+  try {
+    var chainId = Number(project.chainId), pid = pidOn(project, chainId);
+    var controller = await controllerAddressFor(chainId, pid);
+    var result = await clientFor(chainId).readContract({
+      address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid],
+    });
+    var metadata = result && (result.metadata || result[1]);
+    if (!metadata || metadata.metadata == null) return null;
+    return decode721RulesetMetadata(Number(metadata.metadata)).pauseTransfers;
+  } catch (_) { return null; }
+}
+
 async function fetchProjectTiersUncached(project) {
   var hookInfo = await readShopHook(project);
   if (!hookInfo) return null;
@@ -974,8 +996,9 @@ async function fetchProjectTiersUncached(project) {
   var shopReads = await Promise.all([
     readAllActiveTiers(client, store, hook),
     client.readContract({ address: store, abi: TIER721_CONFIG_FLAGS_ABI, functionName: 'flagsOf', args: [hook] }).catch(function () { return null; }),
+    current721TransferPause(project),
   ]);
-  var raw = shopReads[0], configFlags = shopReads[1];
+  var raw = shopReads[0], configFlags = shopReads[1], transfersPaused = shopReads[2];
   var indexedByTier = await fetchBendystrawTierMetadata(project, hook);
   var tiers = (raw || []).map(function (t) {
     return { id: Number(t.id), price: toBigInt(t.price), remaining: Number(t.remainingSupply), initial: Number(t.initialSupply),
@@ -987,7 +1010,7 @@ async function fetchProjectTiersUncached(project) {
       indexedMetadata: indexedByTier && indexedByTier[Number(t.id)] || null };
   }).filter(function (t) { return t.initial > 0; });
   return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers,
-    configFlags: configFlags, itemsCashOut: !!hookInfo.itemsCashOut };
+    configFlags: configFlags, itemsCashOut: !!hookInfo.itemsCashOut, transfersPaused: transfersPaused };
 }
 
 // Resolve a tier's display { name, image, category } — prefer the onchain tokenUriResolver (it returns
@@ -1485,6 +1508,11 @@ function renderShopSection(project, shop, cart) {
       var value = document.createElement('dd'); value.textContent = flags[row[0]] ? 'On' : 'Off'; line.appendChild(value);
       list.appendChild(line);
     });
+    var transferLine = el('div', 'shop-config-row');
+    var transferLabel = document.createElement('dt'); transferLabel.textContent = 'Eligible item transfers'; transferLine.appendChild(transferLabel);
+    var transferValue = document.createElement('dd');
+    transferValue.textContent = s.transfersPaused == null ? 'Ruleset unavailable' : (s.transfersPaused ? 'Paused now' : 'Allowed now');
+    transferLine.appendChild(transferValue); list.appendChild(transferLine);
     details.appendChild(list);
     card.appendChild(details);
   }
@@ -2284,8 +2312,12 @@ function openAddTierModal(project, shop) {
   }
   var itemMinter = project.isRevnet ? 'Revnet operator' : 'Project owner';
   var allowOwnerMintCb = flagCheck(itemMinter + ' can mint for free', 'The ' + itemMinter.toLowerCase() + ' can mint this item from inventory without paying.');
-  // Transfers can only be paused per-ruleset; revnets have fixed rulesets, so the option doesn't apply.
-  var transfersPausableCb = project.isRevnet ? null : flagCheck('Transfers pausable per ruleset', 'Allow this item’s transfers to be paused during a ruleset.');
+  var transfersPausableCb = flagCheck(
+    project.isRevnet ? 'Transfers pausable by stage' : 'Transfers pausable per ruleset',
+    project.isRevnet
+      ? 'Allow an active precommitted revnet stage to pause this item’s wallet-to-wallet transfers.'
+      : 'Allow an active ruleset to pause this item’s wallet-to-wallet transfers.',
+  );
   var cantBeRemovedCb = flagCheck('Permanent', 'Lock this item so it can never be removed from the store.');
   // Credits: default on. cantBuyWithCredits is the inverse of this checkbox.
   var allowCreditsCb = flagCheck('Allow credit purchases', 'Payments that don’t buy items get credits equal to their payment, usable later to buy items that allow it.', true);
@@ -2344,7 +2376,7 @@ function openAddTierModal(project, shop) {
       splitOn: splitCb.checked, splits: snapshotSplits(), splitRefChain: splitRefChain,
       discountPct: discCb.checked ? discInput.value : '',
       flags: {
-        allowOwnerMint: allowOwnerMintCb.checked, transfersPausable: transfersPausableCb ? transfersPausableCb.checked : false,
+        allowOwnerMint: allowOwnerMintCb.checked, transfersPausable: transfersPausableCb.checked,
         cantBeRemoved: cantBeRemovedCb.checked,
         cantBuyWithCredits: !allowCreditsCb.checked,
         cantIncreaseDiscountPercent: !ownerDiscountCb.checked,
@@ -2361,7 +2393,7 @@ function openAddTierModal(project, shop) {
     reserveCb.checked = false; reserveWrap.style.display = 'none'; reserveFreqInput.value = ''; reserveBenefInput.value = '';
     reserveBenefInput.dispatchEvent(new Event('input')); reserveBenefPerChain.reset();
     votingCb.checked = false; votingWrap.style.display = 'none'; votingInput.value = '';
-    allowOwnerMintCb.checked = false; if (transfersPausableCb) transfersPausableCb.checked = false;
+    allowOwnerMintCb.checked = false; transfersPausableCb.checked = false;
     cantBeRemovedCb.checked = false; allowCreditsCb.checked = true; ownerDiscountCb.checked = true;
     syncSplitEnabled();
   }
@@ -2753,6 +2785,9 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   var supplyEl = el('span', 'shop-tier-supply');
   supplyEl.textContent = soldOut ? 'sold out' : (tier.initial >= TIER_UNLIMITED_SUPPLY ? 'unlimited' : tier.remaining + ' left');
   left.appendChild(supplyEl);
+  if (shop.transfersPaused === true && tier.flags && tier.flags.transfersPausable) {
+    var pausedEl = el('span', 'shop-tier-transfer-paused'); pausedEl.textContent = 'transfers paused'; left.appendChild(pausedEl);
+  }
   row.appendChild(left);
 
   // −/+ stepper bound to the shared cart (selecting here also updates the Pay-card strip + "You get").
@@ -2879,13 +2914,17 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   if (tier.reserveFrequency > 0) fact('Reserve mint', '1 per ' + tier.reserveFrequency + ' sold');
   if (tier.votingUnits && BigInt(tier.votingUnits) > 0n) fact('Voting units', String(tier.votingUnits));
   if (tier.splitPercent > 0) fact('Split', (tier.splitPercent / 1e7) + '% of sales');
+  if (tier.flags && tier.flags.transfersPausable) {
+    fact('Transfers', shop.transfersPaused == null ? 'Current ruleset unavailable'
+      : shop.transfersPaused ? 'Paused by the current ruleset' : 'Allowed by the current ruleset');
+  }
   content.appendChild(cfg);
 
   // Each set flag on its own row with a plain-English explanation.
   var fl = tier.flags || {};
   var FLAG_DESCS = [
     ['allowOwnerMint', project.isRevnet ? 'Revnet operator can mint' : 'Project owner can mint', 'The ' + (project.isRevnet ? 'revnet operator' : 'project owner') + ' can mint this item for free, without a payment.'],
-    ['transfersPausable', 'Transfers pausable', 'The project owner can pause transfers of this item.'],
+    ['transfersPausable', 'Ruleset-controlled transfers', 'A ruleset or precommitted revnet stage can pause wallet-to-wallet transfers of this item. Minting and burning still work.'],
     ['cantBeRemoved', 'Cannot be removed', 'This item can never be removed from the shop.'],
     ['cantBuyWithCredits', 'No credit buys', 'Buyers can’t use project credits to mint this item — only a fresh payment.'],
     ['cantIncreaseDiscountPercent', 'Discount capped', 'This item’s discount can only be lowered, never increased.'],
@@ -2909,9 +2948,17 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   var authority = projectAuthorityAddress(project);
   var acct = getEffectiveAccount();
   if (acct && authority && acct.toLowerCase() === authority.toLowerCase()) {
-    var opH = el('div', 'tier-detail-section-h'); opH.textContent = 'Revnet operator'; content.appendChild(opH);
+    var opH = el('div', 'tier-detail-section-h'); opH.textContent = projectAuthorityLabel(project) || 'Project owner'; content.appendChild(opH);
     var opBox = el('div', 'tier-detail-op');
     var opStatus = el('div', 'modal-status'); opStatus.style.display = 'none';
+    if (fl.allowOwnerMint && tier.remaining > 0) {
+      var mintBtn = el('button', 'create-btn primary tier-detail-mint'); mintBtn.textContent = 'Mint to beneficiary';
+      mintBtn.addEventListener('click', function () { openMintTierModal(project, tier, nameEl.textContent || ('Item ' + tier.id)); });
+      opBox.appendChild(mintBtn);
+      var mintNote = el('div', 'operator-flag-sub');
+      mintNote.textContent = 'Consumes inventory on one selected chain, collects no payment, and cannot be undone.';
+      opBox.appendChild(mintNote);
+    }
     var dRow = el('div', 'tier-detail-op-row');
     var dLab = el('span', 'tier-detail-fact-l'); dLab.textContent = 'Discount % off'; dRow.appendChild(dLab);
     var dInput = document.createElement('input'); dInput.type = 'number'; dInput.min = '0'; dInput.max = '100'; dInput.step = '1';
@@ -2937,6 +2984,127 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   }
 
   openModal('Shop item #' + tier.id, content);
+}
+
+// Safe, single-chain owner/operator mint. Inventory is per chain, so the user
+// chooses one chain explicitly; permission, tier flag, supply, account, target,
+// and exact calldata are checked again after review and before submission.
+function openMintTierModal(project, tier, itemName) {
+  var chains = shopChainsOf(project);
+  var content = el('div', 'modal-body operator-edit');
+  var warning = el('div', 'create-banner');
+  warning.textContent = 'This free mint consumes shop inventory, sends the item directly to the beneficiary, collects no payment, and cannot be undone.';
+  content.appendChild(warning);
+
+  var chainLabel = el('div', 'operator-edit-label'); chainLabel.textContent = 'Chain'; content.appendChild(chainLabel);
+  var chainSelect = el('select', 'field create-input');
+  chains.forEach(function (chain) {
+    var option = document.createElement('option'); option.value = String(chain.id); option.textContent = chain.name || chainNameOf(chain.id);
+    if (Number(chain.id) === Number(project.chainId)) option.selected = true;
+    chainSelect.appendChild(option);
+  });
+  content.appendChild(chainSelect);
+
+  var inventory = el('div', 'operator-edit-sub'); inventory.textContent = 'Reading live inventory…'; content.appendChild(inventory);
+  var beneficiaryLabel = el('div', 'operator-edit-label'); beneficiaryLabel.textContent = 'Beneficiary address'; content.appendChild(beneficiaryLabel);
+  var beneficiaryInput = el('input', 'operator-edit-jwt'); beneficiaryInput.type = 'text'; beneficiaryInput.placeholder = '0x…';
+  beneficiaryInput.value = getEffectiveAccount() || getAccount() || ''; content.appendChild(beneficiaryInput);
+
+  var quantityLabel = el('div', 'operator-edit-label'); quantityLabel.textContent = 'Quantity'; content.appendChild(quantityLabel);
+  var quantityInput = el('input', 'operator-edit-jwt tier-detail-op-input'); quantityInput.type = 'number'; quantityInput.min = '1'; quantityInput.max = '50'; quantityInput.step = '1'; quantityInput.value = '1';
+  content.appendChild(quantityInput);
+
+  var status = el('div', 'operator-edit-status'); content.appendChild(status);
+  var actions = el('div', 'operator-edit-actions');
+  var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = 'Review free mint'; actions.appendChild(submit); content.appendChild(actions);
+
+  var live = null, loadNonce = 0;
+  async function loadLive() {
+    var nonce = ++loadNonce, chainId = Number(chainSelect.value);
+    live = null; inventory.textContent = 'Reading live inventory…'; submit.disabled = true;
+    try {
+      var chain = chains.find(function (candidate) { return Number(candidate.id) === chainId; }) || { id: chainId, name: chainNameOf(chainId) };
+      var resolved = await resolveHookMap(project, [chain], tier.id);
+      if (nonce !== loadNonce) return;
+      var current = resolved.tiers[chainId];
+      live = { chain: chain, hook: resolved.hooks[chainId], tier: current };
+      var remaining = Number(current.remainingSupply);
+      inventory.textContent = remaining >= TIER_UNLIMITED_SUPPLY ? 'Unlimited inventory on ' + chain.name : remaining + ' left on ' + chain.name;
+      quantityInput.max = String(Math.max(1, Math.min(50, remaining)));
+      submit.disabled = remaining <= 0 || !(current.flags && current.flags.allowOwnerMint);
+      if (!(current.flags && current.flags.allowOwnerMint)) inventory.textContent += ' | owner minting is not enabled for this item';
+    } catch (error) {
+      if (nonce !== loadNonce) return;
+      inventory.textContent = errMessage(error, 'Could not verify this item on the selected chain.');
+      submit.disabled = true;
+    }
+  }
+  chainSelect.addEventListener('change', loadLive);
+  loadLive();
+
+  submit.addEventListener('click', async function (event) {
+    event.preventDefault();
+    if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; status.className = 'operator-edit-status error'; return; }
+    var beneficiary = (beneficiaryInput.value || '').trim();
+    var quantity = Number(quantityInput.value), chainId = Number(chainSelect.value);
+    if (!isAddr(beneficiary) || beneficiary.toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
+      status.textContent = 'Enter a valid, non-zero beneficiary address.'; status.className = 'operator-edit-status error'; return;
+    }
+    var tierIds;
+    try { tierIds = buildOwnerMintTierIds(tier.id, quantity); }
+    catch (error) { status.textContent = error.message; status.className = 'operator-edit-status error'; return; }
+    if (!live || Number(live.chain.id) !== chainId) { await loadLive(); }
+    if (!live || Number(live.chain.id) !== chainId) return;
+    if (!(live.tier.flags && live.tier.flags.allowOwnerMint)) {
+      status.textContent = 'This item does not allow owner/operator free mints.'; status.className = 'operator-edit-status error'; return;
+    }
+    if (Number(live.tier.remainingSupply) < quantity) {
+      status.textContent = 'Only ' + Number(live.tier.remainingSupply) + ' remain on this chain.'; status.className = 'operator-edit-status error'; return;
+    }
+
+    var account = getAccount();
+    if (!account) {
+      status.textContent = 'Connecting wallet…'; status.className = 'operator-edit-status pending';
+      account = await connect().then(getAccount).catch(function () { return null; });
+    }
+    if (!account) { status.textContent = 'Connect a wallet to continue.'; status.className = 'operator-edit-status error'; return; }
+    if (!await accountCanMintShopOn(project, chainId, live.hook, account)) {
+      status.textContent = 'This wallet is not the hook owner and does not have MINT_721 permission on this chain.';
+      status.className = 'operator-edit-status error'; return;
+    }
+
+    var snapshot = { account: account, chainId: chainId, hook: live.hook, beneficiary: beneficiary, tierIds: tierIds.slice(), quantity: quantity };
+    submit.disabled = true; status.textContent = 'Review the exact mint transaction.'; status.className = 'operator-edit-status pending';
+    executeTransaction({
+      chainId: snapshot.chainId, address: snapshot.hook, abi: TIER721_MINT_FOR_ABI, functionName: 'mintFor',
+      contractName: 'JB721TiersHook', args: [snapshot.tierIds, snapshot.beneficiary], label: 'Mint shop item without payment',
+      confirmTitle: 'Review free item mint', confirmText: 'Confirm & mint',
+      confirmDescription: snapshot.quantity + ' × ' + itemName + ' will be sent to ' + snapshot.beneficiary + ' on ' + chainNameOf(snapshot.chainId) + '. This consumes inventory, collects no payment, and cannot be undone.',
+      reverify: async function () {
+        var currentAccount = getAccount();
+        if (!currentAccount || currentAccount.toLowerCase() !== snapshot.account.toLowerCase()) throw new Error('Connected account changed. Review the mint again.');
+        var chain = chains.find(function (candidate) { return Number(candidate.id) === snapshot.chainId; }) || { id: snapshot.chainId, name: chainNameOf(snapshot.chainId) };
+        var fresh = await resolveHookMap(project, [chain], tier.id);
+        var freshHook = fresh.hooks[snapshot.chainId], freshTier = fresh.tiers[snapshot.chainId];
+        if (!freshHook || freshHook.toLowerCase() !== snapshot.hook.toLowerCase()) throw new Error('The live shop hook changed. Review the mint again.');
+        if (!(freshTier.flags && freshTier.flags.allowOwnerMint)) throw new Error('This item no longer allows owner/operator mints.');
+        if (Number(freshTier.remainingSupply) < snapshot.quantity) throw new Error('There is not enough live inventory for this mint.');
+        if (!await accountCanMintShopOn(project, snapshot.chainId, freshHook, currentAccount)) throw new Error('This wallet no longer has MINT_721 permission.');
+      },
+      onStatus: function (message, kind) { status.textContent = message; status.className = 'operator-edit-status ' + (kind || 'pending'); },
+      onError: function (message) { submit.disabled = false; status.textContent = message; status.className = 'operator-edit-status error'; loadLive(); },
+      onSuccess: function (message, meta) {
+        submit.disabled = false;
+        status.textContent = meta && meta.phase === 'safe-proposed'
+          ? 'Mint proposed to the Safe. Inventory changes only after the Safe executes it.'
+          : 'Items minted to ' + snapshot.beneficiary + '.';
+        status.className = 'operator-edit-status success';
+        if (!meta || meta.phase !== 'safe-proposed') { bustTiersCache(project); loadLive(); }
+      },
+    });
+  });
+
+  openModal('Mint item — ' + itemName, content);
 }
 
 function shopOpSetStatus(statusEl) {
@@ -9720,6 +9888,7 @@ var shopOwnerAbi = [{
   type: 'function', name: 'owner', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }],
 }];
 var JB_PERMISSION_ADJUST_721_TIERS = 24n;
+var JB_PERMISSION_MINT_721 = 26n;
 
 // `JB721TiersHook.adjustTiers` checks permission 24 against the hook's live owner. Mirror that
 // exact authorization instead of rejecting a valid wallet because indexed operator data is stale.
@@ -9732,6 +9901,21 @@ async function accountCanAdjustShopOn(project, chainId, hook, account) {
   if (String(owner).toLowerCase() === String(account).toLowerCase()) return true;
   return read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
     account, owner, pidOn(project, chainId), JB_PERMISSION_ADJUST_721_TIERS, true, true,
+  ]).then(Boolean).catch(function () { return false; });
+}
+
+// `mintFor` uses the same hook-owner permission scope, with MINT_721 (26).
+// The project owner and revnet operator usually satisfy this through different
+// owner/grant arrangements, so always read the hook's live owner first.
+async function accountCanMintShopOn(project, chainId, hook, account) {
+  if (!hook || !account) return false;
+  var owner = await clientFor(chainId).readContract({
+    address: hook, abi: shopOwnerAbi, functionName: 'owner', args: [],
+  }).catch(function () { return null; });
+  if (!owner) return false;
+  if (String(owner).toLowerCase() === String(account).toLowerCase()) return true;
+  return read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
+    account, owner, pidOn(project, chainId), JB_PERMISSION_MINT_721, true, true,
   ]).then(Boolean).catch(function () { return false; });
 }
 
@@ -11515,6 +11699,7 @@ var WEIGHT_CUT_DEN = 1000000000; // 1e9
 // Full decoded ruleset rows grouped by section. r = ruleset tuple, m = decoded metadata tuple.
 export function rulesetRows(r, m, project) {
   var baseUnit = currencyUnitLabel(m.baseCurrency, project);
+  var itemTransfersPaused = decode721RulesetMetadata(Number(m.metadata || 0)).pauseTransfers;
   return [
     ['CYCLE', 'Duration', Number(r.duration) ? formatDuration(r.duration) : 'Not set'],
     ['CYCLE', 'Start time', formatStartTime(r.start)],
@@ -11527,7 +11712,8 @@ export function rulesetRows(r, m, project) {
     ['TOKEN', 'Cash outs use total surplus', m.scopeCashOutsToLocalBalances ? 'Disabled' : 'Enabled'],
     ['TOKEN', 'Base currency', baseUnit],
     ['TOKEN', 'Project owner token minting', m.allowOwnerMinting ? 'Enabled' : 'Disabled'],
-    ['TOKEN', 'Token transfers', m.pauseCreditTransfers ? 'Disabled' : 'Enabled'],
+    ['TOKEN', 'Internal credit transfers', m.pauseCreditTransfers ? 'Paused' : 'Allowed'],
+    ['TOKEN', 'Eligible shop item transfers', itemTransfersPaused ? 'Paused' : 'Allowed'],
     ['OTHER RULES', 'Payments to this project', m.pausePay ? 'Disabled' : 'Enabled'],
     ['OTHER RULES', 'Hold fees', m.holdFees ? 'Enabled' : 'Disabled'],
     ['OTHER RULES', 'Project owner must send payouts', m.ownerMustSendPayouts ? 'Enabled' : 'Disabled'],
@@ -12277,6 +12463,8 @@ function draftStageFromLive(ruleset, metadata, reservedSplits, chainId) {
   stage.cashOutTaxRate = Number(metadata.cashOutTaxRate || 0) / 100;
   stage.allowOwnerMinting = !!metadata.allowOwnerMinting;
   stage.pauseTransfers = !!metadata.pauseCreditTransfers;
+  stage.metadataExtra = Number(metadata.metadata || 0);
+  stage.pause721Transfers = decode721RulesetMetadata(stage.metadataExtra).pauseTransfers;
   stage.pausePay = !!metadata.pausePay;
   stage.holdFees = !!metadata.holdFees;
   stage.allowSetTerminals = !!metadata.allowSetTerminals;
@@ -12915,7 +13103,7 @@ export async function buildProjectCreateDraft(project) {
   applyDraftOwnerRemainders(state, sources, project);
   if (sources[0].metadata.ownerMustSendPayouts) throw new Error('The live ruleset requires owner-sent payouts, a flag the .jb editor cannot reproduce.');
   if (sources[0].metadata.scopeCashOutsToLocalBalances) throw new Error('The live ruleset scopes cash outs to local balances, which the .jb editor cannot reproduce.');
-  if (Number(sources[0].metadata.metadata || 0) !== 0) warnings.push('The live ruleset contains custom metadata bits which are not editable in the create wizard.');
+  if ((Number(sources[0].metadata.metadata || 0) & ~1) !== 0) warnings.push('The live ruleset contains additional custom metadata bits. They are preserved by the .jb draft but are not directly editable.');
   await applyDraftShop(state, project, sources, warnings);
   if (state.shopEnabled && state.collection.useForRedemptions) state.stages.forEach(function (stage) { stage.cashOutEnabled = false; });
   state.step = 0; state.tos = false;
@@ -15174,7 +15362,7 @@ function rulesetSignature(r, m) {
     r.duration, r.weightCutPercent,
     m.reservedPercent, m.cashOutTaxRate, m.baseCurrency,
     m.pausePay, m.pauseCreditTransfers, m.allowOwnerMinting, m.allowSetTerminals, m.allowSetController,
-    m.allowTerminalMigration, m.holdFees, m.useDataHookForPay, m.useDataHookForCashOut, m.dataHook,
+    m.allowTerminalMigration, m.holdFees, m.metadata, m.useDataHookForPay, m.useDataHookForCashOut, m.dataHook,
   ].map(String).join('|');
 }
 
@@ -20364,6 +20552,7 @@ function openQueueRulesetModal(project) {
       s.useTotalSurplusForCashOuts = !m.scopeCashOutsToLocalBalances;
       s.ownerMustSendPayouts = !!m.ownerMustSendPayouts;
       s.metadataExtra = Number(m.metadata) || 0;
+      s.pause721Transfers = decode721RulesetMetadata(s.metadataExtra).pauseTransfers;
     }
     // Reserved recipients — each row's percent is its share of ISSUANCE = (split share ÷ 1e9) × reserved rate.
     var reservedRate = m ? Number(m.reservedPercent) / 100 : 0; // 0..100
@@ -21837,7 +22026,8 @@ var TITLE_CONCEPT = {
   'add operator': 'permissions', 'edit permissions': 'permissions',
   'set token name & symbol': 'deploy-erc20',     // this branch genuinely deploys the ERC-20
   'edit token name & symbol': 'token-metadata',  // deployed branch is setTokenMetadataOf, NOT deployERC20For
-  'add items for sale': 'items-for-sale', 'confirm add items': 'items-for-sale',
+  'add items for sale': 'items-for-sale', 'confirm add items': 'items-for-sale', 'mint shop item without payment': 'items-for-sale',
+  'mint item': 'items-for-sale',
   'transfer ownership': 'transfer-ownership', 'transfer project ownership': 'transfer-ownership',
   'transfer operator': 'transfer-operator', 'transfer revnet operator': 'transfer-operator',
   'edit project': 'edit-project', 'add accounting token': 'accounting-token',

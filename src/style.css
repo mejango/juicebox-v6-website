@@ -5021,6 +5021,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .shop-credits-note { flex-basis: 100%; margin-left: 0; font-size: 10px; color: var(--muted-2); }
 .shop-head-add { font-size: 13px; white-space: nowrap; }
 .shop-tier-supply { font-size: 11px; color: var(--muted-2); }
+.shop-tier-transfer-paused { width: max-content; margin-top: 2px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 6px; color: var(--c-amber); font-size: 10px; font-weight: 650; }
 .shop-tier-step { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .shop-tier-stepbtn { width: 26px; height: 26px; border: 1px solid var(--c-orange-light); border-radius: 4px; background: none; color: var(--c-teal); font-size: 16px; font-weight: bold; line-height: 1; cursor: pointer; }
 .shop-tier-stepbtn:hover:not(:disabled) { border-color: var(--c-teal); background: rgba(110,196,196,0.12); }
