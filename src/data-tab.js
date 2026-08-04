@@ -639,7 +639,7 @@ export function buildDataQueryPrompt(query) {
   lines.push.apply(lines, requirements);
   lines.push('',
     'Reference implementation: https://github.com/mejango/juicescan — read src/data-tab.js, src/bendystraw-client.js, src/bendystraw-format.js, and data/bendystraw-queries.json.',
-    'Juice SDK: https://github.com/Bananapus/juice-sdk-v4 — package `@bananapus/nana-sdk-core`. Inspect `packages/core/src/utils/bendystraw.ts` and the root exports `normalizeBendystrawEndpoint`, `selectBendystrawEndpoint`, `bendystrawDataHasFields`, cache-policy helpers, and project-ref filter helpers before writing equivalent plumbing. The SDK does not replace the exact query/variables/columns above; use its applicable endpoint, validation, filter, and cache primitives deliberately, and use Juicescan as the query/UI reference.',
+    'Juice SDK: https://github.com/Bananapus/juice-sdk-v4 — package `@bananapus/nana-sdk-core`. Inspect `packages/core/src/utils/bendystraw.ts`: `normalizeBendystrawEndpoint`, `selectBendystrawEndpoint`, `bendystrawDataHasFields`, and cache/filter helpers.',
     'Bendystraw schema: https://bendystraw-dev.up.railway.app/schema',
     '',
     'Verification required:',
