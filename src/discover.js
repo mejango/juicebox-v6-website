@@ -22,6 +22,7 @@ import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
 import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
+import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
@@ -4874,6 +4875,17 @@ var RULESET_OUTPUTS = [
 export var upcomingRulesetAbi = [{
   type: 'function', name: 'upcomingRulesetOf', stateMutability: 'view',
   inputs: [{ name: 'projectId', type: 'uint256' }], outputs: RULESET_OUTPUTS,
+}];
+export var latestQueuedRulesetAbi = [{
+  type: 'function', name: 'latestQueuedRulesetOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }], outputs: RULESET_OUTPUTS.concat([
+    { name: 'approvalStatus', type: 'uint8' },
+  ]),
+}];
+var getRulesetWithMetadataAbi = [{
+  type: 'function', name: 'getRulesetOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }],
+  outputs: RULESET_OUTPUTS,
 }];
 export var allRulesetsWithMetadataAbi = [{
   type: 'function', name: 'allRulesetsOf', stateMutability: 'view',
@@ -19991,10 +20003,10 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   return rec;
 }
 
-// Queue a new ruleset (full editor, prefilled from the current ruleset). Single-chain projects queue via
+// Queue a new ruleset (full editor, prefilled from the ruleset selected by the owner). Single-chain projects queue via
 // JBController.queueRulesetsOf; omnichain projects queue the same config on every chain via the
 // JBOmnichainDeployer + relayr. Owner/operator-gated (QUEUE_RULESETS). Splits & fund-access are carried
-// forward from the current ruleset (edit recipients via the dedicated Payouts/Reserved editors); the
+// forward from that verified source ruleset (edit recipients via the dedicated Payouts/Reserved editors); the
 // ruleset parameters here are fully editable.
 // Initialize the create-flow shop fields the "new shop" path needs (renderNfts + build721Config read these).
 function ensureNewShopState(state, allChains) {
@@ -20004,7 +20016,7 @@ function ensureNewShopState(state, allChains) {
   if (!state.chainIds || !state.chainIds.length) state.chainIds = allChains.map(function (c) { return c.id; });
 }
 
-function openQueueRulesetModal(project) {
+function openQueueRulesetModal(project, preferredQueueAction) {
   var pid = pidOn(project, project.chainId);
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
@@ -20016,16 +20028,10 @@ function openQueueRulesetModal(project) {
   var content = el('div', 'modal-body operator-edit queue-ruleset');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to queue a ruleset.', project.chainId));
 
-  // Approval-hook context: what governs WHEN this queued ruleset can take effect. (The "Edit deadline"
-  // control inside the form below governs FUTURE changes.)
-  var curHookLabel = deadlineLabelOf(project.ruleset && project.ruleset.approvalHook, project.chainId);
-  var hasDeadline = curHookLabel !== 'No deadline';
+  // Approval-hook context: the selected parent governs WHEN this queued ruleset can take effect. It is updated
+  // after the live queue is read; the "Edit deadline" inside the form governs changes after the new rules begin.
   var hookNote = el('div', 'operator-edit-across'); hookNote.style.marginBottom = '18px';
-  hookNote.innerHTML = '<strong>Current rule-change deadline: ' + curHookLabel + '.</strong> ' + (hasDeadline
-    ? ('A queued ruleset only takes effect at the next cycle boundary if it’s queued at least ' + curHookLabel
-      + ' beforehand; otherwise it waits one more cycle. ')
-    : ('With no deadline, a queued ruleset takes effect at the start of the next cycle' + (Number(project.ruleset && project.ruleset.duration) > 0 ? '' : ' — and since this ruleset has no fixed duration, as soon as it’s queued') + '. '))
-    + 'The “Edit deadline” you set below governs <em>future</em> changes.';
+  hookNote.textContent = 'Verifying the approval hook which governs this queued change…';
   content.appendChild(hookNote);
 
   var body = el('div'); body.appendChild(skel('100%', '120px')); content.appendChild(body);
@@ -20037,10 +20043,20 @@ function openQueueRulesetModal(project) {
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   // The queue form IS the create flow's Rulesets tab. We drive it with the same create-flow `state` shape
-  // (stages + afterMode), prefill stage 1 from the project's current ruleset, render via `renderStages`,
+  // (stages + afterMode), prefill stage 1 from the owner's verified queue source, render via `renderStages`,
   // and encode via `buildQueueRulesetConfigs` — so the two forms are the same code.
   var state = {
     projectType: 'custom',          // custom-flow rendering (not the revnet stage editor)
+    queueEditor: true,
+    queueAction: 'current',
+    queueOption: null,
+    queuePlan: null,
+    queueSituation: null,
+    queueFingerprintByChain: {},
+    queueMustStartAtByChain: {},
+    queueCustomStart: '',
+    queueStartSummary: '',
+    queueTimingExplanation: '',
     accepts: ['eth'],               // set from the accounting token below (eth | usdc)
     swapRouter: false,
     perChain: {},                   // no per-chain overrides — assembler falls back to stage defaults
@@ -20108,6 +20124,95 @@ function openQueueRulesetModal(project) {
       state.customToken = { address: acct.address, symbol: acct.symbol || acctTokenLabel(acct.address), decimals: acct.decimals, status: 'ok' };
     }
     state.storePricingCurrency = queueDefaultCurrency(acct, chainId);
+  }
+
+  function queueEntryForOption(situation, option) {
+    var id = toBigInt(option && option.source && option.source.id);
+    if (id === toBigInt(situation.current[0].id)) return situation.current;
+    if (situation.upcoming && id === toBigInt(situation.upcoming[0].id)) return situation.upcoming;
+    if (situation.latest && id === toBigInt(situation.latest[0].id)) return situation.latest;
+    throw new Error('The queued ruleset source could not be resolved.');
+  }
+
+  function queueOptionFor(situation, action) {
+    var option = situation.plan.options.filter(function (o) { return o.action === action; })[0];
+    if (!option) throw new Error('That queue action is not allowed by the ruleset approval state.');
+    return option;
+  }
+
+  async function readQueueSituation(chainId, localPid, controller) {
+    var reads = await Promise.all([
+      clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [localPid] }),
+      clientFor(chainId).readContract({ address: controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [localPid] }),
+      clientFor(chainId).readContract({ address: controller, abi: latestQueuedRulesetAbi, functionName: 'latestQueuedRulesetOf', args: [localPid] }),
+    ]);
+    var current = reads[0], rawUpcoming = reads[1], latest = reads[2];
+    if (!current || !current[0] || toBigInt(current[0].id) === 0n || !current[1]) throw new Error('No live current ruleset could be verified.');
+    var upcoming = rawUpcoming && rawUpcoming[0] && toBigInt(rawUpcoming[0].id) > 0n
+      && toBigInt(rawUpcoming[0].id) !== toBigInt(current[0].id) ? rawUpcoming : null;
+    var latestStatus = Number(latest && (latest.approvalStatus != null ? latest.approvalStatus : latest[2]));
+    var latestParent = current;
+    if (latest && latest[0] && toBigInt(latest[0].id) !== toBigInt(current[0].id)
+      && toBigInt(latest[0].basedOnId) !== toBigInt(current[0].id)) {
+      latestParent = await clientFor(chainId).readContract({
+        address: controller, abi: getRulesetWithMetadataAbi, functionName: 'getRulesetOf',
+        args: [localPid, toBigInt(latest[0].basedOnId)],
+      });
+    }
+    var plan = planRulesetQueue({
+      current: current[0], upcoming: upcoming ? upcoming[0] : null,
+      latest: latest && latest[0], latestApprovalStatus: latestStatus,
+    });
+    return { current: current, upcoming: upcoming, latest: latest, latestParent: latestParent, latestApprovalStatus: latestStatus, plan: plan };
+  }
+
+  function queueStartFor(option) {
+    if (!option.requiresStartDate) return Number(option.mustStartAtOrAfter || 0);
+    if (!state.queueCustomStart) return 0;
+    var parsed = new Date(state.queueCustomStart).getTime();
+    return isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
+  }
+
+  function queueFingerprint(controller, option) {
+    var source = option.source;
+    return [
+      String(controller || '').toLowerCase(), option.action, String(source.id),
+      String(source.basedOnId || 0), String(source.cycleNumber),
+      String(source.start), String(source.duration),
+    ].join(':');
+  }
+
+  function formatQueueDate(seconds) {
+    return Number(seconds) > 0 ? new Date(Number(seconds) * 1000).toLocaleString() : 'the next eligible cycle';
+  }
+
+  function applyQueueActionCopy(situation, option) {
+    var cycle = Number(option.source.cycleNumber || 0);
+    var start = queueStartFor(option);
+    if (option.action === 'replace') {
+      state.queueStartSummary = 'Replaces queued Cycle #' + cycle;
+      state.queueTimingExplanation = 'This configuration targets the same scheduled cycle as queued Cycle #' + cycle
+        + '. Its parent ruleset’s approval hook still decides whether the replacement can take effect.';
+    } else if (option.action === 'after') {
+      state.queueStartSummary = option.requiresStartDate ? 'Starts at the chosen follow-on time' : 'Starts after queued Cycle #' + cycle;
+      state.queueTimingExplanation = option.requiresStartDate
+        ? 'The queued ruleset has no duration, so it has no automatic end. The chosen date is the earliest time these following rules may replace it.'
+        : 'This configuration is queued after Cycle #' + cycle + ', no earlier than ' + formatQueueDate(start) + '.';
+    } else {
+      state.queueStartSummary = 'Starts after current Cycle #' + cycle;
+      state.queueTimingExplanation = 'This configuration is copied from current Cycle #' + cycle
+        + '. Its cycle schedule and approval hook determine when the queued change can take effect.';
+    }
+  }
+
+  function updateQueueApprovalNote(situation, option) {
+    var parent = option.action === 'after' ? situation.latest[0]
+      : (option.action === 'replace' ? situation.latestParent[0] : situation.current[0]);
+    var label = deadlineLabelOf(parent && parent.approvalHook, project.chainId);
+    var parentName = option.action === 'current' ? 'current Cycle #' : 'parent Cycle #';
+    hookNote.innerHTML = '<strong>' + parentName + Number(parent && parent.cycleNumber || 0) + ' approval condition: ' + label + '.</strong> '
+      + 'That parent ruleset decides whether and when this new configuration can take effect. '
+      + 'The “Ruleset approval condition” you set below governs <em>later</em> changes after the new rules begin.';
   }
 
   // Resolve the data hook and the 721 hook as two different identities. REVOwner and JBOmnichainDeployer are
@@ -20218,19 +20323,14 @@ function openQueueRulesetModal(project) {
 
   async function loadQueueDataHooksAcrossChains() {
     var rows = await Promise.all(allChains.map(async function (chain) {
-      var pid = pidOn(project, chain.id);
-      var controller = await controllerAddressFor(chain.id, pid);
-      var live = await Promise.all([
-        clientFor(chain.id).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }),
-        clientFor(chain.id).readContract({ address: controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [pid] }),
-      ]);
-      var current = live[0], upcoming = live[1];
-      if (!current || !current[0] || toBigInt(current[0].id) === 0n || !current[1]) throw new Error('No current ruleset on ' + (chain.name || chain.id) + '.');
-      var ruleset = current[0], metadata = current[1];
-      if (upcoming && upcoming[0] && toBigInt(upcoming[0].id) > 0n && String(upcoming[0].id) !== String(current[0].id)) {
-        ruleset = upcoming[0]; metadata = upcoming[1];
-      }
+      var localPid = pidOn(project, chain.id);
+      var controller = await controllerAddressFor(chain.id, localPid);
+      var situation = await readQueueSituation(chain.id, localPid, controller);
+      var option = queueOptionFor(situation, state.queueAction);
+      var selected = queueEntryForOption(situation, option);
+      var ruleset = selected[0], metadata = selected[1];
       if (!metadata) throw new Error('No ruleset metadata on ' + (chain.name || chain.id) + '.');
+      state.queueMustStartAtByChain[chain.id] = queueStartFor(option);
       var hook = metadata.dataHook && !/^0x0+$/.test(metadata.dataHook) ? metadata.dataHook : '';
       var preservedHook = hook;
       var preservedUsePay = !!metadata.useDataHookForPay;
@@ -20245,19 +20345,20 @@ function openQueueRulesetModal(project) {
         if (usesWrapper) {
           var canonicalController = getAddress('JBController', chain.id);
           if (!canonicalController || controller.toLowerCase() !== canonicalController.toLowerCase()) throw new Error('The omnichain wrapper is not connected to this project’s current controller on ' + (chain.name || chain.id) + '.');
-          var extra = await clientFor(chain.id).readContract({ address: wrapper, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [pid, toBigInt(ruleset.id)] });
+          var extra = await clientFor(chain.id).readContract({ address: wrapper, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [localPid, toBigInt(ruleset.id)] });
           var extraHook = extra && (extra.dataHook || extra[0]);
           preservedHook = extraHook && !/^0x0+$/.test(extraHook) ? extraHook : '';
           preservedUsePay = !!(extra && (extra.useDataHookForPay != null ? extra.useDataHookForPay : extra[1]));
           preservedUseCashOut = !!(extra && (extra.useDataHookForCashOut != null ? extra.useDataHookForCashOut : extra[2]));
         }
       }
-      return { chainId: chain.id, controller: controller, ruleset: ruleset, metadata: metadata, hook: hook, preservedHook: preservedHook, preservedUsePay: preservedUsePay, preservedUseCashOut: preservedUseCashOut };
+      return { chainId: chain.id, controller: controller, ruleset: ruleset, metadata: metadata, hook: hook, preservedHook: preservedHook, preservedUsePay: preservedUsePay, preservedUseCashOut: preservedUseCashOut, situation: situation, option: option };
     }));
     var anyHook = false;
     rows.forEach(function (row) {
       state.queueBaseByChain[row.chainId] = row;
       state.controllerByChain[row.chainId] = row.controller;
+      state.queueFingerprintByChain[row.chainId] = queueFingerprint(row.controller, row.option);
       state.currentDataHookByChain[row.chainId] = row.preservedHook;
       state.currentUseDataHookForPayByChain[row.chainId] = row.preservedUsePay;
       state.currentUseDataHookForCashOutByChain[row.chainId] = row.preservedUseCashOut;
@@ -20329,6 +20430,69 @@ function openQueueRulesetModal(project) {
     }
   }
 
+  function queueActionDescription(option) {
+    var situation = state.queueSituation;
+    var status = situation.latestApprovalStatus;
+    if (option.action === 'current') {
+      return 'Copies current Cycle #' + Number(option.source.cycleNumber) + '. Its approval hook and cycle schedule determine when the change can take effect.';
+    }
+    if (option.action === 'replace') {
+      var replace = approvalStatusLabel(status) + '. Copies queued Cycle #' + Number(option.source.cycleNumber) + ' and targets the same scheduled cycle.';
+      if (situation.plan.hasMultipleQueuedRulesets) replace += ' Earlier queued configurations remain in place.';
+      return replace;
+    }
+    if (option.requiresStartDate) {
+      return approvalStatusLabel(status) + '. This queued ruleset has no automatic end, so choose when the following rules may replace it.';
+    }
+    return approvalStatusLabel(status) + '. Copies the queue tail and starts no earlier than ' + formatQueueDate(option.mustStartAtOrAfter) + '.';
+  }
+
+  function renderQueuePosition() {
+    if (!state.queueSituation || !state.queuePlan) return null;
+    var wrap = el('div', '');
+    var h = el('div', 'operator-edit-label'); h.textContent = 'Queue position'; wrap.appendChild(h);
+    var box = el('div', 'queue-shop-choice');
+    state.queuePlan.options.forEach(function (option) {
+      var row = el('label', 'queue-shop-opt');
+      var radio = document.createElement('input'); radio.type = 'radio'; radio.name = 'queue-position';
+      radio.checked = state.queueAction === option.action; radio.disabled = state.queueSourceLoading;
+      radio.addEventListener('change', function () {
+        if (!radio.checked || option.action === state.queueAction) return;
+        modal.close();
+        openQueueRulesetModal(project, option.action);
+      });
+      if (state.queuePlan.options.length > 1) row.appendChild(radio);
+      var txt = el('div', 'queue-shop-opt-txt');
+      var name = el('div', 'queue-shop-opt-name');
+      name.textContent = option.action === 'current'
+        ? 'Base new rules on current Cycle #' + Number(option.source.cycleNumber)
+        : (option.action === 'replace' ? 'Replace queued Cycle #' : 'Queue after Cycle #') + Number(option.source.cycleNumber);
+      txt.appendChild(name);
+      var sub = el('div', 'queue-shop-opt-sub'); sub.textContent = queueActionDescription(option); txt.appendChild(sub);
+      row.appendChild(txt); box.appendChild(row);
+    });
+    wrap.appendChild(box);
+
+    var selected = queueOptionFor(state.queueSituation, state.queueAction);
+    if (selected.requiresStartDate) {
+      var dateField = el('div', 'create-field'); dateField.style.marginTop = '12px';
+      var dateLabel = el('label', 'create-label'); dateLabel.textContent = 'Start following rules'; dateField.appendChild(dateLabel);
+      var inp = el('input', 'field create-input'); inp.type = 'datetime-local'; inp.value = state.queueCustomStart || '';
+      var minTs = Math.max(Math.floor(Date.now() / 1000) + 60, Number(selected.source.start) + 1);
+      var minDate = new Date(minTs * 1000); var minLocal = new Date(minDate.getTime() - minDate.getTimezoneOffset() * 60000);
+      inp.min = minLocal.toISOString().slice(0, 16);
+      inp.addEventListener('change', function () {
+        state.queueCustomStart = inp.value;
+        applyQueueActionCopy(state.queueSituation, selected);
+        renderEditor();
+      });
+      dateField.appendChild(inp);
+      var hint = el('div', 'create-hint'); hint.textContent = 'A flexible queued ruleset has no natural end. Choose the earliest time these following rules may replace it.'; dateField.appendChild(hint);
+      wrap.appendChild(dateField);
+    }
+    return wrap;
+  }
+
   function renderEditor() {
     body.innerHTML = '';
     if (state.queueSourceLoading) {
@@ -20338,13 +20502,15 @@ function openQueueRulesetModal(project) {
       var sourceError = el('div', 'operator-edit-across'); sourceError.style.marginBottom = '18px';
       sourceError.textContent = state.queueSourceError; body.appendChild(sourceError);
     }
+    var queuePosition = renderQueuePosition();
+    if (queuePosition) { queuePosition.style.marginBottom = '18px'; body.appendChild(queuePosition); }
     if (state.unsupportedMultiCurrencyAccess) {
       var accessWarning = el('div', 'operator-edit-across');
       accessWarning.style.marginBottom = '18px';
       accessWarning.textContent = state.unsupportedQueueReason || 'This ruleset contains settings this editor cannot preserve safely, so queueing is disabled to avoid changing them.';
       body.appendChild(accessWarning);
     }
-    body.appendChild(renderStages(state, renderEditor, { noHead: true }));
+    if (state.stages.length) body.appendChild(renderStages(state, renderEditor, { noHead: true }));
 
     // 721 shop choice. A prior direct collection is not destroyed when a ruleset detaches it, so verified hooks
     // from the ruleset history are offered alongside keep/remove/new. Reactivation reuses the exact collection,
@@ -20414,27 +20580,43 @@ function openQueueRulesetModal(project) {
     }
   }
 
-  // Prefill stage 1 from the BASE ruleset — the one the queued ruleset will be based on. That's the latest
-  // queued ruleset if a distinct one is already queued (upcoming), otherwise the current ruleset. All values
-  // (params + reserved/payout splits + fund access) default to that base, keyed on its id.
+  // Prefill from the owner-selected queue source: current rules when the queue is empty, or the queue tail when
+  // replacing/appending. All values (params + splits + fund access)
+  // are keyed to that exact source ruleset ID.
   resolveAcctToken(project.chainId, pid).then(function (acct) {
     acct = normalizeQueueAcct(acct);
     applyQueueAccounting(acct, project.chainId);
 
-    return Promise.all([
-      controllerRead(project.chainId, pid, currentRulesetAbi, 'currentRulesetOf', [pid]),
-      controllerRead(project.chainId, pid, upcomingRulesetAbi, 'upcomingRulesetOf', [pid]),
-    ]).then(async function (liveRulesets) {
-      var current = liveRulesets[0];
-      var up = liveRulesets[1];
-      if (!current || !current[0] || toBigInt(current[0].id) === 0n || !current[1]) throw new Error('No live current ruleset could be verified.');
-      // A genuinely-queued upcoming ruleset has an id distinct from the current one (an auto-cycle reuses the
-      // same config id). When present, it's the base; otherwise base on the current ruleset.
-      var baseR = current[0], baseM = current[1];
-      if (up && up[0] && Number(up[0].id) > 0 && String(up[0].id) !== String(current[0].id)) { baseR = up[0]; baseM = up[1]; }
-      if (!baseR) throw new Error('No current ruleset.');
+    return controllerAddressFor(project.chainId, pid).then(async function (controller) {
+      var situation = await readQueueSituation(project.chainId, pid, controller);
+      state.queueSituation = situation; state.queuePlan = situation.plan;
+      var chosen = situation.plan.options.some(function (o) { return o.action === preferredQueueAction; })
+        ? preferredQueueAction : situation.plan.defaultAction;
+      state.queueAction = chosen;
+      var option = queueOptionFor(situation, chosen);
+      state.queueOption = option;
+      var selected = queueEntryForOption(situation, option);
+      var baseR = selected[0], baseM = selected[1];
+      state.queueMustStartAtByChain[project.chainId] = queueStartFor(option);
+      state.queueFingerprintByChain[project.chainId] = queueFingerprint(controller, option);
+      applyQueueActionCopy(situation, option);
+      updateQueueApprovalNote(situation, option);
+      if (!baseR || !baseM) throw new Error('The selected ruleset source is unavailable.');
       await applyCurrentShopMetadata(baseM, baseR);
       await Promise.all([loadQueueDataHooksAcrossChains(), loadArchivedShops()]);
+
+      state.verifyQueuePosition = async function (chains) {
+        await Promise.all(chains.map(async function (chain) {
+          var localPid = pidOn(project, chain.id);
+          var liveController = await controllerAddressFor(chain.id, localPid);
+          var liveSituation = await readQueueSituation(chain.id, localPid, liveController);
+          var liveOption = queueOptionFor(liveSituation, state.queueAction);
+          if (queueFingerprint(liveController, liveOption) !== state.queueFingerprintByChain[chain.id]) {
+            throw new Error('The ruleset queue changed on ' + (chain.name || chainNameOf(chain.id))
+              + ' while this form was open. Nothing was sent; reopen the editor and review the live queue again.');
+          }
+        }));
+      };
 
       var terminal = getAddress('JBMultiTerminal', project.chainId);
       var fal = getAddress('JBFundAccessLimits', project.chainId);
@@ -20671,12 +20853,31 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   }
   if (state.shopChoice === 'remove' && !state.canRemoveShop) throw new Error('This shop cannot be safely removed through the queue editor.');
   if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
+  if (typeof state.verifyQueuePosition !== 'function') throw new Error('The live queue recheck is unavailable. Nothing was sent.');
+  setStatus('Rechecking the live queue…');
+  await state.verifyQueuePosition(selected);
+  var activeQueueOption = state.queueOption;
+  if (!activeQueueOption) throw new Error('The queue position could not be verified.');
+  var customQueueStart = 0;
+  if (activeQueueOption.requiresStartDate && state.queueCustomStart) {
+    var parsedQueueStart = new Date(state.queueCustomStart).getTime();
+    customQueueStart = isFinite(parsedQueueStart) ? Math.floor(parsedQueueStart / 1000) : 0;
+  }
+  if (activeQueueOption.requiresStartDate) {
+    var minimumStart = Math.max(Math.floor(Date.now() / 1000) + 60, Number(activeQueueOption.source.start) + 1);
+    if (!customQueueStart || customQueueStart < minimumStart) throw new Error('Choose a future start time after the flexible queued ruleset starts.');
+  }
   var multi = selected.length > 1;
   var usesOmnichainWrapper = !!state.isOmnichain;
   // Share one first-ruleset start across chains (now + 20 min) so cycles align; single chain starts at 0
   // (next cycle / per the approval hook). Configs are built PER CHAIN — the accounting/fund-access token
   // (USDC) and approval-hook addresses differ per chain.
   var immediateStart = multi ? (Math.floor(Date.now() / 1000) + 1200) : 0;
+  function plannedStartFor(chainId) {
+    if (activeQueueOption.requiresStartDate) return customQueueStart;
+    var planned = Number(state.queueMustStartAtByChain && state.queueMustStartAtByChain[chainId] || 0);
+    return planned || immediateStart;
+  }
 
   // "Start a new shop" deploys a fresh 721 collection + wires it, via the one-call deployer (ownership → the
   // project). Pin the new items' metadata once up front (images are already pinned on upload).
@@ -20695,7 +20896,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var localPid = pidOn(project, cid);
     var liveController = state.controllerByChain && state.controllerByChain[cid];
     if (!liveController) throw new Error('The project controller is not verified on ' + chainNameOf(cid) + '.');
-    var cfgs = buildQueueRulesetConfigs(state, cid, immediateStart, newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined);
+    var cfgs = buildQueueRulesetConfigs(state, cid, plannedStartFor(cid), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined);
     if (newShop) {
       var nc = buildNewShopQueueCall({ projectId: localPid, deployConfig: build721Config(state, projUri, cid), cfgs: cfgs,
         useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions),
@@ -20751,7 +20952,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var liveController0 = state.controllerByChain && state.controllerByChain[cid0];
     if (!liveController0) { setStatus('The project controller is not verified on this chain.', 'error'); return; }
     var configs;
-    try { configs = buildQueueRulesetConfigs(state, cid0, 0, newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
+    try { configs = buildQueueRulesetConfigs(state, cid0, plannedStartFor(cid0), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
     var exec;
     if (newShop) {
       var dep = getAddress('JB721TiersHookProjectDeployer', cid0);

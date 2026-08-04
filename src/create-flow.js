@@ -1443,8 +1443,8 @@ export function renderStages(state, render, opts) {
     wrap.appendChild(afterRow);
     var notes = {
       wait: 'The project idles safely — no issuance, payments paused, cash outs preserved — until the project owner changes it.',
-      terminal: 'Ruleset #1’s terms continue on forever, without cycling again.',
-      cycle: 'Ruleset #1 repeats its cycle until the project owner changes it. Changes can only take effect once a cycled ruleset ends.',
+      terminal: (state.queueEditor ? 'The new ruleset’s' : 'Ruleset #1’s') + ' terms continue on forever, without cycling again.',
+      cycle: (state.queueEditor ? 'The new ruleset' : 'Ruleset #1') + ' repeats its cycle until the project owner changes it. Changes can only take effect once a cycled ruleset ends.',
     };
     wrap.appendChild(infoNote(notes[state.afterMode] || ''));
 
@@ -1520,7 +1520,11 @@ function renderStageCard(stage, idx, state, render) {
   var head = el('div', 'create-stage-head');
   head.addEventListener('click', function (e) { if (e.target.closest('.create-stage-remove')) return; stage.expanded = !stage.expanded; render(); });
   var left = el('div', 'create-stage-headtext');
-  var title = el('div', 'create-stage-title'); title.textContent = 'Ruleset #' + (idx + 1); left.appendChild(title);
+  var title = el('div', 'create-stage-title');
+  title.textContent = state.queueEditor
+    ? (idx === 0 ? (state.queueAction === 'replace' ? 'Replacement ruleset' : 'New ruleset') : 'Following ruleset ' + (idx + 1))
+    : 'Ruleset #' + (idx + 1);
+  left.appendChild(title);
   var sum = el('div', 'create-stage-sum'); setBulletSummary(sum, stageSummaryParts(stage, idx, state)); left.appendChild(sum);
   head.appendChild(left);
   if (idx > 0) {
@@ -1834,7 +1838,13 @@ function setBulletSummary(elx, parts) {
 
 function stageSummaryRaw(stage, idx, state) {
   var parts = [];
-  parts.push(idx === 0 ? ((stage.scheduleOn && stage.schedule) ? 'Starts at a set time' : 'Starts at launch') : 'Starts after Ruleset #' + idx);
+  if (state.queueEditor) {
+    parts.push(idx === 0
+      ? (state.queueStartSummary || 'Starts when the queued change becomes eligible')
+      : 'Starts after the preceding queued ruleset');
+  } else {
+    parts.push(idx === 0 ? ((stage.scheduleOn && stage.schedule) ? 'Starts at a set time' : 'Starts at launch') : 'Starts after Ruleset #' + idx);
+  }
   parts.push(!stage.durationSeconds ? 'lasts until changed by owner'
     : (stage.durationSeconds === FOREVER_SECONDS ? 'lasts forever' : 'lasts ' + secondsLabel(stage.durationSeconds)));
 
@@ -1895,14 +1905,14 @@ function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
 function renderStageEditor(stage, idx, state, render) {
   var c = el('div', 'create-stage-body');
-  c.appendChild(stageTiming(stage, idx, idx === state.stages.length - 1, render));
+  c.appendChild(stageTiming(stage, idx, idx === state.stages.length - 1, render, state));
   c.appendChild(tokenSection(stage, render, state, idx));
   c.appendChild(payoutsSection(stage, render, state)); // Schedule payouts + Surplus allowance — top-level, no disclosure
   c.appendChild(collapse(stage, 'otherOpen', 'Other rules', true, render, function () { return otherRulesSection(stage, render); }));
   return c;
 }
 
-function stageTiming(stage, idx, isLast, render) {
+function stageTiming(stage, idx, isLast, render, state) {
   var w = el('div', '');
   // Duration (None + presets)
   var f = el('div', 'create-field');
@@ -1937,12 +1947,16 @@ function stageTiming(stage, idx, isLast, render) {
   w.appendChild(f);
 
   if (idx === 0) {
-    w.appendChild(toggleRow('Launch right away', '', !stage.scheduleOn, function (v) {
-      stage.scheduleOn = !v;
-      if (v) stage.schedule = ''; // launching now clears any scheduled time
-      render();
-    }));
-    if (stage.scheduleOn) {
+    if (state.queueEditor) {
+      w.appendChild(infoNote(state.queueTimingExplanation || 'The current ruleset’s cycle schedule and approval hook determine when this queued configuration can take effect.'));
+    } else {
+      w.appendChild(toggleRow('Launch right away', '', !stage.scheduleOn, function (v) {
+        stage.scheduleOn = !v;
+        if (v) stage.schedule = ''; // launching now clears any scheduled time
+        render();
+      }));
+    }
+    if (!state.queueEditor && stage.scheduleOn) {
       var ww = el('div', '');
       var sub = el('div', 'create-hint'); sub.textContent = 'Your project will start at this date.'; ww.appendChild(sub);
       var i = el('input', 'field create-input'); i.type = 'datetime-local'; i.style.marginTop = '4px';
@@ -1956,7 +1970,9 @@ function stageTiming(stage, idx, isLast, render) {
       w.appendChild(fieldBlock(null, false, ww));
     }
   } else {
-    w.appendChild(infoNote('Stage ' + (idx + 1) + ' begins automatically when Stage ' + idx + ' ends.'));
+    w.appendChild(infoNote(state.queueEditor
+      ? 'This following ruleset begins automatically when the preceding queued ruleset ends.'
+      : 'Stage ' + (idx + 1) + ' begins automatically when Stage ' + idx + ' ends.'));
   }
   // Accept payments — first thing after timing. Pausing payments idles token issuance (see tokenSection).
   w.appendChild(toggleRow('Accept payments', dz('The project can receive payments.', 'The project can’t receive payments.'), !stage.pausePay, function (v) { stage.pausePay = !v; render(); }));
