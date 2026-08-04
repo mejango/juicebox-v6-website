@@ -2954,7 +2954,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     var opStatus = el('div', 'modal-status'); opStatus.style.display = 'none';
     if (fl.allowOwnerMint && tier.remaining > 0) {
       var mintBlock = el('div', 'tier-detail-op-action');
-      var mintBtn = el('button', 'create-btn primary small tier-detail-mint'); mintBtn.textContent = 'Mint to beneficiary';
+      var mintBtn = el('button', 'create-btn small tier-detail-mint'); mintBtn.textContent = 'Mint to beneficiary';
       mintBtn.addEventListener('click', function () { openMintTierModal(project, tier, nameEl.textContent || ('Item ' + tier.id)); });
       mintBlock.appendChild(mintBtn);
       var mintNote = el('div', 'tier-detail-op-note');
