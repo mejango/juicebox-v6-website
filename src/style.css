@@ -269,6 +269,9 @@ select:not(:disabled) { cursor: pointer; }
 #tabs {
   display: flex;
   align-items: center;
+  touch-action: pan-x;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
   border-bottom: none;
   margin: 8px 20px 0;
 }
@@ -3788,11 +3791,17 @@ input[type="checkbox"].field {
   gap: 0;
   border-bottom: none;
   overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
+  touch-action: pan-x;
 }
 .project-detail-tabs::-webkit-scrollbar { display: none; }
 
 .detail-tab-btn {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
   flex: 0 0 auto;
   background: none;
   border: none;
@@ -3817,9 +3826,16 @@ input[type="checkbox"].field {
   border-bottom-color: var(--c-teal);
 }
 
-.detail-tab-overflow { position: relative; flex: 0 0 auto; margin-left: auto; }
+.detail-tab-overflow {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  margin-left: auto;
+}
 .detail-tab-overflow-button {
-  width: 42px; min-height: 40px; padding: 3px 10px 7px;
+  display: inline-flex; width: 42px; min-height: 40px; padding: 0 10px;
+  align-items: center; justify-content: center;
   border: none; border-bottom: 2px solid transparent; background: none;
   color: var(--muted-2); font-family: inherit; font-size: 22px; font-weight: bold;
   line-height: 1; cursor: pointer;
@@ -6067,7 +6083,10 @@ select.create-input-auto { width: auto; max-width: 100%; }
   .detail-tab-btn { flex: 0 0 auto; white-space: nowrap; }
 
   /* Owners sub-subtab row (Accounts / Market / Settlement / …) — scroll instead of wrapping to 2 rows. */
-  .owners-subtabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .owners-subtabs {
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+    overscroll-behavior-x: contain; touch-action: pan-x;
+  }
   .owners-subtabs::-webkit-scrollbar { display: none; }
   .owners-subtab { flex: 0 0 auto; white-space: nowrap; }
 

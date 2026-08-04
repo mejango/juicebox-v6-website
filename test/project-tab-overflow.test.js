@@ -11,8 +11,16 @@ describe('project detail tab overflow', () => {
     expect(source).toContain("item.setAttribute('role', 'tab')")
     expect(source).toContain("overflowButton.textContent = expanded ? '⋯' : '⋮'")
     expect(source).toContain("overflowButton.dataset.overflowOrientation = expanded ? 'horizontal' : 'vertical'")
-    expect(styles).toContain('.detail-tab-overflow { position: relative; flex: 0 0 auto; margin-left: auto; }')
+    expect(styles).toContain('.detail-tab-overflow {')
+    expect(styles).toContain('align-items: flex-start;')
+    expect(styles).toContain('align-items: center; justify-content: center;')
     expect(styles).toContain('.detail-tab-overflow-item[hidden] { display: none; }')
+  })
+
+  it('locks every horizontally scrollable tab row to its horizontal axis', () => {
+    expect(styles).toContain('touch-action: pan-x;')
+    expect(styles).toContain('overflow-y: hidden;')
+    expect(styles).toContain('overscroll-behavior-x: contain;')
   })
 
   it('keeps deep-linked overflow tabs in the lazy builder set', () => {
