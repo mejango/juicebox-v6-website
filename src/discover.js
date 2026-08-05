@@ -14,7 +14,7 @@ import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgre
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, isEnsName } from './create-flow.js';
+import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -1500,7 +1500,7 @@ function renderShopSection(project, shop, cart) {
       ['noNewTiersWithReserves', 'Lock reserved items after launch'],
       ['noNewTiersWithVotes', 'Lock voting items after launch'],
       ['noNewTiersWithOwnerMinting', 'Lock owner minting after launch'],
-      ['issueTokensForSplits', 'Give split recipients project tokens'],
+      ['issueTokensForSplits', SPLIT_SALES_TOKEN_CREDIT_TITLE],
     ];
     var list = el('dl', 'shop-config-list');
     rows.forEach(function (row) {

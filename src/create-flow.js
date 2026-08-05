@@ -34,6 +34,12 @@ import { build721RulesetMetadata } from './nft721-ruleset.js';
 // Constants
 // ---------------------------------------------------------------------------
 
+// Keep this contract flag's builder-facing language identical across the
+// create flow and project shop config (and aligned with the sibling clients).
+export var SPLIT_SALES_TOKEN_CREDIT_TITLE = 'Full token credit on split sales';
+export var SPLIT_SALES_TOKEN_CREDIT_ON = 'Buyers get project tokens for their entire payment, even the portion an item routes to splits.';
+export var SPLIT_SALES_TOKEN_CREDIT_OFF = 'Tokens are only issued for what stays in the project.';
+
 // Steps depend on the chosen project type (defaults to Custom). Type is always the first step.
 // Revnet is a reduced flow (no Shop/Settlement — ETH-only, single canonical terminal, suckers on Deploy).
 function stepsFor(state) {
@@ -2632,7 +2638,7 @@ function collectionExtrasSection(state, render) {
   f.appendChild(toggleRow('Lock reserved items after launch', dz('New items added after launch can’t set aside reserved inventory.', 'New items added after launch can set aside reserved inventory.'), c.noNewTiersWithReserves, function (v) { c.noNewTiersWithReserves = v; }));
   f.appendChild(toggleRow('Lock voting items after launch', dz('New items added after launch can’t carry custom voting power.', 'New items added after launch can carry custom voting power.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
   f.appendChild(toggleRow('Lock project owner minting after launch', dz('New items added after launch can’t let the project owner mint for free.', 'New items added after launch can let the project owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
-  f.appendChild(toggleRow('Give split recipients project tokens', dz('Sale-split recipients also receive project tokens for their share.', 'Sale-split recipients receive funds only, no project tokens.'), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
+  f.appendChild(toggleRow(SPLIT_SALES_TOKEN_CREDIT_TITLE, dz(SPLIT_SALES_TOKEN_CREDIT_ON, SPLIT_SALES_TOKEN_CREDIT_OFF), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
   // useDataHookForCashOut — item holders redeem items against project surplus. Revnets force this on at the
   // deployer (so it's custom-only). Mutually exclusive with TOKEN cash out (set in rulesets): the 721 hook
   // reverts on any token cash out, so if token cash outs are on we idle this instead of letting both be set.
