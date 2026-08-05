@@ -29,6 +29,7 @@ import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { build721RulesetMetadata } from './nft721-ruleset.js';
+import { attachProjectIdResolver } from './project-id-resolver.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2280,7 +2281,10 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
   function projectIdCol() {
     var c = el('div', 'create-split-idcol');
     var pcOpen = opts.state && opts.pidKey && perChainOpen(opts.state, opts.pidKey);
-    if (!pcOpen) c.appendChild(projectIdField());
+    if (!pcOpen) {
+      var projectInput = projectIdField();
+      c.appendChild(recipBoxWith(projectInput, attachProjectIdResolver(projectInput, opts.state && opts.state.chainIds || [])));
+    }
     if (opts.state && opts.pidKey) c.appendChild(perChainNumControl(opts.state, render, opts.pidKey, rec.projectId || ''));
     return c;
   }
@@ -2299,14 +2303,20 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     head.appendChild(projectIdCol()); col.appendChild(head); // ID + its per-chain control sit right of the dropdown
     if (opts.isPayout) {
       var routeLabel = el('div', 'create-split-sublabel'); routeLabel.textContent = 'route as'; col.appendChild(routeLabel);
-      var route = el('select', 'field create-input create-split-subsel');
+      var routeWrap = el('div', 'field create-input create-split-subsel create-wrap-select');
+      var routeText = el('span', 'create-wrap-select-label');
+      var routeCaret = el('span', 'create-wrap-select-caret'); routeCaret.setAttribute('aria-hidden', 'true');
+      var route = el('select', 'create-wrap-select-native');
       [['pay', 'Pay project | mint its tokens'], ['balance', 'Add to project balance | mint none']].forEach(function (o) {
         var op = el('option'); op.value = o[0]; op.textContent = o[1];
         if ((rec.preferAddToBalance ? 'balance' : 'pay') === o[0]) op.selected = true;
         route.appendChild(op);
       });
+      route.setAttribute('aria-label', 'Project payout route');
+      routeText.setAttribute('aria-hidden', 'true'); routeText.textContent = route.options[route.selectedIndex].textContent;
       route.addEventListener('change', function () { rec.preferAddToBalance = route.value === 'balance'; render(); });
-      sub(route);
+      routeWrap.appendChild(routeText); routeWrap.appendChild(routeCaret); routeWrap.appendChild(route);
+      sub(routeWrap);
     }
     if (!opts.isPayout || !rec.preferAddToBalance) {
       var benefLabel = el('div', 'create-split-sublabel');
@@ -2800,7 +2810,7 @@ function itemEditor(state, nft, idx, render) {
     c.appendChild(toggleRow('Split sales', dz('Send part of each sale to other addresses or projects; the rest goes to this project.', 'The whole sale goes to this project.'), nft.splitOn, function (v) { nft.splitOn = v; if (v && !nft.splitRecipients.length) nft.splitRecipients.push({ pct: '', recip: '', benef: '' }); render(); }));
     if (nft.splitOn) {
       var sc = el('div', 'create-subcard');
-      nft.splitRecipients.forEach(function (rec, i) { sc.appendChild(itemSplitRow(nft, rec, i, render)); });
+      nft.splitRecipients.forEach(function (rec, i) { sc.appendChild(itemSplitRow(state, nft, rec, i, render)); });
       var addS = el('button', 'operator-cta create-add-link'); addS.textContent = '+ Add recipient'; addS.style.marginTop = '12px';
       addS.addEventListener('click', function (e) { e.preventDefault(); nft.splitRecipients.push({ pct: '', recip: '', benef: '' }); render(); });
       sc.appendChild(addS);
@@ -2886,7 +2896,7 @@ function itemEditor(state, nft, idx, render) {
   return c;
 }
 
-function itemSplitRow(nft, rec, idx, render) {
+function itemSplitRow(state, nft, rec, idx, render) {
   var wrap = el('div', 'create-split-wrap');
   if (idx > 0) wrap.style.marginTop = '12px';
   var row = el('div', 'create-split-row');
@@ -2897,9 +2907,11 @@ function itemSplitRow(nft, rec, idx, render) {
   var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
   var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x…, name.eth, or project ID'; recip.value = rec.recip || '';
   var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
+  var projectHint = attachProjectIdResolver(recip, state && state.chainIds || [], { silentUnlessNumeric: true });
   var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = nft.splitRecipients.indexOf(rec); if (i >= 0) nft.splitRecipients.splice(i, 1); render(); });
-  row.appendChild(recipBoxWith(recip, ensHint)); row.appendChild(rm); wrap.appendChild(row);
+  var recipientBox = recipBoxWith(recip, ensHint); recipientBox.appendChild(projectHint);
+  row.appendChild(recipientBox); row.appendChild(rm); wrap.appendChild(row);
   var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
   var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
   var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… or name.eth'; benef.value = rec.benef || '';
@@ -3398,7 +3410,7 @@ function pcNumField(state, chainId, key, defStr) {
   var input = el('input', 'field create-split-recip'); input.type = 'number'; input.min = '1'; input.placeholder = 'ID';
   input.value = pcAddrGet(state, chainId, key, defStr || '');
   input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
-  return input;
+  return recipBoxWith(input, attachProjectIdResolver(input, [chainId]));
 }
 // Per-chain amount field (payout amounts) — blank means "use the default", shown as the placeholder.
 function pcAmountField(state, chainId, key, defStr) {

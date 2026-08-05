@@ -27,12 +27,12 @@ export function getBendystrawNetwork() {
   return _host === HOST_MAINNET ? 'mainnet' : 'testnet';
 }
 
-function endpoint() {
-  return API_KEY ? `${_host}/${API_KEY}/graphql` : `${_host}/graphql`;
+function endpointForHost(host) {
+  return API_KEY ? `${host}/${API_KEY}/graphql` : `${host}/graphql`;
 }
 
-export async function bendystrawQuery(graphql, variables) {
-  const url = endpoint();
+async function queryAtHost(host, graphql, variables) {
+  const url = endpointForHost(host);
   var res;
   for (var attempt = 0; ; attempt++) {
     try {
@@ -78,6 +78,17 @@ export async function bendystrawQuery(graphql, variables) {
   }
   if (!Object.prototype.hasOwnProperty.call(body, 'data')) throw new Error('Bendystraw response is missing data');
   return body.data;
+}
+
+export async function bendystrawQuery(graphql, variables) {
+  return queryAtHost(_host, graphql, variables);
+}
+
+// Some forms choose their own deployment network without changing the global Discover/DATA toggle.
+// Capture the requested host for the whole request so a concurrent network switch cannot send an
+// exact-chain project lookup to the wrong indexer.
+export async function bendystrawQueryForNetwork(mode, graphql, variables) {
+  return queryAtHost(mode === 'mainnet' ? HOST_MAINNET : HOST_TESTNET, graphql, variables);
 }
 
 export function renderBendystrawSettings(opts) {

@@ -16,7 +16,7 @@ function harnessSource() {
   if (!harness) {
     harness = esbuild.build({
       stdin: {
-        contents: "import { openModal } from './src/discover.js';\nimport { openCreateFlow } from './src/create-flow.js';\nwindow.__jbModalHarness = { openModal: openModal, openCreateFlow: openCreateFlow };\n",
+        contents: "import { openModal } from './src/discover.js';\nimport { openCreateFlow, renderStages, __test } from './src/create-flow.js';\nwindow.__jbModalHarness = { openModal: openModal, openCreateFlow: openCreateFlow, renderStages: renderStages, createState: __test.initState };\n",
         resolveDir: process.cwd(),
         sourcefile: 'e2e-modal-harness.js',
         loader: 'js',
@@ -237,4 +237,59 @@ test('a click on the backdrop closes the modal, a click inside it does not', asy
 
   await page.mouse.click(3, 3);
   await expect(dialogs(page)).toHaveCount(0);
+});
+
+test('the project payout route wraps without truncation and keeps its native caret centered', async ({ page }) => {
+  await openLauncherPage(page);
+  const result = await page.evaluate(() => {
+    const state = window.__jbModalHarness.createState();
+    state.projectType = 'custom';
+    state.chainIds = [84532];
+    state.stages[0].expanded = true;
+    state.stages[0].payoutMode = 'limited';
+    state.stages[0].payoutRecipients = [{
+      type: 'project', projectId: 0, address: '', amountEth: '10', percent: 0, preferAddToBalance: false,
+    }];
+    const host = document.createElement('div');
+    host.className = 'create-sheet';
+    host.style.width = '180px';
+    host.style.position = 'absolute';
+    host.style.left = '8px';
+    host.style.top = '8px';
+    host.appendChild(window.__jbModalHarness.renderStages(state, () => {}));
+    document.body.appendChild(host);
+
+    const control = host.querySelector('.create-wrap-select');
+    control.style.width = '140px';
+    const label = control.querySelector('.create-wrap-select-label');
+    const caret = control.querySelector('.create-wrap-select-caret');
+    const native = control.querySelector('select.create-wrap-select-native');
+    native.focus();
+    const controlRect = control.getBoundingClientRect();
+    const caretRect = caret.getBoundingClientRect();
+    const nativeRect = native.getBoundingClientRect();
+    const style = getComputedStyle(control);
+    return {
+      text: label.textContent,
+      controlHeight: controlRect.height,
+      labelFitsWidth: label.scrollWidth <= label.clientWidth + 1,
+      labelFitsHeight: label.scrollHeight <= label.clientHeight + 1,
+      caretCenterDelta: Math.abs(
+        (caretRect.top + caretRect.height / 2) - (controlRect.top + controlRect.height / 2),
+      ),
+      controlSize: [controlRect.width, controlRect.height],
+      nativeSize: [nativeRect.width, nativeRect.height],
+      focusStyle: style.outlineStyle,
+      focusWidth: Number.parseFloat(style.outlineWidth),
+    };
+  });
+
+  expect(result.text).toBe('Pay project | mint its tokens');
+  expect(result.controlHeight).toBeGreaterThan(34);
+  expect(result.labelFitsWidth).toBe(true);
+  expect(result.labelFitsHeight).toBe(true);
+  expect(result.caretCenterDelta).toBeLessThanOrEqual(2.5);
+  expect(result.nativeSize).toEqual(result.controlSize);
+  expect(result.focusStyle).not.toBe('none');
+  expect(result.focusWidth).toBeGreaterThanOrEqual(2);
 });

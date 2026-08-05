@@ -1,9 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildQueueRulesetConfigs, renderNfts, __test } from '../src/create-flow.js';
 
 const { initState, itemDraft } = __test;
 
+afterEach(() => vi.restoreAllMocks());
+
 describe('shop item editor', () => {
+  it('resolves a numeric sale-split recipient as a project on its selected chain', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      data: { project: { name: 'Shop split project', handle: null, metadata: null, suckerGroupId: '0xshop' } },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const state = initState();
+    state.chainIds = [84532];
+    const item = itemDraft();
+    item.price = '1';
+    item.splitOn = true;
+    item.splitRecipients = [{ pct: '10', recip: '7654319', benef: '' }];
+    state.shopEnabled = true;
+    state.nfts = [item];
+
+    const root = renderNfts(state, () => {});
+    await vi.waitFor(() => expect(root.textContent).toContain('Shop split project'));
+    const input = root.querySelector('input[placeholder*="project ID"]');
+    expect(input.nextElementSibling.className).toBe('create-resolve-hint');
+    expect(input.parentElement.querySelector('.create-resolve-hint.ok').textContent).toBe('Shop split project');
+  });
+
   it('keeps split sales enabled when a positive price changes to another positive price', () => {
     const state = initState();
     const item = itemDraft();
