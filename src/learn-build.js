@@ -423,7 +423,7 @@ export function renderLearnTab() {
       '  4. apps verify the ENS record matches',
       '  5. your project now shows as "myproject.eth"',
     ]),
-    textBlock('Subdomains work too. "sub.myproject.eth" is stored as ["sub", "myproject"] — the contract reconstructs the full name automatically and verifies it against the ENS registry.')
+    textBlock('Subdomains work too, stored innermost-last: "sub.myproject.eth" is stored as ["myproject", "sub"] — the contract joins the parts in reverse and appends .eth, then verifies the result against the ENS registry.')
   ]));
 
   wrap.appendChild(guideSection('learn-payer', '21. PAYER ADDRESS', [
@@ -858,7 +858,7 @@ export function renderBuildTab() {
       ['handleOf(chainId, projectId, setter)', 'Returns the verified handle string, or empty if ENS text record doesn’t match.'],
       ['TEXT_KEY', 'The ENS text record key: "juicebox". Expected value: "{chainId}:{projectId}".'],
     ]),
-    textBlock('Name parts are in reverse order with .eth appended automatically. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["sub", "myproject"]. Parts cannot contain dots, ASCII control characters, DEL, "eth", or be empty. Unicode normalization (ENSIP-15) is the caller/client’s responsibility, not the contract’s.')
+    textBlock('Name parts are in reverse order with .eth appended automatically — `_formatHandle` walks the array from the LAST element to the first (JBProjectHandles.sol:224-227), so the innermost label goes last. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["myproject", "sub"]. Parts cannot contain dots, ASCII control characters, DEL, "eth", or be empty. Unicode normalization (ENSIP-15) is the caller/client’s responsibility, not the contract’s.')
   ]));
 
   wrap.appendChild(guideSection('build-payer', '17. PAYER ADDRESS', [

@@ -29,6 +29,30 @@ describe('project ID field resolution', () => {
     ])).toEqual({ kind: 'warn', text: 'KMAC found on Base Sepolia only — set project IDs per chain.' });
   });
 
+  // An indexer outage is not evidence that a project is missing. Reporting "No project #N found"
+  // during one makes a user treat a valid recipient id as a typo and change a correct entry.
+  it('separates a failed lookup from a genuine miss', async () => {
+    expect(projectIdentityHint(11, [84532], [
+      { chainId: 84532, found: false, name: null, suckerGroupId: null, unavailable: true },
+    ])).toEqual({
+      kind: 'warn',
+      text: 'Could not check project #11 right now — verify it before submitting.',
+    });
+    expect(projectIdentityHint(11, [84532], [
+      { chainId: 84532, found: false, name: null, suckerGroupId: null, unavailable: false },
+    ])).toEqual({
+      kind: 'warn',
+      text: 'No project #11 found on the selected chain.',
+    });
+  });
+
+  it('marks a lookup unavailable when the indexer query fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
+    await expect(lookupProjectIdentity(424242, 84532)).resolves.toMatchObject({
+      chainId: 84532, found: false, unavailable: true,
+    });
+  });
+
   it('queries the testnet indexer for a testnet project ID', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       data: { project: { name: 'Resolved project', handle: null, metadata: null, suckerGroupId: '0x1' } },

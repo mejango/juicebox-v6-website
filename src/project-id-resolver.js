@@ -28,7 +28,7 @@ export async function lookupProjectIdentity(projectId, chainId) {
   var cid = Number(chainId);
   var key = cid + ':' + id;
   if (positiveCache.has(key)) return positiveCache.get(key);
-  var result = { chainId: cid, found: false, name: null, suckerGroupId: null };
+  var result = { chainId: cid, found: false, name: null, suckerGroupId: null, unavailable: false };
   try {
     var data = await bendystrawQueryForNetwork(
       TESTNET_CHAIN_IDS.has(cid) ? 'testnet' : 'mainnet',
@@ -47,7 +47,11 @@ export async function lookupProjectIdentity(projectId, chainId) {
       // indexer failure should resolve on the next edit instead of staying broken for the session.
       positiveCache.set(key, result);
     }
-  } catch (_) {}
+  } catch (_) {
+    // The query never completed. That is NOT evidence the project is missing — keep the two
+    // apart so the hint can say "couldn't check" instead of "doesn't exist".
+    result.unavailable = true;
+  }
   return result;
 }
 
@@ -58,6 +62,17 @@ export function projectIdentityHint(projectId, chainIds, lookups) {
     return (lookups || []).find(function (result) { return result.chainId === chainId && result.found; });
   }).filter(Boolean);
   if (!found.length) {
+    // An indexer outage must not read as "this project does not exist" — the user would treat a
+    // valid recipient id as a typo and change a correct entry.
+    var unavailable = selected.some(function (chainId) {
+      return (lookups || []).some(function (result) { return result.chainId === chainId && result.unavailable; });
+    });
+    if (unavailable) {
+      return {
+        kind: 'warn',
+        text: 'Could not check project #' + projectId + ' right now — verify it before submitting.',
+      };
+    }
     return {
       kind: 'warn',
       text: 'No project #' + projectId + ' found on the selected ' + (selected.length === 1 ? 'chain.' : 'chains.'),

@@ -65,7 +65,8 @@ describe('buildRevnetArgs — stage initialIssuance encoding', () => {
     state.stages[0].metadataExtra = 1 << 2;
     state.stages[0].pause721Transfers = true;
     const { stages } = stagesOf(state);
+    // Bit 2 (allow sucker deployment) is always on; stage 1 adds the transfer pause (bit 0).
     expect(stages[0].extraMetadata).toBe(5);
-    expect(stages[1].extraMetadata).toBe(0);
+    expect(stages[1].extraMetadata).toBe(1 << 2);
   });
 });

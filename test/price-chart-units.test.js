@@ -3,7 +3,7 @@
 // (currency = uint32(uint160(token))). One chart axis must never mix the two: when they differ the
 // issuance series is converted through JBPrices, or dropped when no feed exists.
 import { describe, expect, it } from 'vitest';
-import { issuancePairUnitMismatch, convertIssuanceStagesToPairUnits, lpDefaultRange } from '../src/discover.js';
+import { issuancePairUnitMismatch, toBaseAxis, lpDefaultRange } from '../src/discover.js';
 
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
 const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
@@ -33,20 +33,23 @@ describe('issuancePairUnitMismatch', () => {
   });
 });
 
-describe('convertIssuanceStagesToPairUnits', () => {
-  it('scales stage weights so 1/weight prices land in pair units (rate = pair per base unit)', () => {
-    // weight 1000 tokens per USD; rate 2 USDC per USD → price should double: 0.001 → 0.002.
-    const stages = [{ start: 0, weight: 1000e18, weightCutPercent: 0, duration: 0 }];
-    const converted = convertIssuanceStagesToPairUnits(stages, 2);
-    expect(Number(converted[0].weight) / 1e18).toBeCloseTo(500);
-    // Original untouched (shared with project.stages).
-    expect(Number(stages[0].weight) / 1e18).toBeCloseTo(1000);
-    // Non-weight fields survive.
-    expect(converted[0].duration).toBe(0);
+// The chart's axis is the ruleset's BASE currency: issuance (1/weight) is exact in it and is never
+// converted, while the pool price and cash-out floor are accounting-token denominated and move onto
+// it. Before this, the conversion ran the other way and the axis took the pair token's unit.
+describe('toBaseAxis', () => {
+  it('converts an accounting-denominated price onto the base-currency axis', () => {
+    // 0.0005 ETH per token at 1700 USD per ETH = 0.85 USD per token.
+    expect(toBaseAxis(0.0005, 1700)).toBeCloseTo(0.85, 10);
   });
-  it('is the identity at rate 1', () => {
-    const stages = [{ start: 5, weight: 7e18 }];
-    expect(Number(convertIssuanceStagesToPairUnits(stages, 1)[0].weight)).toBe(7e18);
+  it('is the identity at the rate a same-currency project gets', () => {
+    expect(toBaseAxis(0.0005, 1)).toBe(0.0005);
+  });
+  it('omits rather than guesses when no feed bridges the units', () => {
+    expect(toBaseAxis(0.0005, null)).toBeNull();
+    expect(toBaseAxis(null, 1700)).toBeNull();
+  });
+  it('never yields a non-finite price', () => {
+    expect(toBaseAxis(0.0005, Infinity)).toBeNull();
   });
 });
 

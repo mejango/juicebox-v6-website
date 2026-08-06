@@ -232,6 +232,12 @@ var ACCOUNTING_CONTEXT_COMPONENTS = [
 var REV_AUTOISSUANCE_COMPONENTS = [
   { name: 'chainId', type: 'uint32' }, { name: 'count', type: 'uint104' }, { name: 'beneficiary', type: 'address' },
 ];
+// `REVDeployer.deploySuckersFor` reads bit 2 of the CURRENT stage's app metadata and
+// reverts without it (REVDeployer.sol:646-650). Stages are immutable, so a stage that
+// ships without this bit can never be extended to another chain — launch-time suckers
+// are exempt, which is why the gap only surfaces later.
+var REV_METADATA_ALLOW_SUCKER_DEPLOYMENT = 1 << 2;
+
 var REV_STAGE_COMPONENTS = [
   { name: 'startsAtOrAfter', type: 'uint48' },
   { name: 'autoIssuances', type: 'tuple[]', components: REV_AUTOISSUANCE_COMPONENTS },
@@ -4268,7 +4274,7 @@ function buildRevStage(state, stage, idx, chainId, start) {
     extraMetadata: build721RulesetMetadata({
       metadata: Number(stage.metadataExtra) || 0,
       pauseTransfers: !!stage.pause721Transfers,
-    }),
+    }) | REV_METADATA_ALLOW_SUCKER_DEPLOYMENT,
   };
 }
 
@@ -4511,7 +4517,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
 // drift a few atoms above/below; JBSplits reverts if a group EXCEEDS SPLITS_TOTAL. We correct the drift on
 // the largest share (always non-zero, can't go negative for tiny deltas). Use for groups meant to
 // distribute 100% (reserved tokens, limited payouts). Returns the same array, mutated.
-function fillSplits(rawShares) {
+export function fillSplits(rawShares) {
   if (!rawShares.length) return rawShares;
   var sum = rawShares.reduce(function (s, v) { return s + v; }, 0);
   var delta = SPLITS_TOTAL - sum;

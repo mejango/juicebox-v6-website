@@ -3759,7 +3759,7 @@
           "hint": "Banny NFT decoration events.",
           "kind": "list",
           "path": "decorateBannyEvents",
-          "query": "query($limit: Int!, $offset: Int!) { decorateBannyEvents(orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp txHash chainId bannyBodyId outfitIds backgroundId tokenUri } totalCount } }",
+          "query": "query($limit: Int!, $offset: Int!) { decorateBannyEvents(where: {version: 6}, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp txHash chainId version bannyBodyId outfitIds backgroundId tokenUri } totalCount } }",
           "variables": [
             {
               "name": "limit",

@@ -14,7 +14,7 @@ import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgre
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-flow.js';
+import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -574,6 +574,19 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
   var wc0 = await wallet.getChainId().catch(function () { return null; });
   if (wc0 !== chainId) { if (onStatus) onStatus('Switching to ' + chainNameOf(chainId) + '…', 'pending'); await switchChain(chainId); wallet = getWalletClient(); }
   if (!wallet || !getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
+  // 0. A contract wallet can't produce the EOA signature this metadata carries, and its co-signers
+  //    routinely outlive the 30-minute sigDeadline stamped below. Both the router terminal and the
+  //    registry check a plain ERC20 allowance to THEMSELVES before falling back to Permit2
+  //    (JBRouterTerminal.sol:817-825, JBRouterTerminalRegistry.sol:817-825), so a contract wallet
+  //    authorizes the router directly and pays with NO permit metadata. Returning null says so.
+  if (isSafeConnected() || await lpIsSmartWallet(chainId, owner)) {
+    var routerAllow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [owner, spender] });
+    if (BigInt(routerAllow) < amount) {
+      if (onStatus) onStatus('Proposing the token approval to your multisig — sign & execute it in your Safe, then confirm the payment again.', 'pending');
+      await lpSendTx(chainId, { account: owner, address: token, abi: lpErc20Abi, functionName: 'approve', args: [spender, amount], smartWallet: true });
+    }
+    return null;
+  }
   // 1. One-time ERC20→Permit2 approval (to the canonical, audited Permit2 — recognized by wallets), only when short.
   var erc20Allow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [owner, PERMIT2_ADDRESS] });
   if (BigInt(erc20Allow) < amount) {
@@ -2573,6 +2586,14 @@ function parsePlainSplit(s) {
 
 // Add one or more NFT items (tiers) in a single adjustTiers tx per chain. `forms` is an array of plain
 // form snapshots (see collectForm in openAddTierModal).
+// A tier's split shares, out of 1e9 of the tier's own split percent. Per-row rounding ALONE lands off the
+// total — three equal thirds sum to 999,999,999, and other sets round over — while JBSplits requires the
+// group to total exactly SPLITS_TOTAL_PERCENT (JBSplits.sol:232-236). Getting this wrong reverts the add
+// AFTER the item metadata is already pinned to IPFS, so fillSplits assigns the remainder to the largest row.
+export function tierSplitShares(splitDefs, splitTotalPct) {
+  return fillSplits((splitDefs || []).map(function (d) { return Math.round(d.pct / splitTotalPct * 1e9); }));
+}
+
 async function submitAddTiers(project, selectedChains, operatorAddr, forms, setStatus, relayOptions) {
   relayOptions = relayOptions || {};
   if (!forms.length) { setStatus('Add at least one item', 'error'); return; }
@@ -2690,8 +2711,9 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
 
   function tiersFor(cid) {
     return built.map(function (b) {
-      var splits = b.splitOn ? b.splitDefs.map(function (d) {
-        return { percent: Math.round(d.pct / b.splitTotalPct * 1e9), projectId: d.projectId > 0 ? BigInt(d.byChain[cid]) : 0n, beneficiary: materializeChainValue(d.beneficiary, cid), preferAddToBalance: false, lockedUntil: 0, hook: ZERO_ADDRESS };
+      var splitShares = b.splitOn ? tierSplitShares(b.splitDefs, b.splitTotalPct) : [];
+      var splits = b.splitOn ? b.splitDefs.map(function (d, i) {
+        return { percent: splitShares[i], projectId: d.projectId > 0 ? BigInt(d.byChain[cid]) : 0n, beneficiary: materializeChainValue(d.beneficiary, cid), preferAddToBalance: false, lockedUntil: 0, hook: ZERO_ADDRESS };
       }) : [];
       return build721TierConfig(Object.assign({}, b.tierInput, {
         reserveBeneficiary: b.tierInput.reserveFrequency > 0 ? materializeChainValue(b.tierInput.reserveBeneficiary, cid) : ZERO_ADDRESS,
@@ -4495,16 +4517,27 @@ export function buildDirectSwapNativeTx(
           pad1(UR_CMD.V3_SWAP_EXACT_IN) +
           pad1(UR_CMD.V4_SWAP),
         [wrapInput, v3Input, v4Input],
-        BigInt(Math.floor(Date.now() / 1000) + 1800),
+        swapExecutionDeadline(),
       ],
       value: amountIn,
     };
   }
   return {
     chainId: chainId, address: UNIVERSAL_ROUTER_BY_CHAIN[chainId], abi: urExecuteAbi, functionName: 'execute',
-    args: ['0x' + pad1(UR_CMD.V4_SWAP), [encodeV4SwapInput(pool, amountIn, minOut, recipient)], BigInt(Math.floor(Date.now() / 1000) + 1800)],
+    args: ['0x' + pad1(UR_CMD.V4_SWAP), [encodeV4SwapInput(pool, amountIn, minOut, recipient)], swapExecutionDeadline()],
     value: amountIn,
   };
+}
+
+// Universal Router execution deadline, stamped when the swap is PROPOSED. An EOA reviews and signs in one
+// sitting, so 30 minutes covers the round trip; a multisig collects co-signatures for hours or days, and a
+// 30-minute window would guarantee the last owner signs a swap that can no longer execute. 30 days matches
+// the Permit2 approval windows used elsewhere and widens MEV exposure only within the already-frozen minOut.
+const SWAP_DEADLINE_SECONDS = 1800;
+const SAFE_SWAP_DEADLINE_SECONDS = 30 * 24 * 3600;
+export function swapExecutionDeadline(nowSeconds) {
+  var now = nowSeconds === undefined || nowSeconds === null ? Math.floor(Date.now() / 1000) : Number(nowSeconds);
+  return BigInt(now + (isSafeConnected() ? SAFE_SWAP_DEADLINE_SECONDS : SWAP_DEADLINE_SECONDS));
 }
 
 // A Permit2 allowance is usable only while both its amount and expiration cover the swap. Keep a small lifetime
@@ -4688,7 +4721,7 @@ export function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, r
       args: [
         '0x' + pad1(UR_CMD.V3_SWAP_EXACT_IN) + pad1(UR_CMD.UNWRAP_WETH) + pad1(UR_CMD.V4_SWAP),
         [v3Input, unwrapInput, v4Input],
-        BigInt(now + 1800),
+        swapExecutionDeadline(now),
       ],
       value: 0n,
       simulationBlockNumber: simulationBlockNumber,
@@ -4702,7 +4735,7 @@ export function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, r
     args: [
       '0x' + pad1(UR_CMD.V4_SWAP),
       [encodeV4SwapInput(pool, amountIn, minOut, recipient)],
-      BigInt(now + 1800),
+      swapExecutionDeadline(now),
     ],
     value: 0n,
     simulationBlockNumber: simulationBlockNumber,
@@ -4811,7 +4844,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   var commands = '0x' + pad1(UR_CMD.PERMIT2_PERMIT) + baseCommands.slice(2);
   return {
     chainId: chainId, address: ur, abi: urExecuteAbi, functionName: 'execute',
-    args: [commands, [permitInput].concat(baseInputs), BigInt(now + 1800)],
+    args: [commands, [permitInput].concat(baseInputs), swapExecutionDeadline(now)],
     value: 0n,
   };
 }
@@ -9045,7 +9078,9 @@ function renderPayCard(project, cart) {
       value: isNative ? (amt.toString() + ' wei (' + human + ')') : '0',
       erc20Approval: isNative ? null
         : (viaRouter
-          ? { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: terminal }
+          ? (isSafeConnected()
+            ? { token: reviewedToken.address, authorize: 'Direct approval to the router (a multisig cannot sign the gasless authorization)', spender: terminal, amount: amt.toString() }
+            : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: terminal })
           : { token: reviewedToken.address, spender: terminal, amount: amt.toString() }),
       args: confirmArgs,
     }, function send(confirmCtx) {
@@ -9064,8 +9099,12 @@ function renderPayCard(project, cart) {
       buildRouterPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb)
         .then(function (meta) {
           var p = Object.assign({}, txParams);
-          p.args = args.slice();
-          p.args[metaIdx] = meta;
+          // A null meta means the router was approved directly (contract wallet) — the pay
+          // carries its original metadata and the router pulls on the plain ERC20 allowance.
+          if (meta) {
+            p.args = args.slice();
+            p.args[metaIdx] = meta;
+          }
           sendPay(p, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, confirmCtx: confirmCtx });
         })
         .catch(function (e) {
@@ -12456,7 +12495,9 @@ function draftRecipientFromSplit(split, percent, amount) {
   return rec;
 }
 
-function draftDeadlineFor(address, chainId) {
+// Map a live `approvalHook` address onto the editor's deadline option. Shared by the .jb draft path and
+// the queue-ruleset prefill so neither can drift into resolving an unrecognized hook to "no deadline".
+export function draftDeadlineFor(address, chainId) {
   if (isZeroishAddress(address)) return { key: 'none', address: '' };
   for (var i = 0; i < DEADLINE_OPTIONS.length; i++) {
     var option = DEADLINE_OPTIONS[i];
@@ -16513,27 +16554,47 @@ export function issuancePairUnitMismatch(project) {
   return true;
 }
 
-// Scale a copy of the stage list so 1/weight prices land in pair-token units. `rate` = pair units per
-// one base-currency unit. Copies each stage — the input is shared with project.stages.
-export function convertIssuanceStagesToPairUnits(stages, rate) {
-  return (stages || []).map(function (stage) {
-    return Object.assign({}, stage, { weight: Number(stage.weight) / rate });
+// Move an accounting-token-denominated price (pool price, cash-out floor) onto the base-currency
+// axis. `basePerAcct` comes from readBasePerAcctRate. Null in ⇒ null out: without a rate the series
+// is omitted, never guessed — a missing line is honest, a wrongly denominated one is not.
+export function toBaseAxis(value, basePerAcct) {
+  if (value == null || basePerAcct == null) return null;
+  var converted = Number(value) * Number(basePerAcct);
+  return isFinite(converted) ? converted : null;
+}
+
+// Pair-token units per ONE base-currency unit — the INVERSE of readBasePerAcctRate, for surfaces
+// that work on the pool's own axis rather than the chart's. The LP range editor is one: its bounds
+// are pool prices, so an issuance ceiling has to come the other way to seed them.
+function readIssuancePairRate(project, chainId) {
+  return readBasePerAcctRate(project, chainId).then(function (basePerAcct) {
+    if (!basePerAcct) return null;
+    var rate = 1 / basePerAcct;
+    return isFinite(rate) && rate > 0 ? rate : null;
   });
 }
 
 // Pair-token units per one baseCurrency unit via JBPrices (per-project feed → protocol default).
 // Resolves 1 when no conversion is needed, null when the units differ but no feed bridges them.
 // Same call orientation as the proven USD-per-token quote reads: (pricing = base, unit = pair), inverted.
-function readIssuancePairRate(project, chainId) {
+// Base-currency units per ONE accounting (pair) token — the factor that moves the pool price and
+// cash-out floor onto the chart's axis. The axis is the ruleset's BASE currency, because that is
+// what the project denominates issuance in and what the protocol prices against: JBTerminalStore
+// converts every payment into `ruleset.baseCurrency()` before applying the weight
+// (JBTerminalStore.sol:1165-1175) and JBBuybackHook repeats it (:1153-1164). Issuance (1/weight) is
+// therefore EXACT on this axis and never converted; the accounting-denominated series are.
+// `pricePerUnitOf` is "the pricingCurrency price of one unitCurrency" (JBPrices.sol:217-225), so
+// pricing the BASE currency per unit of the ACCOUNTING currency is exactly the factor needed.
+// Returns 1 when the units already match, null when no feed bridges them.
+function readBasePerAcctRate(project, chainId) {
   if (!issuancePairUnitMismatch(project)) return Promise.resolve(1);
   var acct = project.acctToken;
   var base = Number((project.metadata && project.metadata.baseCurrency) || 1);
   if (!getAddress('JBPrices', chainId)) return Promise.resolve(null);
   return read(chainId, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [pidOn(project, chainId), BigInt(base), toBigInt(acct.currency), 18n])
     .then(function (price) {
-      var basePerPair = Number(toBigInt(price)) / 1e18;
-      var rate = isFinite(basePerPair) && basePerPair > 0 ? 1 / basePerPair : null;
-      return rate && isFinite(rate) ? rate : null;
+      var basePerAcct = Number(toBigInt(price)) / 1e18;
+      return isFinite(basePerAcct) && basePerAcct > 0 ? basePerAcct : null;
     })
     .catch(function () { return null; });
 }
@@ -16570,13 +16631,16 @@ function renderPriceChart(project, stages) {
     if (note) c.setAttribute('data-tip', note);
     return c;
   }
-  // The shared-axis denominator. Normally baseCurrency == pair token so the ruleset's own unit labels
-  // everything; when they differ (e.g. a USD-based ruleset over an ETH pool) the axis takes the PAIR
-  // token's unit and the issuance series is converted into it below — never mixed units on one axis.
+  // The shared-axis denominator is the ruleset's BASE currency — what the project denominates
+  // issuance in, and what the protocol prices against (JBTerminalStore converts every payment into
+  // `ruleset.baseCurrency()` before applying the weight, JBTerminalStore.sol:1165-1175). Issuance
+  // (1/weight) is exact in it and never converted; when the pool's pair token is a different unit
+  // (e.g. a USD-based ruleset over an ETH pool) the POOL and CASH-OUT series are converted onto this
+  // axis below — never mixed units on one axis.
   var baseLabel = baseUnitLabel(project);
   var unitMismatch = issuancePairUnitMismatch(project);
   var acctLabel = unitMismatch ? currencyUnitLabel(project.acctToken.currency, project) : baseLabel;
-  var pairUnit = acctLabel + '/' + sym;
+  var pairUnit = baseLabel + '/' + sym;
   function setChipVal(c, numStr, tail) {
     c._val.textContent = '';
     c._val.appendChild(document.createTextNode(numStr + ' '));
@@ -16607,8 +16671,10 @@ function renderPriceChart(project, stages) {
   var ranges = [['1H', 1 / (365 * 24)], ['6H', 6 / (365 * 24)], ['1D', 1 / 365], ['7D', 7 / 365], ['30D', 30 / 365], ['3M', 0.25], ['1Y', 1], ['All', 0]];
   var rangeRow = el('div', 'issuance-ranges price-ranges');
   var chartWrap = el('div', 'issuance-chart price-chart');
-  var chartReady = !unitMismatch; // a mismatched chart waits for the conversion (or is dropped) — the axis stays single-unit
-  var issDropped = false;
+  var chartReady = !unitMismatch; // a mismatched chart waits for the rate before drawing — the axis stays single-unit
+  // Accounting-denominated series (pool price, cash-out floor) relative to the base-currency axis.
+  var acctSeriesConverted = false; // live values converted; their history dropped as un-restateable
+  var acctSeriesDropped = false;   // no feed bridges the units, so they are not plotted at all
   function draw() { if (!chartReady) return; mountChart(chartWrap, sorted, now, curYears, sym, amm, cashout, true, cashoutHistory, ammHistory); }
   function selectRange(years, btn) {
     var btns = rangeRow.querySelectorAll('.issuance-range-btn');
@@ -16636,33 +16702,36 @@ function renderPriceChart(project, stages) {
     fetchPriceFloorHistory(project, sorted),
     fetchSwapHistory(project).catch(function () { return null; }),
     readLpPositions(project, project.chainId).catch(function () { return null; }),
-    readIssuancePairRate(project, project.chainId),
+    readBasePerAcctRate(project, project.chainId),
   ]).then(function (res) {
     var p = res[0], f = res[1], history = res[2] || [];
     var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
     var lp = res[4];
-    var pairRate = res[5];
+    var basePerAcct = res[5];
+    // The axis is the ruleset's base currency. Issuance is already in it and stays untouched;
+    // the pool price and cash-out floor are accounting-token denominated and get converted.
     if (unitMismatch) {
-      if (pairRate) {
-        // Convert the ladder (and the live issuance quote) into pair units so every series shares the axis.
-        sorted = convertIssuanceStagesToPairUnits(sorted, pairRate);
-        issPrice = issPrice != null ? issPrice * pairRate : null;
+      if (basePerAcct) {
+        // Live values convert at the live rate. HISTORICAL points would each need the rate in
+        // force at their own timestamp — reusing today's would restate the past — so the
+        // accounting-denominated history is dropped rather than redrawn in the wrong unit.
+        p = toBaseAxis(p, basePerAcct);
+        f = toBaseAxis(f, basePerAcct);
+        history = [];
+        swaps = Object.assign({}, swaps, { series: [] });
+        acctSeriesConverted = true;
         chartReady = true;
         if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—';
-        issChip.setAttribute('data-tip', 'What paying the project costs per ' + sym + ' right now: 1 ÷ the ruleset’s issuance weight, converted from '
-          + baseLabel + ' into ' + acctLabel + ' at the project’s JBPrices rate so it shares the chart’s ' + acctLabel + ' axis.');
+        issChip.setAttribute('data-tip', 'What paying the project costs per ' + sym + ' right now: 1 ÷ the ruleset’s issuance weight, in '
+          + baseLabel + ' — the currency this project denominates issuance in, and this chart’s axis.');
         draw();
       } else {
-        // No feed bridges the units — drop the issuance series (and the chart, whose axis it anchors)
-        // rather than plot mixed units on one axis. The chip still reports the base-unit quote.
-        issDropped = true;
-        issChip.classList.remove('active'); issChip.classList.add('muted');
-        issChip._val.textContent = issPrice ? (formatPrice(issPrice) + ' ' + baseLabel + '/' + sym) : '—';
-        issChip.setAttribute('data-tip', 'Issuance is denominated in ' + baseLabel + ' while the pool trades in ' + acctLabel
-          + ' — no price feed converts between them, so the issuance series isn’t plotted.');
-        rangeRow.style.display = 'none';
-        chartWrap.classList.add('price-chart-unavailable');
-        chartWrap.textContent = 'Issuance is shown in ' + baseLabel + ' — no feed to convert it to ' + acctLabel + ', so the price history can’t share one axis.';
+        // No feed bridges the units. Issuance is exact in base units and still plots; the pool
+        // and cash-out series cannot be moved onto the axis, so they are dropped.
+        acctSeriesDropped = true;
+        chartReady = true;
+        p = null; f = null; history = []; swaps = Object.assign({}, swaps, { series: [] });
+        draw();
       }
     }
     // The pool's pair (terminal) token — ETH or USDC — labels every pool/liquidity/volume value below.
@@ -16716,9 +16785,9 @@ function renderPriceChart(project, stages) {
     else ammChip._val.textContent = swaps.count ? '—' : 'No liquidity yet';
     if (cashout) setChipVal(cashChip, formatPrice(cashout), 'before fees'); else cashChip._val.textContent = '—';
     // The floor's asymptote lives in the hover tip and the dashed chart line — not as a legend row.
-    // A dropped (unconvertible) issuance quote is base-currency units and must not seed a pair-unit asymptote.
+    // Issuance and the asymptote are both base-currency units now, so they always share the axis.
     var currentTax = seriesTaxAt(history, now);
-    var lastMin = !issDropped && issPrice && currentTax != null
+    var lastMin = issPrice && currentTax != null
       ? calculatePaymentFloorPrice(issPrice, currentTax)
       : 0;
     if (cashout) {
@@ -19001,7 +19070,11 @@ function renderMarketPriceChart(project) {
     var swaps = res[1] || { series: [], pair: null };
     live = Number(res[0]) > 0 ? Number(res[0]) : 0;
     series = swaps.series || [];
-    pairSym = (swaps.pair && swaps.pair.symbol) || 'ETH';
+    // The pair token is only known from indexed swap history. `live` comes from an
+    // independent on-chain read, so it still renders when that history fails —
+    // defaulting the label to 'ETH' there prices a USDC pool in ETH on screen.
+    // 'terminal tokens' is the neutral fallback used elsewhere in this file.
+    pairSym = (swaps.pair && swaps.pair.symbol) || 'terminal tokens';
     ready = true;
     if (!live && !series.length) { host.remove(); return; }
     draw();
@@ -20717,9 +20790,15 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       else { s.tokenMode = 'none'; s.weight = '0'; }
       s.weightCutPercent = Number(r.weightCutPercent) / 1e7;
       s.issuanceCutOn = s.weightCutPercent > 0;
-      var dlKey = 'none';
-      DEADLINE_OPTIONS.forEach(function (d) { if (d.contract && (getAddress(d.contract, chainId || project.chainId) || '').toLowerCase() === (r.approvalHook || '').toLowerCase()) dlKey = d.key; });
-      s.deadline = dlKey;
+      // Share the .jb draft path's mapping rather than re-deriving it: a hook none of the presets
+      // recognize is still a live review window on ruleset changes, and resolving it to 'none' would
+      // encode approvalHook = address(0), silently stripping that protection from the queued ruleset
+      // with nothing in the diff to show it. One global address is right here because the cross-chain
+      // config fingerprint above includes approvalHook, so every targeted chain shares it; and
+      // `approvalIssue` fail-closes if the address doesn't resolve on some chain.
+      var dl = draftDeadlineFor(r.approvalHook, chainId || project.chainId);
+      s.deadline = dl.key;
+      if (dl.address) state.approvalAddress = dl.address;
     }
     if (m) {
       s.baseCurrency = Number(m.baseCurrency) || 1;
@@ -26586,7 +26665,16 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
 
 // Confirm + send an LP fee claim. Shared by the remove-liquidity modal and the "Your LP positions" table so both
 // present the same reviewed calldata.
+// `prepareCollectLpFees` picks its deadline off `pos.smartWallet`, but the positions list never resolves
+// that flag — only the removal refresh does. Without this a multisig silently gets the 20-minute EOA
+// window (and a modal promising "~20 minutes") on a claim its co-signers cannot finish in time.
 function openLpClaimConfirm(project, chainId, pos, acct, claimable, onClaimed) {
+  lpIsSmartWallet(chainId, acct).then(function (smartWallet) {
+    openLpClaimConfirmFor(project, chainId, Object.assign({}, pos, { smartWallet: smartWallet }), acct, claimable, onClaimed);
+  });
+}
+
+function openLpClaimConfirmFor(project, chainId, pos, acct, claimable, onClaimed) {
   var sym = project.tokenSymbol || 'tokens';
   var prep = prepareCollectLpFees(chainId, pos, acct);
   var feesH = formatTokens(claimable.tokFees) + ' ' + sym + ' + ' + formatBalance(claimable.pairFees, pos.pair.decimals, pos.pair.symbol);
