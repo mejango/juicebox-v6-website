@@ -19,7 +19,7 @@
       "layout": "stepped",
       "steps": [
         { "label": "Cash Out", "fields": ["projectId", "cashOutCount", "tokenToReclaim"] },
-        { "label": "Options", "fields": ["holder", "beneficiary", "minReclaimedTokens"] }
+        { "label": "Options", "fields": ["holder", "beneficiary", "minTokensReclaimed"] }
       ],
       "labels": {
         "projectId": "Project ID",
@@ -27,9 +27,9 @@
         "tokenToReclaim": "Token to Reclaim",
         "holder": "Token Holder",
         "beneficiary": "Send reclaimed to",
-        "minReclaimedTokens": "Minimum Reclaimed"
+        "minTokensReclaimed": "Minimum Reclaimed"
       },
-      "defaults": { "minReclaimedTokens": "0", "metadata": "0x" },
+      "defaults": { "minTokensReclaimed": "0", "metadata": "0x" },
       "hidden": ["metadata"]
     },
     "addToBalanceOf": {

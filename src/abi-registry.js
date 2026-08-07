@@ -118014,7 +118014,7 @@ export const registry = {
             "fields": [
               "holder",
               "beneficiary",
-              "minReclaimedTokens"
+              "minTokensReclaimed"
             ]
           }
         ],
@@ -118024,10 +118024,10 @@ export const registry = {
           "tokenToReclaim": "Token to Reclaim",
           "holder": "Token Holder",
           "beneficiary": "Send reclaimed to",
-          "minReclaimedTokens": "Minimum Reclaimed"
+          "minTokensReclaimed": "Minimum Reclaimed"
         },
         "defaults": {
-          "minReclaimedTokens": "0",
+          "minTokensReclaimed": "0",
           "metadata": "0x"
         },
         "hidden": [

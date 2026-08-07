@@ -71,3 +71,28 @@ describe('planRulesetQueue', function () {
     });
   });
 });
+
+// A CUSTOM approval hook reporting Active on a QUEUED ruleset satisfies neither the replace
+// branch (which excludes Active) nor the after branch (Approved/ApprovalExpected/Empty only).
+// That left the option list empty while defaultAction fell through to 'current' — an action
+// not in the list — so the editor threw a raw error even though queueing was possible
+// on-chain. Preset JBDeadline hooks never report Active, so only custom-hook projects hit it.
+describe('custom approval hook reporting Active on a queued ruleset', function () {
+  var args = {
+    current: current, upcoming: queued, latest: queued,
+    latestApprovalStatus: APPROVAL_STATUS.Active,
+  };
+
+  it('still offers an action, and the default is one of the options', function () {
+    var plan = planRulesetQueue(args);
+    expect(plan.options.length).toBeGreaterThan(0);
+    expect(plan.options.map(function (o) { return o.action; })).toContain(plan.defaultAction);
+  });
+
+  it('asks the owner for a start date, since the hook makes it uncomputable', function () {
+    var plan = planRulesetQueue(args);
+    var option = plan.options.find(function (o) { return o.action === plan.defaultAction; });
+    expect(option.requiresStartDate).toBe(true);
+    expect(option.mustStartAtOrAfter).toBeNull();
+  });
+});

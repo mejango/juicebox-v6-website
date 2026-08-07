@@ -20810,7 +20810,15 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       s.durationSeconds = Number(r.duration) || 0;
       s.durationCustom = false;
       var w = BigInt(r.weight || 0);
-      if (w > 0n) { s.tokenMode = 'custom'; s.weight = formatEther(w); }
+      // A STORED weight of exactly 1 is the inherit sentinel, not one attowei of issuance
+      // (JBRulesets.sol:822-823). Prefilling it as '0.000000000000000001' round-trips back
+      // through parseEther to raw 1 — re-encoding inherit as a literal dust weight, or vice
+      // versa, into an immutable ruleset. Carry it as the explicit inherit mode instead.
+      // The editor expresses inherit as a BLANK weight (its placeholder literally reads
+      // "inherit"), which re-encodes to raw 1 on a non-first stage — so a blank round-trips
+      // exactly, where '0.000000000000000001' would not.
+      if (w === 1n) { s.tokenMode = 'custom'; s.weight = ''; }
+      else if (w > 0n) { s.tokenMode = 'custom'; s.weight = formatEther(w); }
       else { s.tokenMode = 'none'; s.weight = '0'; }
       s.weightCutPercent = Number(r.weightCutPercent) / 1e7;
       s.issuanceCutOn = s.weightCutPercent > 0;

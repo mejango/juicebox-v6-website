@@ -249,7 +249,7 @@ export function renderLearnTab() {
     propertyTable('BUILT-IN EXTENSIONS', [
       ['Buyback hook', 'Automatically buys tokens from a DEX when the market price is better than the mint price.'],
       ['721 tiers hook', 'Distributes tiered NFTs to contributors based on payment amount.'],
-      ['Swap terminal', 'Converts incoming tokens to the project’s preferred token before recording payment.'],
+      ['Swap terminal', 'Routes an incoming token to the project through the best available path — V4/V5 framing called this "the project’s preferred token", but V6’s JBRouterTerminal has no fixed preferred token (see §18).'],
       ['Project handles', 'Gives projects human-readable names via ENS (Ethereum Name Service).'],
     ])
   ]));
@@ -908,7 +908,7 @@ export function renderBuildTab() {
       '  twapWindow,       // TWAP observation window (seconds)\n' +
       '  terminalToken     // the terminal token to route\n' +
       ')\n' +
-      '// Pool config is immutable once set\n' +
+      '// The pool key is once-only; the TWAP window stays mutable via setTwapWindowOf\n' +
       '// Requires SET_BUYBACK_POOL permission'
     ),
     diagram('BUYBACK DECISION FLOW', [

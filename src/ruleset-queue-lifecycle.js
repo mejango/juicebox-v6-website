@@ -45,6 +45,19 @@ export function planRulesetQueue(args) {
       requiresStartDate: duration === 0,
     });
   }
+  // A CUSTOM approval hook reporting Active satisfies neither branch above: replace excludes
+  // Active, and after only accepts Approved/ApprovalExpected/Empty. That left `options` empty
+  // while `defaultAction` fell through to 'current' — an action not in the list — so the
+  // editor threw a raw error even though queueing is perfectly possible on-chain. Preset
+  // JBDeadline hooks never report Active, so this only ever hit custom-hook projects.
+  // The effective start under an unknown hook can't be computed, so the owner names one.
+  if (!options.length) {
+    options.push({
+      action: 'after', source: latest,
+      mustStartAtOrAfter: null, requiresStartDate: true,
+    });
+  }
+
   return {
     // Preserve an existing queued configuration unless the owner explicitly
     // chooses to replace it.

@@ -137,7 +137,7 @@ export function getAuditPrompt() {
     '- Accounting contexts track token address, decimals, and currency per terminal. Duplicate prevention is enforced.',
     '- Currency (uint32) is derived from token address: uint32(uint160(tokenAddress)). This is distinct from baseCurrency (1=ETH, 2=USD) used in ruleset metadata.',
     '- groupId (uint256) and currency (uint32) represent the same token but with different bit widths — mixing them up causes silent bugs.',
-    '- Surplus aggregation converts across all terminals and tokens via JBPrices to a target currency. If a price feed reverts, operations using that currency pair also revert (DoS, not fund loss).',
+    '- Surplus aggregation converts across all terminals and tokens via JBPrices to a target currency. A feed that REVERTS is skipped, not propagated: JBPrices tries each registered feed in order inside a try/catch and falls through to the next (JBPrices.sol:338-341), then to project-0 defaults and inverse feeds. The operation reverts only when NO feed in that lookup path returns a non-zero price (JBPrices_PriceFeedNotFound).',
     '- Fee-free intra-terminal payouts track per token. Payout limits and surplus allowances are scoped per terminal/token/currency.',
     '- Empty fundAccessLimitGroups means zero payouts (NOT unlimited). Use uint224.max for unlimited.',
     '- ERC-20 fee-on-transfer, rebasing, and non-standard decimals are potential edge cases at system boundaries.',
@@ -165,7 +165,6 @@ export function getAuditPrompt() {
     '',
     '## Known Issues (accepted risks)',
     '',
-    '- cashOut(0) with totalSupply==0 returns entire surplus',
     '- Pending reserved tokens inflate totalSupply, reducing cashout value',
     '- Bonding curve subadditivity violation from mulDiv rounding (<0.01%)',
     '',
@@ -330,7 +329,7 @@ export function getComponentAuditPrompt(fn, contractName, fnNatspec, componentEl
   lines.push('## Protocol Context');
   lines.push('Juicebox V6 is an open-source programmable money protocol. Key invariants: terminal solvency, no over-withdrawal, correct bonding curve cashout, privilege containment via JBPermissions.');
   lines.push('');
-  lines.push('Known gotchas: empty fundAccessLimitGroups = zero payouts (not unlimited), cashOut(0) with totalSupply==0 returns entire surplus, pending reserved tokens inflate totalSupply reducing cashout value, currency (uint32) != baseCurrency (1=ETH, 2=USD).');
+  lines.push('Known gotchas: empty fundAccessLimitGroups = zero payouts (not unlimited), pending reserved tokens inflate totalSupply reducing cashout value, currency (uint32) != baseCurrency (1=ETH, 2=USD).');
 
   return lines.join('\n');
 }
