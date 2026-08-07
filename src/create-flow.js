@@ -13,6 +13,7 @@
 
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, createPublicClient, decodeEventLog, http } from 'viem';
 import { mainnet } from 'viem/chains';
+import { isSafeConnected } from './wallet.js';
 import { normalize as ensNormalize } from 'viem/ens';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
@@ -3063,6 +3064,15 @@ function renderDeploy(state, render) {
     wrap.appendChild(infoNote('The exact transaction data is shown for review before you sign it.'));
   }
 
+  // The first stage's start is frozen at build time (+10 min) because every chain must encode
+  // the SAME value — the cross-chain configuration hash, and the deterministic addresses
+  // derived from it, depend on it. A Safe collecting signatures for days therefore executes a
+  // launch whose stage 1 already began, with issuance-cut cycles elapsed against what was
+  // reviewed. Nothing can be re-derived at execution time without breaking the hash, so say so.
+  if (isSafeConnected()) {
+    wrap.appendChild(infoNote('This launch pins its start time now (about 10 minutes out) so every chain encodes the same value — that shared value is what links your chains together. If your multisig executes days later, stage 1 will already have begun and some of its scheduled issuance cuts may have passed. Execute promptly, or re-create the launch when you are ready to sign.'));
+  }
+
   // ToS + launch
   var tos = el('label', 'create-tos');
   var cb = el('input', ''); cb.type = 'checkbox'; cb.checked = state.tos;
@@ -3882,6 +3892,12 @@ async function runDeploy(state, owner) {
   // bake it into stage starts (matching the cross-chain config hash → deterministic sucker/project
   // addresses); custom multichain uses it for the first ruleset's mustStartAtOrAfter so every chain's
   // project begins at the SAME moment rather than at each chain's own block-confirmation time.
+  // FROZEN deliberately: every chain must encode the SAME start or the cross-chain
+  // configuration hash (and the deterministic addresses derived from it) diverge. The
+  // consequence is that a launch EXECUTED much later — a Safe collecting signatures over
+  // days — begins with stage 1 already in the past and some issuance-cut cycles elapsed
+  // versus what was reviewed. That is inherent to the hash requirement, not a bug to fix
+  // here; the review screen warns Safe users (see confirmDeployStartNote).
   var deployStart = Math.floor(Date.now() / 1000) + 600;
 
   // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces

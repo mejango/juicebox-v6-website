@@ -89,7 +89,19 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
   var nonce = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [from] });
 
   var deadline = Math.floor(Date.now() / 1000) + 47 * 3600; // uint48 seconds (< 48h Relayr max)
-  var gas = gasHint || 500000n;
+  // Measure the destination call rather than signing a flat guess. The forwarder caps the
+  // inner call at `gas` and reverts `execute` if it runs out, so an undersized constant
+  // burns a bundle the user has already paid for; an oversized one inflates every quote.
+  // The caller's hint wins when given, and the constant remains the fallback.
+  var gas = gasHint;
+  if (!gas) {
+    try {
+      var estimated = await pub.estimateGas({ account: forwarder, to: to, data: data, value: val });
+      gas = (estimated * 3n) / 2n;
+    } catch (_) {
+      gas = 500000n; // estimation unavailable — Relayr still simulates server-side and refuses a bad quote
+    }
+  }
 
   var signature = await wallet.signTypedData({
     account: from,

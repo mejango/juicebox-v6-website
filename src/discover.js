@@ -9097,7 +9097,11 @@ function renderPayCard(project, cart) {
         : (viaRouter
           ? (isSafeConnected()
             ? { token: reviewedToken.address, authorize: 'Direct approval to the router (a multisig cannot sign the gasless authorization)', spender: terminal, amount: amt.toString() }
-            : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: terminal })
+            // Say WHICH approval and for how much: this path grants Permit2 an UNLIMITED
+            // ERC-20 allowance once, while the LP flow grants exact+1%. Both are safe (the
+            // router can only pull what the signed PermitSingle allows) but the confirm
+            // modal previously told the user two different stories about the same step.
+            : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless), bounded to this payment. If this token has never been approved to Permit2, a one-time UNLIMITED approval to the audited Permit2 contract is signed first — the router can still only pull the amount the signature authorizes.', spender: terminal })
           : { token: reviewedToken.address, spender: terminal, amount: amt.toString() }),
       args: confirmArgs,
     }, function send(confirmCtx) {

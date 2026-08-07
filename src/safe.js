@@ -26,8 +26,12 @@ var SAFE_TX_BASE = {
   42161: 'https://safe-transaction-arbitrum.safe.global',
   11155111: 'https://safe-transaction-sepolia.safe.global',
 };
-// Safe app chain shortNames for deep links (https://app.safe.global).
-var SAFE_PREFIX = { 1: 'eth', 10: 'oeth', 8453: 'base', 42161: 'arb1', 11155111: 'sep' };
+// Safe app chain shortNames for deep links (https://app.safe.global) AND the gateway path.
+// Base Sepolia's hosted Transaction Service IS live (probed 200 on
+// api.safe.global/tx-service/basesep/api/v1/about/); omitting it dropped those Safes to the
+// on-chain approveHash path with no queue or tx links. OP Sepolia (`opsepolia`) and Arbitrum
+// Sepolia (`arb1-sep`) genuinely 404 and are deliberately absent.
+var SAFE_PREFIX = { 1: 'eth', 10: 'oeth', 8453: 'base', 42161: 'arb1', 11155111: 'sep', 84532: 'basesep' };
 
 // PRIMARY = Safe's unified gateway. The per-network `safe-transaction-<net>.safe.global` hosts now
 // 308-redirect to this gateway, and cross-origin redirects break browser CORS — so hit the gateway

@@ -5,9 +5,13 @@ import { describe, it, expect } from 'vitest';
 import { hasSafeService, safeTxHashForCall } from '../src/safe.js';
 
 describe('hasSafeService', () => {
-  it('true where Safe hosts a tx-service; false for the L2 testnets without one', () => {
-    [1, 10, 8453, 42161, 11155111].forEach((c) => expect(hasSafeService(c)).toBe(true));
-    [421614, 84532, 11155420].forEach((c) => expect(hasSafeService(c)).toBe(false)); // Arb/Base/OP Sepolia → on-chain path
+  it('true where Safe hosts a tx-service; false for the chains without one', () => {
+    // Probed against api.safe.global/tx-service/<prefix>/api/v1/about/: Base Sepolia
+    // (`basesep`) returns 200 and was previously excluded, dropping those Safes to the
+    // on-chain approveHash path with no queue links. OP Sepolia (`opsepolia`) and Arbitrum
+    // Sepolia (`arb1-sep`) genuinely 404.
+    [1, 10, 8453, 42161, 11155111, 84532].forEach((c) => expect(hasSafeService(c)).toBe(true));
+    [421614, 11155420].forEach((c) => expect(hasSafeService(c)).toBe(false));
   });
 });
 
