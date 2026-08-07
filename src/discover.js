@@ -16584,6 +16584,14 @@ export function toBaseAxis(value, basePerAcct) {
   return isFinite(converted) ? converted : null;
 }
 
+// The indexer's 18-dec USD-per-accounting-token rate as a number, or null when the row predates
+// the backfill or no feed bridged the pair. Null means "use the live rate for this point".
+export function usdRateOf(raw) {
+  if (raw == null) return null;
+  var rate = Number(toBigInt(raw)) / 1e18;
+  return isFinite(rate) && rate > 0 ? rate : null;
+}
+
 // Pair-token units per ONE base-currency unit — the INVERSE of readBasePerAcctRate, for surfaces
 // that work on the pool's own axis rather than the chart's. The LP range editor is one: its bounds
 // are pool prices, so an issuance ceiling has to come the other way to seed them.
@@ -16744,12 +16752,20 @@ function renderPriceChart(project, stages) {
         // Convert, and label the result approximate below.
         p = toBaseAxis(p, basePerAcct);
         f = toBaseAxis(f, basePerAcct);
+        // The indexer records USD per accounting token at each point's OWN block, which is the
+        // rate that was actually in force there rather than today's. It is only the AXIS rate
+        // when the axis IS USD, so an ETH-denominated ruleset keeps the live base/accounting
+        // feed instead of reading a USD number as if it were ETH.
+        var axisIsUsd = Number((project.metadata && project.metadata.baseCurrency) || 1) === 2;
+        var rateFor = function (point) {
+          return (axisIsUsd && point.usdRate != null) ? point.usdRate : basePerAcct;
+        };
         history = history.map(function (point) {
-          return Object.assign({}, point, { value: toBaseAxis(point.value, basePerAcct) });
+          return Object.assign({}, point, { value: toBaseAxis(point.value, rateFor(point)) });
         });
         swaps = Object.assign({}, swaps, {
           series: (swaps.series || []).map(function (point) {
-            return { timestamp: point.timestamp, value: toBaseAxis(point.value, basePerAcct) };
+            return { timestamp: point.timestamp, value: toBaseAxis(point.value, rateFor(point)) };
           }),
         });
         acctSeriesConverted = true;
@@ -17671,6 +17687,14 @@ var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $
 // Scoped by (chainId, poolId), never by sucker group: prices are only comparable inside one exact pool,
 // and the group id would have to come from the project row — a slow query behind a short soft timeout,
 // which silently emptied this history whenever the indexer was busy.
+// Preferred shape. `accountingTokenUsdRate` lands with peripheralist/bendystraw#25; until that
+// indexer deploys, GraphQL rejects the whole document for the unknown field and the request
+// falls through to BENDYSTRAW_SWAP_EVENTS_QUERY below. It starts being used the moment the
+// indexer serves it — no frontend release.
+export var BENDYSTRAW_RATED_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash sqrtPriceX96 projectTokenIsCurrency0 accountingTokenUsdRate } totalCount } }';
 export var BENDYSTRAW_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
@@ -17703,6 +17727,11 @@ var BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY = 'query($suckerGroupId: String!, $ver
   + 'suckerGroupMoments(where: { suckerGroupId: $suckerGroupId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp balance tokenSupply } totalCount } }';
+// Same rollout as the rated swap query above: preferred, with the un-rated document as fallback.
+var BENDYSTRAW_RATED_SUCKER_GROUP_MOMENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'suckerGroupMoments(where: { suckerGroupId: $suckerGroupId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { timestamp balance tokenSupply accountingTokenUsdRate } totalCount } }';
 var BENDYSTRAW_CASH_OUT_TAX_SNAPSHOTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
   + 'cashOutTaxSnapshots(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
   + 'orderBy: "start", orderDirection: "asc", limit: $limit, offset: $offset) { '
@@ -18139,10 +18168,15 @@ async function fetchPriceFloorHistory(project, stages) {
   if (!pair) return [];
   var pairDecimals = Number(pair.decimals);
   var res = await Promise.all([
-    fetchBendystrawCollectionPages(BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
+    fetchBendystrawCollectionPages(BENDYSTRAW_RATED_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
       suckerGroupId: groupId,
       version: BENDYSTRAW_VERSION,
-    }, PRICE_HISTORY_PAGE_SIZE),
+    }, PRICE_HISTORY_PAGE_SIZE).catch(function () {
+      return fetchBendystrawCollectionPages(BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
+        suckerGroupId: groupId,
+        version: BENDYSTRAW_VERSION,
+      }, PRICE_HISTORY_PAGE_SIZE);
+    }),
     fetchBendystrawCollectionPages(BENDYSTRAW_CASH_OUT_TAX_SNAPSHOTS_QUERY, 'cashOutTaxSnapshots', {
       suckerGroupId: groupId,
       version: BENDYSTRAW_VERSION,
@@ -18174,6 +18208,7 @@ async function fetchPriceFloorHistory(project, stages) {
       timestamp: timestamp,
       value: value,
       tax: tax,
+      usdRate: usdRateOf(moment.accountingTokenUsdRate),
       reason: explainCashOutChange(previous, observation),
     });
     previous = observation;
@@ -18262,8 +18297,12 @@ async function fetchSwapHistory(project) {
     version: BENDYSTRAW_VERSION,
   };
   var pages = await Promise.all([
-    fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', variables,
+    fetchBendystrawCollectionPages(BENDYSTRAW_RATED_SWAP_EVENTS_QUERY, 'swapEvents', variables,
       PRICE_HISTORY_PAGE_SIZE)
+      .catch(function () {
+        return fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', variables,
+          PRICE_HISTORY_PAGE_SIZE);
+      })
       .catch(function () {
         // Keep existing realized-average history visible during a coordinated
         // Bendystraw/frontend rollout where the new fields are not live yet.
@@ -18298,7 +18337,7 @@ async function fetchSwapHistory(project) {
       var tokens = Number(toBigInt(sw.projectTokenAmount)) / 1e18;
       if (tokens > 0) price = terminalUnits / tokens;
     }
-    if (price && price > 0) series.push({ timestamp: Number(sw.timestamp), value: price });
+    if (price && price > 0) series.push({ timestamp: Number(sw.timestamp), value: price, usdRate: usdRateOf(sw.accountingTokenUsdRate) });
   });
   series.sort(function (a, b) { return a.timestamp - b.timestamp; });
   series = downsampleTimeSeries(
