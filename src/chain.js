@@ -99,3 +99,21 @@ export function setCustomRpc(chainId, url) {
     else localStorage.removeItem('jb-rpc-' + chainId);
   } catch (_) {}
 }
+
+// --- IPFS gateways -----------------------------------------------------------------------
+// One list, one primary. discover.js races these when FETCHING metadata JSON; surfaces that
+// can only emit a single URL (an <a href>, an <img src>) take the primary. Kept here, in a
+// leaf module, because the copies that lived beside their callers drifted to a bare ipfs.io
+// and went dark whenever that gateway 502'd while project pages kept working.
+export var IPFS_PATH_GATEWAYS = [
+  'https://gateway.pinata.cloud/ipfs/',
+  'https://dweb.link/ipfs/',
+  'https://ipfs.io/ipfs/',
+];
+
+/** An `ipfs://` URI as an HTTP URL on the primary gateway. Non-IPFS input is returned as-is. */
+export function ipfsHttpUrl(uri) {
+  var value = String(uri || '');
+  if (value.indexOf('ipfs://') !== 0) return value;
+  return IPFS_PATH_GATEWAYS[0] + value.slice('ipfs://'.length);
+}

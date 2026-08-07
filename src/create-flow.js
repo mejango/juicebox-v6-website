@@ -14,6 +14,7 @@
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, createPublicClient, decodeEventLog, http } from 'viem';
 import { mainnet } from 'viem/chains';
 import { isSafeConnected } from './wallet.js';
+import { ipfsHttpUrl } from './chain.js';
 import { normalize as ensNormalize } from 'viem/ens';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
@@ -575,7 +576,10 @@ function mergeDraft(obj) {
     seenChains[chainId] = true; return true;
   });
   if (!s.chainIds.length) s.chainIds = allowedChains;
+  // Bounded like every other imported collection here: a corrupt or hostile .jb with thousands
+  // of stages otherwise hangs the wizard's render and encode.
   s.stages = (Array.isArray(obj.stages) && obj.stages.length ? obj.stages : defaults.stages)
+    .slice(0, 20)
     .map(function (st) { return normalizeImportedStage(st, s.chainIds); });
   s.nfts = (Array.isArray(obj.nfts) ? obj.nfts : []).slice(0, 100).map(normalizeImportedItem);
   s.storeCategories = (Array.isArray(obj.storeCategories) ? obj.storeCategories : []).slice(0, 255).map(function (entry) {
@@ -4681,7 +4685,10 @@ export async function pinShopItemsMetadata(state) {
 // token into the accounting token[s], like REVDeployer does).
 function buildTerminalConfigs(chainId, state, swapRouter) {
   var terminal = getAddress('JBMultiTerminal', chainId);
-  if (!terminal) return [];
+  // Returning [] here launched a project with ZERO terminals — permanently unable to accept a
+  // payment, and unfixable after the fact. Block the deploy like the deployer-address check
+  // above does. Dormant today (all manifest chains have a terminal) and must stay that way.
+  if (!terminal) throw new Error('No JBMultiTerminal is deployed on ' + chainNameOf(chainId) + ', so a project launched there could never accept payments. Deselect that chain.');
   var accepts = state.accepts || [];
   var contexts = [];
   // Custom ERC-20 accounting token (same address on every chain; its own currency id, no feed).
@@ -4881,7 +4888,7 @@ function priceUnits(v, decimals) {
 }
 function ipfsHttp(uri) {
   if (!uri) return '';
-  if (uri.indexOf('ipfs://') === 0) return 'https://ipfs.io/ipfs/' + uri.slice(7);
+  if (uri.indexOf('ipfs://') === 0) return ipfsHttpUrl(uri);
   return uri;
 }
 function tsToLocal(ts) {

@@ -4,7 +4,7 @@
 
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
-import { CHAINS, getChainTokens } from './chain.js';
+import { CHAINS, getChainTokens, IPFS_PATH_GATEWAYS } from './chain.js';
 import { downsampleTimeSeries } from './time-series.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
@@ -97,12 +97,7 @@ export function setDiscoverNetwork(mode) {
 export function activeDiscoverChains() { return DISCOVER_CHAINS.slice(); }
 
 var ETH_SUCKS_GATEWAY_HOST = 'eth.sucks';
-var IPFS_GATEWAY = 'https://gateway.pinata.cloud/ipfs/';
-var IPFS_PATH_GATEWAYS = [
-  IPFS_GATEWAY,
-  'https://dweb.link/ipfs/',
-  'https://ipfs.io/ipfs/',
-];
+var IPFS_GATEWAY = IPFS_PATH_GATEWAYS[0];
 var METADATA_FETCH_TIMEOUT_MS = 5500;
 var METADATA_FETCH_STAGGER_MS = 250;
 var METADATA_CACHE_PREFIX = 'jb-metadata-json-v1:';
@@ -1029,7 +1024,10 @@ async function fetchProjectTiersUncached(project) {
       indexedMetadata: indexedByTier && indexedByTier[Number(t.id)] || null };
   }).filter(function (t) { return t.initial > 0; });
   return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers,
-    configFlags: configFlags, itemsCashOut: !!hookInfo.itemsCashOut, transfersPaused: transfersPaused };
+    configFlags: configFlags, itemsCashOut: !!hookInfo.itemsCashOut, transfersPaused: transfersPaused,
+    // Read from ONE chain's ruleset. Per-chain rulesets can diverge, so every label built from
+    // this must name the chain rather than imply a global state.
+    transfersPausedChainId: Number(project.chainId) };
 }
 
 // Resolve a tier's display { name, image, category } — prefer the onchain tokenUriResolver (it returns
@@ -1530,7 +1528,10 @@ function renderShopSection(project, shop, cart) {
     var transferLine = el('div', 'shop-config-row');
     var transferLabel = document.createElement('dt'); transferLabel.textContent = 'Eligible item transfers'; transferLine.appendChild(transferLabel);
     var transferValue = document.createElement('dd');
-    transferValue.textContent = s.transfersPaused == null ? 'Ruleset unavailable' : (s.transfersPaused ? 'Paused now' : 'Allowed now');
+    var pauseChain = s.transfersPausedChainId ? ' on ' + chainNameOf(s.transfersPausedChainId) : '';
+    transferValue.textContent = s.transfersPaused == null
+      ? 'Ruleset unavailable'
+      : (s.transfersPaused ? 'Paused now' + pauseChain : 'Allowed now' + pauseChain);
     transferLine.appendChild(transferValue); list.appendChild(transferLine);
     details.appendChild(list);
     card.appendChild(details);
@@ -2943,8 +2944,11 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   if (tier.votingUnits && BigInt(tier.votingUnits) > 0n) fact('Voting units', String(tier.votingUnits));
   if (tier.splitPercent > 0) fact('Split', (tier.splitPercent / 1e7) + '% of sales');
   if (tier.flags && tier.flags.transfersPausable) {
+    var pauseOn = shop.transfersPausedChainId ? ' on ' + chainNameOf(shop.transfersPausedChainId) : '';
     fact('Transfers', shop.transfersPaused == null ? 'Current ruleset unavailable'
-      : shop.transfersPaused ? 'Paused by the current ruleset' : 'Allowed by the current ruleset');
+      : shop.transfersPaused
+        ? 'Paused by the current ruleset' + pauseOn
+        : 'Allowed by the current ruleset' + pauseOn);
   }
   content.appendChild(cfg);
 
@@ -19286,9 +19290,19 @@ function renderOwnersAmm(project) {
     var tbl = renderLpTable(lp, sym, project.chainId); if (tbl) rightCol.appendChild(tbl);
     rowEl.appendChild(rightCol);
     wrap.appendChild(rowEl);
-    var issuancePrice = (project.ruleset && project.ruleset.weight) ? 1 / (Number(project.ruleset.weight) / 1e18) : null;
-    readCashoutPrice(project, project.chainId).catch(function () { return null; }).then(function (cashout) {
+    // 1/weight is BASE-currency per token; this chart's axis is pair-token per token. The
+    // overview chart, pool card and add-liquidity defaults were all converted; this marker was
+    // the one surface left plotting the two units together. Without a feed it is omitted
+    // rather than drawn at a meaningless price.
+    var baseIssuance = (project.ruleset && project.ruleset.weight) ? 1 / (Number(project.ruleset.weight) / 1e18) : null;
+    Promise.all([
+      readCashoutPrice(project, project.chainId).catch(function () { return null; }),
+      readIssuancePairRate(project, project.chainId).catch(function () { return null; }),
+    ]).then(function (res) {
       if (!wrap.isConnected) return;
+      var cashout = res[0];
+      var pairRate = res[1];
+      var issuancePrice = baseIssuance != null && pairRate != null ? baseIssuance * pairRate : null;
       var depth = renderLpDepthChart(lp, lp.poolPrice, issuancePrice, cashout, sym);
       if (depth && !leftCol.querySelector('.lp-depth')) leftCol.appendChild(depth);
     });
@@ -20963,14 +20977,19 @@ function openQueueRulesetModal(project, preferredQueueAction) {
 
   // One onchain split → a create-flow recipient (wallet / project / market-funding LP hook).
   function recFromSplit(sp, lpHook, pct, amountEth) {
+    // Same guard as draftRecipientFromSplit's: `Number(x) || 0` would silently rewrite a
+    // >2^53 project id to a DIFFERENT one and encode it into a queued ruleset. Throwing keeps
+    // the two twins aligned rather than letting one of them mangle.
+    var splitProjectId = Number(sp.projectId || 0);
+    if (!Number.isSafeInteger(splitProjectId)) throw new Error('A split project ID is too large to edit in the queue form.');
     var base = { percent: pct || 0, amountEth: amountEth || '', lockedUntil: Number(sp.lockedUntil) || 0,
       preferAddToBalance: !!sp.preferAddToBalance };
     // Preserve every hook address exactly. Treat even the known LP hook as a custom hook here because the generic
     // create-flow LP preset rewrites its beneficiary from the connected wallet, which would mutate an existing split.
     if (sp.hook && !/^0x0+$/.test(String(sp.hook))) {
-      base.type = 'customhook'; base.hookAddress = sp.hook; base.address = sp.beneficiary || ''; base.projectId = Number(sp.projectId) || 0; return base;
+      base.type = 'customhook'; base.hookAddress = sp.hook; base.address = sp.beneficiary || ''; base.projectId = splitProjectId; return base;
     }
-    if (Number(sp.projectId) > 0) { base.type = 'project'; base.projectId = Number(sp.projectId); base.address = sp.beneficiary || ''; return base; }
+    if (splitProjectId > 0) { base.type = 'project'; base.projectId = splitProjectId; base.address = sp.beneficiary || ''; return base; }
     base.type = 'wallet'; base.address = sp.beneficiary || ''; base.projectId = 0; return base;
   }
 

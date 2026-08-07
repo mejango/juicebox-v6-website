@@ -2,7 +2,7 @@
 // Type-aware cell formatters for Bendystraw query results.
 // Each formatter returns a DOM node so callers can append directly.
 
-import { CHAINS } from './chain.js';
+import { CHAINS, ipfsHttpUrl } from './chain.js';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -212,7 +212,7 @@ export function chainName(value) {
 export function uri(value) {
   if (!value) { const s = document.createElement('span'); s.textContent = '—'; return s; }
   let href = String(value);
-  if (href.startsWith('ipfs://')) href = 'https://ipfs.io/ipfs/' + href.slice('ipfs://'.length);
+  href = ipfsHttpUrl(href);
   // Indexed metadata is user-controlled. Only real web URLs become clickable; render every other scheme inert.
   if (!/^https?:\/\//i.test(href)) return text(shorten(value, 12, 12));
   const a = document.createElement('a');

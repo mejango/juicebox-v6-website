@@ -44,7 +44,22 @@ var ACCOUNT_ACTIVITY_QUERY = 'query($from: String!, $version: Int!, $limit: Int!
   + 'id chainId projectId timestamp txHash from beneficiary beneficiaryTokenCount } } '
   + 'beneficiaryAutoIssueEvents: autoIssueEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
-  + 'id chainId projectId timestamp txHash from beneficiary count stageId } } }';
+  + 'id chainId projectId timestamp txHash from beneficiary count stageId } } '
+  // Four more receipt sides. Without them an NFT bought FOR you, loan proceeds sent to you, a
+  // keeper-executed bridge claim, and an operator cashing out YOUR tokens were all invisible
+  // here — every one of them a thing that happened to this account.
+  + 'beneficiaryMintNftEvents: mintNftEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from beneficiary tierId tokenId totalAmountPaid } } '
+  + 'beneficiaryBorrowLoanEvents: borrowLoanEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from beneficiary borrowAmount collateralCount } } '
+  + 'beneficiaryBridgeClaimEvents: bridgeClaimEvents(where: { beneficiary: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from beneficiary projectTokenCount terminalTokenAmount } } '
+  + 'holderCashOutEvents: cashOutTokensEvents(where: { holder: $from, from_not: $from, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
+  + 'id chainId projectId timestamp txHash from holder beneficiary cashOutCount reclaimAmount reclaimAmountUsd } } }';
 var ACCOUNT_ACTIVITY_ROOTS = [
   'activityEvents',
   'beneficiaryPayEvents',
@@ -52,6 +67,10 @@ var ACCOUNT_ACTIVITY_ROOTS = [
   'beneficiaryMintEvents',
   'beneficiaryManualMintEvents',
   'beneficiaryAutoIssueEvents',
+  'beneficiaryMintNftEvents',
+  'beneficiaryBorrowLoanEvents',
+  'beneficiaryBridgeClaimEvents',
+  'holderCashOutEvents',
 ];
 
 function accountActivityRows(data) {
@@ -80,42 +99,109 @@ function accountActivityRows(data) {
     return { beneficiary: item.beneficiary, tokenCount: item.beneficiaryTokenCount, from: item.from, txHash: item.txHash };
   });
   add('beneficiaryAutoIssueEvents', 'autoIssueEvent');
+  add('beneficiaryMintNftEvents', 'mintNftEvent');
+  add('beneficiaryBorrowLoanEvents', 'borrowLoanEvent');
+  add('beneficiaryBridgeClaimEvents', 'bridgeClaimEvent');
+  // A cash out the account HELD but someone else executed (an operator). Same shape as the
+  // beneficiary side, so it reuses the same interpreter field.
+  add('holderCashOutEvents', 'cashOutTokensEvent');
   rows.sort(function (a, b) { return Number(b.timestamp) - Number(a.timestamp); });
   return rows;
 }
 
-async function fetchAccountActivityWindow(address) {
-  var merged = {};
-  ACCOUNT_ACTIVITY_ROOTS.forEach(function (root) {
-    merged[root] = { items: [], totalCount: 0 };
-  });
-  var offset = 0;
+// The merged window, kept across calls so "Load more" and the 15s poll extend it instead of
+// re-paging every root from offset 0 each time. Keyed by address; one account is viewed at a
+// time, so a single slot is enough.
+var accountActivityCache = null;
+
+/**
+ * Grow the account's activity window until it holds at least `want` merged rows (or every root
+ * is exhausted), then return the whole window.
+ *
+ * `totalCount` drift used to ABORT with "Account activity changed while loading", which any
+ * write landing mid-pagination triggers — so a busy account saw an error for doing the very
+ * thing it was watching for. Drift is now just news: take the new total and keep going, and
+ * dedupe by id since a newly-prepended row shifts every later offset by one.
+ */
+async function fetchAccountActivityWindow(address, want) {
+  var key = String(address).toLowerCase();
+  if (!accountActivityCache || accountActivityCache.key !== key) {
+    var fresh = { key: key, roots: {}, offset: 0 };
+    ACCOUNT_ACTIVITY_ROOTS.forEach(function (root) {
+      fresh.roots[root] = { items: [], seen: {}, totalCount: 0, done: false };
+    });
+    accountActivityCache = fresh;
+  }
+  var cache = accountActivityCache;
+  var target = Math.max(Number(want) || 0, ACTIVITY_PAGE);
+  var limit = 250;
+
   while (true) {
-    var limit = 250;
+    var exhausted = ACCOUNT_ACTIVITY_ROOTS.every(function (root) { return cache.roots[root].done; });
+    var have = ACCOUNT_ACTIVITY_ROOTS.reduce(function (sum, root) {
+      return sum + cache.roots[root].items.length;
+    }, 0);
+    if (exhausted || have >= target) break;
+
     var data = await bendystrawQuery(ACCOUNT_ACTIVITY_QUERY, {
-      from: address.toLowerCase(), version: VERSION, limit: limit, offset: offset,
+      from: key, version: VERSION, limit: limit, offset: cache.offset,
     });
     ACCOUNT_ACTIVITY_ROOTS.forEach(function (root) {
+      var slot = cache.roots[root];
       var source = data && data[root];
-      var nextTotal = source && source.totalCount != null
-        ? Number(source.totalCount)
-        : merged[root].items.length + ((source && source.items && source.items.length) || 0);
-      if (offset > 0 && nextTotal !== merged[root].totalCount) {
-        throw new Error('Account activity changed while loading');
-      }
-      if ((!source || !source.items || !source.items.length) && offset < nextTotal) {
-        throw new Error('Account activity ended before its reported total');
-      }
-      merged[root].items = merged[root].items.concat((source && source.items) || []);
-      merged[root].totalCount = nextTotal;
+      var page = (source && source.items) || [];
+      if (source && source.totalCount != null) slot.totalCount = Number(source.totalCount);
+      page.forEach(function (item) {
+        if (slot.seen[item.id]) return;
+        slot.seen[item.id] = true;
+        slot.items.push(item);
+      });
+      if (!page.length || slot.items.length >= slot.totalCount) slot.done = true;
     });
-    offset += limit;
-    if (ACCOUNT_ACTIVITY_ROOTS.every(function (root) {
-      return merged[root].items.length >= merged[root].totalCount;
-    })) break;
+    cache.offset += limit;
   }
+
+  var merged = {};
+  ACCOUNT_ACTIVITY_ROOTS.forEach(function (root) {
+    merged[root] = { items: cache.roots[root].items, totalCount: cache.roots[root].totalCount };
+  });
   var items = accountActivityRows(merged);
-  return { items: items, totalCount: items.length };
+  var reportedTotal = ACCOUNT_ACTIVITY_ROOTS.reduce(function (sum, root) {
+    return sum + cache.roots[root].totalCount;
+  }, 0);
+  return { items: items, totalCount: Math.max(items.length, reportedTotal) };
+}
+
+/**
+ * Merge ONE fresh page from the head into the existing window, for the poll.
+ *
+ * Not a reset: dropping the cache would make the next "Load more" re-page every root from
+ * offset 0, which is the O(total) behaviour this cache exists to remove. New ids are merged
+ * and the sort puts them on top; `offset` is untouched, so deeper paging continues where it
+ * left off. A row that shifts across the offset boundary is caught by the id dedupe.
+ */
+async function refreshAccountActivityHead(address, want) {
+  var key = String(address).toLowerCase();
+  if (!accountActivityCache || accountActivityCache.key !== key) {
+    return fetchAccountActivityWindow(address, want);
+  }
+  var cache = accountActivityCache;
+  var data = await bendystrawQuery(ACCOUNT_ACTIVITY_QUERY, {
+    from: key, version: VERSION, limit: 250, offset: 0,
+  });
+  ACCOUNT_ACTIVITY_ROOTS.forEach(function (root) {
+    var slot = cache.roots[root];
+    var source = data && data[root];
+    if (source && source.totalCount != null) slot.totalCount = Number(source.totalCount);
+    ((source && source.items) || []).forEach(function (item) {
+      if (slot.seen[item.id]) return;
+      slot.seen[item.id] = true;
+      slot.items.push(item);
+      // A newly indexed row means there is more behind this root than the last pass saw.
+      slot.done = false;
+    });
+  });
+  return fetchAccountActivityWindow(address, want);
 }
 // Minimal per-project stub data the activity interpreter reads: display name plus the deployed
 // ERC-20's symbol/address (bendystraw's project.tokenSymbol is the ACCOUNTING token, not the
@@ -561,7 +647,7 @@ function renderActivityCard(address, isOwn, live) {
     more.disabled = true;
     status.style.display = '';
     status.textContent = 'Loading activity…';
-    return fetchAccountActivityWindow(address).then(function (page) {
+    return fetchAccountActivityWindow(address, loadedCount + ACTIVITY_PAGE).then(function (page) {
       totalCount = page.totalCount;
       var items = page.items.slice(loadedCount, loadedCount + ACTIVITY_PAGE);
       return loadStubs(items).then(function () { return items; });
@@ -595,7 +681,7 @@ function renderActivityCard(address, isOwn, live) {
         scheduleRefresh();
         return;
       }
-      fetchAccountActivityWindow(address).then(function (page) {
+      refreshAccountActivityHead(address, ACTIVITY_PAGE).then(function (page) {
         if (!card.isConnected || !live()) return;
         totalCount = page.totalCount;
         var fresh = page.items.slice(0, ACTIVITY_PAGE).filter(function (ev) {

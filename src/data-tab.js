@@ -56,6 +56,11 @@ export function dataRowsToCsv(columns, items) {
   function cell(value) {
     if (value == null) value = '';
     value = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    // Project names and memos are attacker-controlled onchain strings. Excel, Numbers and
+    // Sheets execute a cell beginning with = + - or @ as a FORMULA on open, so a project named
+    // `=HYPERLINK("http://evil","click")` attacks whoever exports this file. A leading
+    // apostrophe is the standard neutralizer and is stripped on display.
+    if (/^[=+\-@\t\r]/.test(value)) value = "'" + value;
     return /[",\n\r]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
   }
   const lines = [(columns || []).map(col => cell(col.label)).join(',')];

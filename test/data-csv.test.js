@@ -5,6 +5,27 @@ import { dataRowsToCsv, renderDataTab } from '../src/data-tab.js';
 import { setBendystrawNetwork } from '../src/bendystraw-client.js';
 
 describe('dataRowsToCsv', () => {
+
+
+  it('neutralizes formula-injection payloads in attacker-controlled strings', () => {
+    // Project names and memos come from chain. A cell starting with = + - or @ is executed as
+    // a formula by Excel/Numbers/Sheets when the export is opened.
+    const columns = [{ key: 'name', label: 'Name' }];
+    const csv = dataRowsToCsv(columns, [
+      { name: '=HYPERLINK("http://evil","click")' },
+      { name: '+1234' },
+      { name: '-cmd' },
+      { name: '@SUM(A1)' },
+      { name: 'Normal Project' },
+    ]);
+    const rows = csv.split('\r\n').slice(1);
+    expect(rows[0].startsWith('"\'=HYPERLINK')).toBe(true);
+    expect(rows[1]).toBe("'+1234");
+    expect(rows[2]).toBe("'-cmd");
+    expect(rows[3]).toBe("'@SUM(A1)");
+    // An ordinary value is untouched.
+    expect(rows[4]).toBe('Normal Project');
+  });
   const columns = [
     { label: 'Project', key: 'projectId' },
     { label: 'Name', key: 'name' },
