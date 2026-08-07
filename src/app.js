@@ -263,7 +263,13 @@ function initTabs() {
           return wallet && wallet.getChainId ? wallet.getChainId().then(function (chainId) { return [{ chainId: chainId, projectId: null }]; }) : [];
         });
       chainPromise.then(function (projectChains) {
-        if (!panel.isConnected || !projectChains || !projectChains.length) return;
+        if (!panel.isConnected) return;
+        // Returning here without touching the panel left "Loading balances…" spinning forever
+        // — the state View-as lands in when no wallet is connected outside a project page.
+        if (!projectChains || !projectChains.length) {
+          panel.textContent = 'No chains to read balances on.';
+          return;
+        }
         return Promise.all(projectChains.map(function (projectChain) {
           var chainId = Number(projectChain.chainId);
           if (!CHAINS[chainId]) throw new Error('Unsupported chain ' + chainId);

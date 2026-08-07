@@ -117473,26 +117473,6 @@ export const registry = {
         "native": false
       }
     ],
-    "42220": [
-      {
-        "symbol": "CELO",
-        "address": "0x000000000000000000000000000000000000EEEe",
-        "decimals": 18,
-        "native": true
-      },
-      {
-        "symbol": "USDC",
-        "address": "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
-        "decimals": 6,
-        "native": false
-      },
-      {
-        "symbol": "cUSD",
-        "address": "0x765DE816845861e75A25fCA122bb6898B8B1282a",
-        "decimals": 18,
-        "native": false
-      }
-    ],
     "84532": [
       {
         "symbol": "USDC",
@@ -129772,7 +129752,6 @@ export const chains = registry.chains;
 export const deployments = registry.deployments;
 export const tokens = registry.tokens;
 export const commonActions = registry.commonActions;
-export const formViews = registry.formViews;
 export const sources = registry.sources;
 
 /**
@@ -129879,26 +129858,3 @@ export function getAddress(name, chainId) {
   return m ? (m.addresses[String(chainId)] || null) : null;
 }
 
-/**
- * Get deployment metadata for a deployment name.
- * @param {string} name - Deployment name, e.g. 'JBCCIPSucker__BASE_SEP'
- * @param {string|number} [chainId] - Optional chain ID
- * @returns {object|null}
- */
-export function getDeployment(name, chainId) {
-  const d = registry.deployments && registry.deployments.deployments
-    ? registry.deployments.deployments[name]
-    : null;
-  if (!d) return null;
-  if (chainId == null) return d;
-  return d.chains ? (d.chains[String(chainId)] || null) : null;
-}
-
-/**
- * List all contracts in a given category.
- * @param {string} category - Category name (e.g. 'Core Protocol')
- * @returns {Array<string>} Contract names
- */
-export function getContractsByCategory(category) {
-  return registry.categories[category] || [];
-}

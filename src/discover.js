@@ -274,7 +274,12 @@ export function cashOutExecutionErrorMessage(message) {
     return 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger max slippage, then try again.';
   }
   if (text.indexOf('0x6b2bb382') !== -1 || text.toLowerCase().indexOf('jbmultiterminal_undermin') !== -1) {
-    return 'The live return fell below the minimum you reviewed. Refresh the quote and try again.';
+    // UnderMin also fires when the hook flips a treasury-route cash out to the AMM at
+    // execution: the trade is refused safely, but nothing about the user's slippage floor was
+    // wrong. Naming only the floor invited people to lower it in response to a route change.
+    return 'The cash out was refused because the return at execution was below your minimum — '
+      + 'either the price moved, or the route switched between the treasury and the pool. '
+      + 'Refresh the quote and review the route before trying again.';
   }
   return text;
 }
@@ -4027,7 +4032,7 @@ export function knownInstanceFamilyForDeployer(deployer, chainId) {
 
 // JBAddressRegistry proves which CREATE/CREATE2 deployer produced an instance. It is provenance rather than a
 // general trust oracle, so only type-specific deployers whose output family the app understands are classified.
-export function registeredInstanceProvenance(address, chainId) {
+function registeredInstanceProvenance(address, chainId) {
   if (isZeroishAddress(address)) return Promise.resolve(null);
   var key = chainId + ':' + String(address).toLowerCase();
   if (_instanceProvenanceCache[key]) return _instanceProvenanceCache[key];
@@ -4914,7 +4919,7 @@ export var upcomingRulesetAbi = [{
   type: 'function', name: 'upcomingRulesetOf', stateMutability: 'view',
   inputs: [{ name: 'projectId', type: 'uint256' }], outputs: RULESET_OUTPUTS,
 }];
-export var latestQueuedRulesetAbi = [{
+var latestQueuedRulesetAbi = [{
   type: 'function', name: 'latestQueuedRulesetOf', stateMutability: 'view',
   inputs: [{ name: 'projectId', type: 'uint256' }], outputs: RULESET_OUTPUTS.concat([
     { name: 'approvalStatus', type: 'uint8' },
@@ -5377,7 +5382,7 @@ var cashOutDelayAbi = [{
 
 // -- Helpers --
 
-export function ipfsPath(uri) {
+function ipfsPath(uri) {
   var u = (uri || '').toString().trim();
   if (!u) return '';
   if (u.indexOf('ipfs://') === 0) return u.slice('ipfs://'.length).replace(/^\/+/, '').replace(/^ipfs\//i, '');
@@ -6170,7 +6175,7 @@ function ensNameOf(address) {
   return p;
 }
 // Sync read of an already-resolved ENS name (or null) — lets the account search substring-match names without awaiting.
-export function ensNameCached(address) { return _ensResolved[(address || '').toLowerCase()] || null; }
+function ensNameCached(address) { return _ensResolved[(address || '').toLowerCase()] || null; }
 
 // Forward ENS resolution (name → address), mainnet, cached. Returns null for non-names / no record.
 var _ensAddrCache = {};
@@ -6965,7 +6970,7 @@ function scheduleProjectGroupRefresh() {
   }, 100);
 }
 
-export function invalidateDiscoverProjects() {
+function invalidateDiscoverProjects() {
   _groups = null; _cache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {};
   _preferredProjectMetadataCache = {}; _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _instanceProvenanceCache = {};
   _activeDetail = null;
@@ -13070,7 +13075,7 @@ async function applyDraftShop(state, project, sources, warnings) {
 
 // Reconstruct the configuration which the current create wizard can faithfully represent. Transaction-critical
 // values come from contracts; Bendystraw-first project metadata is used only for display fields.
-export async function buildProjectCreateDraft(project) {
+async function buildProjectCreateDraft(project) {
   var state = newCreateDraftState(), warnings = [];
   var chains = projectChains(project);
   var testnetIds = [11155111, 11155420, 84532, 421614];
@@ -16586,7 +16591,7 @@ export function toBaseAxis(value, basePerAcct) {
 
 // The indexer's 18-dec USD-per-accounting-token rate as a number, or null when the row predates
 // the backfill or no feed bridged the pair. Null means "use the live rate for this point".
-export function usdRateOf(raw) {
+function usdRateOf(raw) {
   if (raw == null) return null;
   var rate = Number(toBigInt(raw)) / 1e18;
   return isFinite(rate) && rate > 0 ? rate : null;
@@ -17691,7 +17696,7 @@ var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $
 // indexer deploys, GraphQL rejects the whole document for the unknown field and the request
 // falls through to BENDYSTRAW_SWAP_EVENTS_QUERY below. It starts being used the moment the
 // indexer serves it — no frontend release.
-export var BENDYSTRAW_RATED_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+var BENDYSTRAW_RATED_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash sqrtPriceX96 projectTokenIsCurrency0 accountingTokenUsdRate } totalCount } }';
@@ -18107,7 +18112,7 @@ function projectChainIds(project) {
 // Every verified deployment in the omnichain project, as an exact (chainId, projectId) pair. A numeric
 // project ID has no cross-chain identity by itself, so callers must fan out over these pairs instead of
 // combining one projectId with chainId_in.
-export function projectDeployments(project) {
+function projectDeployments(project) {
   var seen = {};
   return projectChainIds(project).map(function (chainId) {
     var projectId;
@@ -19148,11 +19153,23 @@ function renderMarketPriceChart(project) {
     // 'terminal tokens' is the neutral fallback used elsewhere in this file.
     pairSym = (swaps.pair && swaps.pair.symbol) || 'terminal tokens';
     ready = true;
+    // No price AND no history genuinely means no pool activity to plot; a REJECTION does not.
     if (!live && !series.length) { host.remove(); return; }
     draw();
-  }).catch(function () { host.remove(); });
+  }).catch(function () { markCardUnavailable(host, 'Pool price history'); });
 
   return host;
+}
+
+// An outage is not an absence. Removing a card on a failed read makes "we couldn't reach the
+// indexer" look identical to "this project has no pool", which is a claim about the project.
+// Replace the card's contents with an explicit unavailable state instead.
+function markCardUnavailable(host, what) {
+  if (!host.isConnected) return;
+  host.textContent = '';
+  var note = el('div', 'card-unavailable');
+  note.textContent = what + ' is unavailable right now. Refresh to try again.';
+  host.appendChild(note);
 }
 
 // The live pool price in both directions, plus the two prices arbitrage keeps it between.
@@ -19229,7 +19246,7 @@ function renderPoolPriceCard(project) {
     note.textContent = 'The market fills orders that would give payers more ' + sym
       + ' than issuance. Arbitrage keeps its price between the issuance ceiling and the cash-out floor.';
     body.appendChild(note);
-  }).catch(function () { host.remove(); });
+  }).catch(function () { markCardUnavailable(host, 'The pool price'); });
 
   return host;
 }
@@ -26285,6 +26302,8 @@ async function prepareAddLiquidity(opts) {
     liquidity: liquidity, need: need, amount0Max: amount0Max, amount1Max: amount1Max, value: value,
     unlockData: unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20, smartWallet: smartWallet,
     pa: opts.pa, pb: opts.pb, deadlineSecs: opts.deadlineSecs || null,
+    // Carried so a successful mint can mark the index stale for this pool (noteLocalLpWrite).
+    poolId: keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]])),
   };
 }
 
@@ -26557,7 +26576,27 @@ var BENDYSTRAW_LP_POSITIONS_QUERY = 'query($chainId: Int!, $poolId: String!, $li
 
 // The pool's positions from the index, or null when it has nothing for this pool — which reads the same as
 // "not indexed yet", so the caller falls back to the onchain scan rather than showing an empty pool.
+// Pools this browser just mutated. Bendystraw takes 5-13s at baseline and minutes under load,
+// and until it catches up the index is a CONFIRMED-stale answer for these pools: it would hide
+// a position the user just minted, or still show one they just removed. The on-chain scan sees
+// both immediately, so skip the index for a short window after a local write.
+var LP_LOCAL_WRITE_TTL_MS = 90_000;
+var lpLocallyMutatedPools = {};
+
+function noteLocalLpWrite(chainId, poolId) {
+  if (!poolId) return;
+  lpLocallyMutatedPools[Number(chainId) + ':' + String(poolId).toLowerCase()] = Date.now();
+}
+
+function lpIndexIsKnownStale(chainId, poolId) {
+  var at = lpLocallyMutatedPools[Number(chainId) + ':' + String(poolId).toLowerCase()];
+  if (!at) return false;
+  if (Date.now() - at > LP_LOCAL_WRITE_TTL_MS) return false;
+  return true;
+}
+
 async function indexedPoolPositions(chainId, poolId) {
+  if (lpIndexIsKnownStale(chainId, poolId)) return null;
   try {
     var page = await fetchBendystrawCollectionPages(BENDYSTRAW_LP_POSITIONS_QUERY, 'buybackPoolPositions', {
       chainId: chainId, poolId: poolId,
@@ -26881,6 +26920,7 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
               ctx.modal.close();
               var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Removed | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
               row.innerHTML = ''; row.appendChild(ok);
+              noteLocalLpWrite(chainId, pos.poolId);
               if (onDone) onDone();
             }).catch(function (e) {
               ctx.confirm.disabled = false; ctx.cancel.disabled = false;
@@ -27211,6 +27251,7 @@ function buildAddLiquidityModal(project) {
           status.innerHTML = '';
           status.appendChild(document.createTextNode('Liquidity added | TX: '));
           status.appendChild(renderExplorerTxLink(cid, hash, truncAddr(hash)));
+          noteLocalLpWrite(cid, prep.poolId);
           refreshBalances(); refreshPrice();
         }).catch(function (e) {
           ctx.confirm.disabled = false; ctx.cancel.disabled = false;

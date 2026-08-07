@@ -70,7 +70,12 @@ describe('cash out route state', () => {
     expect(cashOutExecutionErrorMessage('reverted with signature 0xe2d708a9')).toMatch(/pool moved below your protected minimum/i);
   });
 
-  it('explains the terminal minimum selector', () => {
-    expect(cashOutExecutionErrorMessage('reverted with signature 0x6b2bb382')).toMatch(/live return fell below the minimum/i);
+  it('explains the terminal minimum selector without blaming slippage alone', () => {
+    const message = cashOutExecutionErrorMessage('reverted with signature 0x6b2bb382');
+    expect(message).toMatch(/below your minimum/i);
+    // UnderMin also fires when the hook flips the route between treasury and pool at
+    // execution. Naming only the price movement invited users to lower their slippage floor
+    // in response to a route change, which is the wrong lever.
+    expect(message).toMatch(/route/i);
   });
 });
