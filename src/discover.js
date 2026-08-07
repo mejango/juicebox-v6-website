@@ -16694,7 +16694,7 @@ function renderPriceChart(project, stages) {
   var chartWrap = el('div', 'issuance-chart price-chart');
   var chartReady = !unitMismatch; // a mismatched chart waits for the rate before drawing — the axis stays single-unit
   // Accounting-denominated series (pool price, cash-out floor) relative to the base-currency axis.
-  var acctSeriesConverted = false; // live values converted; their history dropped as un-restateable
+  var acctSeriesConverted = false; // pool + cash-out values converted onto the axis at the live rate
   var acctSeriesDropped = false;   // no feed bridges the units, so they are not plotted at all
   function draw() { if (!chartReady) return; mountChart(chartWrap, sorted, now, curYears, sym, amm, cashout, true, cashoutHistory, ammHistory); }
   function selectRange(years, btn) {
@@ -16729,17 +16729,29 @@ function renderPriceChart(project, stages) {
     var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
     var lp = res[4];
     var basePerAcct = res[5];
+    // Re-checked, not reused: `unitMismatch` above is captured while `project.acctToken` may still
+    // be in flight, and an unresolved accounting context reads as "no mismatch". That left a
+    // USD-denominated revnet plotting raw USDC under a USD label — right only because USDC ≈ $1.
+    // By here the reads have settled, so this is the answer that decides the conversion.
+    unitMismatch = issuancePairUnitMismatch(project);
     // The axis is the ruleset's base currency. Issuance is already in it and stays untouched;
     // the pool price and cash-out floor are accounting-token denominated and get converted.
     if (unitMismatch) {
       if (basePerAcct) {
-        // Live values convert at the live rate. HISTORICAL points would each need the rate in
-        // force at their own timestamp — reusing today's would restate the past — so the
-        // accounting-denominated history is dropped rather than redrawn in the wrong unit.
+        // Live values and history both convert at the live rate. That rate prices NOW, so a
+        // pair that floats has its past restated — but dropping the history left the chart a
+        // single issuance line with two unexplained dots beside it, which reads as broken.
+        // Convert, and label the result approximate below.
         p = toBaseAxis(p, basePerAcct);
         f = toBaseAxis(f, basePerAcct);
-        history = [];
-        swaps = Object.assign({}, swaps, { series: [] });
+        history = history.map(function (point) {
+          return Object.assign({}, point, { value: toBaseAxis(point.value, basePerAcct) });
+        });
+        swaps = Object.assign({}, swaps, {
+          series: (swaps.series || []).map(function (point) {
+            return { timestamp: point.timestamp, value: toBaseAxis(point.value, basePerAcct) };
+          }),
+        });
         acctSeriesConverted = true;
         chartReady = true;
         if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—';
