@@ -6013,15 +6013,32 @@ function appendIndexedStats(statLine, stats) {
   statLine.appendChild(document.createTextNode(stats.paymentsCount === 1 ? ' payment' : ' payments'));
 }
 
-function formatCompactTokenAmount(raw) {
+// Abbreviate for a dense list, keeping THREE SIGNIFICANT FIGURES: 1.23b, 12.3m, 123k. The
+// previous ladder dropped to whole units above 10x each threshold, so 12,300 and 12,900 both
+// rendered "12k" — an order of magnitude of precision thrown away for one saved character.
+// Always pair with the exact value in a title (see exactTokenAmount).
+export function formatCompactTokenAmount(raw) {
   if (raw === null || raw === undefined) return '—';
   var n = Number(formatAmount(raw, 18));
   if (!isFinite(n)) return formatTokens(raw);
   if (n === 0) return '0';
-  if (n >= 1000000000) return (n / 1000000000).toFixed(n >= 10000000000 ? 0 : 1).replace(/\.0$/, '') + 'b';
-  if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1).replace(/\.0$/, '') + 'm';
-  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  var sign = n < 0 ? '-' : '';
+  var mag = Math.abs(n);
+  var ladder = [[1000000000, 'b'], [1000000, 'm'], [1000, 'k']];
+  for (var i = 0; i < ladder.length; i++) {
+    if (mag >= ladder[i][0]) {
+      var scaled = mag / ladder[i][0];
+      var decimals = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+      return sign + scaled.toFixed(decimals).replace(/\.?0+$/, '') + ladder[i][1];
+    }
+  }
   return formatTokenCount(raw);
+}
+
+// The unabbreviated value a hover reveals for any compacted figure.
+export function exactTokenAmount(raw) {
+  if (raw === null || raw === undefined) return '';
+  return formatTokens(raw);
 }
 
 function formatOwnerPortion(balance, total) {
@@ -19134,12 +19151,19 @@ function renderPoolPriceCard(project) {
 
     if (issuance || cashout) {
       var rows = el('div', 'pool-price-rows');
-      [[issuance, 'Current issuance price'], [cashout, 'Current cash out price']].forEach(function (entry) {
+      // The cash-out figure is gross of the 2.5% fee, exactly like the overview chip — which
+      // says so via cashOutFloorTip. Without the same qualifier the two surfaces state one
+      // number with two different levels of honesty on the same page.
+      [[issuance, 'Current issuance price', null],
+       [cashout, 'Current cash out price', 'before the 2.5% cash out fee']].forEach(function (entry) {
         if (!entry[0]) return;
         var row = el('div', 'pool-price-row');
-        var label = el('span'); label.textContent = entry[1]; row.appendChild(label);
+        var label = el('span'); label.textContent = entry[1];
+        if (entry[2]) label.title = entry[2];
+        row.appendChild(label);
         var value = el('span', 'pool-price-val');
-        value.textContent = formatPrice(entry[0]) + ' ' + pairSym;
+        value.textContent = formatPrice(entry[0]) + ' ' + pairSym + (entry[2] ? ' (before fees)' : '');
+        if (entry[2]) value.title = entry[2];
         row.appendChild(value);
         rows.appendChild(row);
       });
@@ -23136,7 +23160,15 @@ function buildCashOutModal(project, requestClose) {
       var terminalRoute = resolveCashOutPreviewRoute(previewResult, hookAddr, state.slippageBps || 100, state.feeless, state.feeFreeSurplus);
       state.cashOutRoute = terminalRoute;
       if (terminalRoute.via === 'amm') {
-        renderCashPreview(seq, { net: terminalRoute.expected, revFee: 0n, protocolFee: 0n, route: 'amm', treasuryNet: terminalRoute.treasuryNet });
+        // Headline the EXECUTABLE amount (the slippage-adjusted minimum the tx enforces),
+        // not the optimistic raw oracle quote. The raw quote is what the pool would fill at
+        // zero impact and zero fee, so leading with it systematically overstates the fill;
+        // it is still shown as the upper bound.
+        renderCashPreview(seq, {
+          net: terminalRoute.minimum,
+          upTo: terminalRoute.expected > terminalRoute.minimum ? terminalRoute.expected : null,
+          revFee: 0n, protocolFee: 0n, route: 'amm', treasuryNet: terminalRoute.treasuryNet,
+        });
       } else {
         renderCashPreview(seq, { net: terminalRoute.expected, revFee: revFee, protocolFee: protocolFee });
       }
@@ -23178,7 +23210,8 @@ function buildCashOutModal(project, requestClose) {
     if (poolRoute) syncSlip();
     preview.innerHTML = '';
     var recv = el('div', 'ops-preview-line ops-preview-recv');
-    recv.textContent = 'You’ll receive ~ ' + formatBalance(f.net, a.decimals, a.symbol);
+    recv.textContent = 'You’ll receive ~ ' + formatBalance(f.net, a.decimals, a.symbol)
+      + (f.upTo ? ' (up to ' + formatBalance(f.upTo, a.decimals, a.symbol) + ')' : '');
     preview.appendChild(recv);
     // Route indicator — confirm how this settles: a direct pool sell (bypasses the terminal), the buyback pool
     // via the terminal, or the project treasury.
