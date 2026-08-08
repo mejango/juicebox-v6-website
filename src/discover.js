@@ -16640,6 +16640,17 @@ export function formatPrice(n) {
 
 // The floor chip quotes the contract's raw reclaim: netting the 2.5% protocol fee into a plotted history
 // would need per-point fee-free-surplus state, so the label carries an explicit qualifier instead.
+// Heroicons outline question-mark-circle, with `currentColor` so it follows the label (the
+// source pins #1A1A1A). Marks an explanation of a CONCEPT — what a term means — as distinct
+// from the information circle, which qualifies data already on screen.
+function questionMarkIcon() {
+  var span = el('span', 'concept-hint');
+  span.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">'
+    + '<path d="M9.87891 7.51884C11.0505 6.49372 12.95 6.49372 14.1215 7.51884C15.2931 8.54397 15.2931 10.206 14.1215 11.2312C13.9176 11.4096 13.6917 11.5569 13.4513 11.6733C12.7056 12.0341 12.0002 12.6716 12.0002 13.5V14.25M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12ZM12 17.25H12.0075V17.2575H12V17.25Z"'
+    + ' stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  return span;
+}
+
 export function cashOutFloorTip(price, pairSym, sym) {
   return '~' + formatPrice(price) + ' ' + pairSym + ' / ' + sym + ' (current cash out floor, before the 2.5% cash out fee)';
 }
@@ -16747,7 +16758,12 @@ function renderPriceChart(project, stages) {
     var c = el('span', 'price-chip ' + kind + (active ? ' active' : ' muted'));
     var dot = el('span', 'price-dot'); c.appendChild(dot);
     var col = el('span', 'price-chip-col');
-    var t = el('span', 'price-chip-label'); t.textContent = label; col.appendChild(t);
+    var t = el('span', 'price-chip-label'); t.textContent = label;
+    // These chips have carried a full explanation of what each price MEANS since they were
+    // written, on a hover with nothing on screen to reveal it. The (?) is that affordance —
+    // the chip itself still owns the text, so hovering anywhere on it works as before.
+    t.appendChild(questionMarkIcon());
+    col.appendChild(t);
     var v = el('span', 'price-chip-val');
     // Ghost the value while it loads so the chip reserves its width and the range row below doesn't jump.
     var g = el('span', 'skel price-chip-skel'); g.style.width = (kind === 'pc-amm' ? 200 : 78) + 'px';

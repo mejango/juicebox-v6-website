@@ -5113,6 +5113,11 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .chart-tip-row { display: flex; align-items: center; gap: 5px; }
 .chart-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
+/* The (?) beside a label whose element carries an explanation of what the term MEANS. Dimmed
+   so it reads as an affordance rather than as content. */
+.concept-hint { display: inline-flex; align-items: center; margin-left: 4px; vertical-align: -2px; opacity: 0.45; }
+.price-chip:hover .concept-hint { opacity: 0.8; }
+
 /* A small (!) carrying an always-true caveat about how to read a chart, so it does not spend a
    banner line. Anything saying data is MISSING stays inline instead. Reuses the chip tooltip. */
 .chart-note-tip {
