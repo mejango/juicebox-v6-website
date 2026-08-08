@@ -12036,7 +12036,10 @@ function renderPastRulesetsCard(project) {
       var thead = document.createElement('thead');
       var headRow = document.createElement('tr');
       ['ID', 'Start', 'Issuance (' + sym + '/' + baseUnitLabel(project) + ')', 'Duration', 'Cash out tax'].forEach(function (label) {
-        if (label === 'Cash out tax') { headRow.appendChild(conceptHeader(label, PROTOCOL_CONCEPTS.cashOutTax)); return; }
+        var concept2 = label === 'Cash out tax' ? PROTOCOL_CONCEPTS.cashOutTax
+          : label.indexOf('Issuance (') === 0 ? PROTOCOL_CONCEPTS.issuance
+          : null;
+        if (concept2) { headRow.appendChild(conceptHeader(label, concept2)); return; }
         var th = document.createElement('th'); th.textContent = label; headRow.appendChild(th);
       });
       thead.appendChild(headRow); table.appendChild(thead);
@@ -12298,7 +12301,7 @@ function renderRulesetsFundsSection(project) {
       kinds.forEach(function (kind) {
         var secHead = el('div', 'rf-section'); secHead.textContent = kind.symbol + ' FUNDS ACCESS'; faContainer.appendChild(secHead);
         var faPayout = kvRow('Payout limit per cycle', '…'); faContainer.appendChild(faPayout);
-        var faAllow = kvRow('Surplus allowance', '…'); faContainer.appendChild(faAllow);
+        var faAllow = kvRow('Surplus allowance', '…', PROTOCOL_CONCEPTS.surplusAllowance); faContainer.appendChild(faAllow);
         var psSh = el('div', 'rf-section'); psSh.textContent = kind.symbol + ' PAYOUT SPLITS'; faContainer.appendChild(psSh);
         var psBox = el('div'); psBox.appendChild(kvRow('Recipients', '…')); faContainer.appendChild(psBox);
         var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '6px';
@@ -16444,7 +16447,12 @@ function renderTermsTable(project, stages) {
   var thead = document.createElement('thead');
   var hr = document.createElement('tr');
   ['Stage', 'Period', 'Issuance (' + sym + '/' + baseUnitLabel(project) + ')', 'Split limit', 'Auto issuance (' + sym + ')', 'Cash out tax'].forEach(function (h) {
-    if (h === 'Cash out tax') { hr.appendChild(conceptHeader(h, PROTOCOL_CONCEPTS.cashOutTax)); return; }
+    var concept = h === 'Cash out tax' ? PROTOCOL_CONCEPTS.cashOutTax
+      : h.indexOf('Issuance (') === 0 ? PROTOCOL_CONCEPTS.issuance
+      : h === 'Split limit' ? PROTOCOL_CONCEPTS.reservedShare
+      : h.indexOf('Auto issuance') === 0 ? PROTOCOL_CONCEPTS.autoIssuance
+      : null;
+    if (concept) { hr.appendChild(conceptHeader(h, concept)); return; }
     var th = document.createElement('th'); th.textContent = h; hr.appendChild(th);
   });
   thead.appendChild(hr); table.appendChild(thead);
@@ -16646,11 +16654,22 @@ export function formatPrice(n) {
 // with juicebox-money (src/lib/protocol-concepts.ts) and revnet-money — these are protocol
 // concepts, not per-app copy, and every clause is checked against the contracts in the
 // monorepo. A confident wrong explanation of a fee is worse than no explanation.
+// Written for someone who has never read a Juicebox doc. No "ruleset", no "issuance weight",
+// no "surplus", no "splits" — those are our words, not theirs.
 export var PROTOCOL_CONCEPTS = {
+  // tokenCount = amount * weight / weightRatio (JBTerminalStore.sol:1165-1175).
+  issuance: 'How many tokens you get for each unit you put in. The project sets this in its rules, so unlike a market price it does not move with trading.',
+  // JBRulesetMetadataResolver.reservedPercent.
+  reservedShare: 'The share of newly created tokens that goes to people the project chose in advance, instead of to whoever paid. Whoever paid gets the rest.',
+  // Minted to named beneficiaries when a stage starts.
+  autoIssuance: 'Tokens created for specific people the moment this stage begins, without anyone paying for them.',
   // JBCashOuts.cashOutFrom — 0 returns the exact proportional share; higher returns less.
-  cashOutTax: 'How much of the treasury stays behind when someone cashes out. At 0% you get your exact proportional share of the surplus. Higher rates return less than proportional, leaving the difference for the holders who stay.',
+  cashOutTax: 'What the project keeps when someone cashes their tokens back in. At 0% you get your full share of the money in the treasury. Higher settings pay you less than your full share and leave the difference to everyone still holding.',
+  // JBFundAccessLimitGroup.surplusAllowances. JBTerminalStore.sol:140-144: usage is keyed by
+  // `ruleset.id`, NOT cycle number, so cycles rolling over do NOT refill it.
+  surplusAllowance: 'The most the project\u2019s owner can take out of the treasury on top of the payouts, to spend however they choose. Unlike the payout limit this does not refill each cycle \u2014 it is a single budget that lasts as long as the current rules do.',
   // JBBuybackHook._requireValidTwapWindow — 5 minutes to 2 days.
-  twapWindow: 'How far back the buyback hook averages the pool price when deciding the least a swap may return. Longer windows are harder to manipulate but slower to reflect a real price move; shorter windows are the reverse. Allowed range is 300 to 172800 seconds.',
+  twapWindow: 'How far back to average the trading price when checking that a swap is a fair deal. A longer window is harder for someone to manipulate, but slower to notice a real change in price. A shorter one is the opposite. Anything from 300 to 172800 seconds.',
 };
 
 // A header cell whose own tooltip defines the term it names, with the term dotted-underlined.
@@ -27639,10 +27658,13 @@ function emptyCard(title, message) {
   return card;
 }
 
-function kvRow(key, value) {
+function kvRow(key, value, note) {
   var row = el('div', 'detail-ruleset-row');
   var k = el('span', 'detail-ruleset-key');
   k.textContent = key;
+  // `note` defines the key for a reader who does not know the term. Dotted-underlined, same as
+  // every other defined term in this app.
+  if (note) { k.classList.add('concept-term'); k.title = note; }
   row.appendChild(k);
   var v = el('span', 'detail-ruleset-val');
   v.textContent = value;
