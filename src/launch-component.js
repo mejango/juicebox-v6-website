@@ -201,7 +201,12 @@ export function renderLaunchComponent() {
 
     var terminalAddr = getAddress('JBMultiTerminal', state.chainIds[0]);
 
-    var rulesetConfigs = buildRulesetConfigs(state.rulesets, { weightMode: 'launch' });
+    var rulesetConfigs;
+    try {
+      rulesetConfigs = buildRulesetConfigs(state.rulesets, { weightMode: 'launch' });
+    } catch (err) {
+      state.error = (err && err.message) || String(err); updateUI(); return;
+    }
 
     // Default terminal config: accept native ETH
     var terminalConfigs = [];

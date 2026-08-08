@@ -21,14 +21,16 @@ export var DURATION_PRESETS = [
 // at launch JBRulesets stores the 1 as-is (≈1 wei-token per base unit, effectively dust issuance),
 // so the launch widget passes mode 'launch' where blank encodes an explicit 0n (no issuance). Any
 // typed number is 18-dec fixed-point tokens per base unit — "1" means 1e18, "0" means no issuance.
-// Garbage/negative input degrades to 0n (never throws).
+// Non-blank input that doesn't parse as a plain decimal ("1,000", "10e3") THROWS so an operator's typo
+// can't silently encode zero issuance into an irreversible queued/launched ruleset — matching the
+// fund-access builder, whose BigInt() also throws on garbage. Negative input degrades to 0n.
 export function parseRulesetWeight(value, mode) {
   if (value == null || String(value).trim() === '') return mode === 'launch' ? 0n : 1n;
   var weight;
   try {
     weight = parseEther(String(value).trim());
   } catch (_) {
-    return 0n;
+    throw new Error('Invalid issuance weight "' + String(value).trim() + '" — enter a plain decimal number of tokens (no commas, spaces, or exponents), or leave the field blank.');
   }
   if (weight < 0n) return 0n;
   return weight > UINT112_MAX ? UINT112_MAX : weight;

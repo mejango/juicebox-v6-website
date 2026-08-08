@@ -9,6 +9,7 @@ import {
   getChainTokens, parseAmount, parseHashDefaults, createPublicClientForChain, getAccount, truncAddr,
   tokenByAddress,
 } from './component-base.js';
+import { quotedOutputFloor } from './slippage.js';
 
 export var sendPayoutsAbi = [{
   type: 'function', name: 'sendPayoutsOf', stateMutability: 'nonpayable',
@@ -77,7 +78,11 @@ export function normalizePayoutContext(context, catalog) {
 }
 
 var accountingContextsAbi = [{ type: 'function', name: 'accountingContextsOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ name: 'contexts', type: 'tuple[]', components: [{ name: 'token', type: 'address' }, { name: 'decimals', type: 'uint256' }, { name: 'currency', type: 'uint256' }] }] }];
-var currentRulesetAbi = [{ type: 'function', name: 'currentRulesetOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ name: 'ruleset', type: 'tuple', components: [{ name: 'cycleNumber', type: 'uint256' }, { name: 'id', type: 'uint256' }, { name: 'basedOnId', type: 'uint256' }, { name: 'start', type: 'uint256' }, { name: 'duration', type: 'uint256' }, { name: 'weight', type: 'uint256' }, { name: 'weightCutPercent', type: 'uint256' }, { name: 'approvalHook', type: 'address' }, { name: 'metadata', type: 'uint256' }] }] }];
+// JBController.currentRulesetOf returns TWO tuples, (JBRuleset, JBRulesetMetadata). Declaring only the first
+// happens to decode today because both tuples are fully static and viem tolerates trailing words — but that is a
+// property of the current struct shapes, not a guarantee: one dynamic member added to either tuple turns a silent
+// tolerance into wrong offsets. Declare the real return.
+var currentRulesetAbi = [{ type: 'function', name: 'currentRulesetOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ name: 'ruleset', type: 'tuple', components: [{ name: 'cycleNumber', type: 'uint256' }, { name: 'id', type: 'uint256' }, { name: 'basedOnId', type: 'uint256' }, { name: 'start', type: 'uint256' }, { name: 'duration', type: 'uint256' }, { name: 'weight', type: 'uint256' }, { name: 'weightCutPercent', type: 'uint256' }, { name: 'approvalHook', type: 'address' }, { name: 'metadata', type: 'uint256' }] }, { name: 'metadata', type: 'tuple', components: [{ name: 'reservedPercent', type: 'uint256' }, { name: 'cashOutTaxRate', type: 'uint256' }, { name: 'baseCurrency', type: 'uint256' }, { name: 'pausePay', type: 'bool' }, { name: 'pauseCreditTransfers', type: 'bool' }, { name: 'allowOwnerMinting', type: 'bool' }, { name: 'allowSetCustomToken', type: 'bool' }, { name: 'allowTerminalMigration', type: 'bool' }, { name: 'allowSetTerminals', type: 'bool' }, { name: 'allowSetController', type: 'bool' }, { name: 'allowAddAccountingContext', type: 'bool' }, { name: 'allowAddPriceFeed', type: 'bool' }, { name: 'ownerMustSendPayouts', type: 'bool' }, { name: 'holdFees', type: 'bool' }, { name: 'scopeCashOutsToLocalBalances', type: 'bool' }, { name: 'useDataHookForPay', type: 'bool' }, { name: 'useDataHookForCashOut', type: 'bool' }, { name: 'dataHook', type: 'address' }, { name: 'metadata', type: 'uint256' }] }] }];
 var payoutLimitsAbi = [{ type: 'function', name: 'payoutLimitsOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }, { name: 'terminal', type: 'address' }, { name: 'token', type: 'address' }], outputs: [{ name: 'limits', type: 'tuple[]', components: [{ name: 'amount', type: 'uint256' }, { name: 'currency', type: 'uint256' }] }] }];
 var usedPayoutLimitAbi = [{ type: 'function', name: 'usedPayoutLimitOf', stateMutability: 'view', inputs: [{ name: 'terminal', type: 'address' }, { name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }, { name: 'rulesetCycleNumber', type: 'uint256' }, { name: 'currency', type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
 var storeBalanceAbi = [{ type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'terminal', type: 'address' }, { name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [{ type: 'uint256' }] }];
@@ -87,8 +92,7 @@ export function payoutOutputFloor(quoted, exact) {
   quoted = BigInt(quoted || 0);
   if (quoted <= 0n) return 0n;
   if (exact) return quoted;
-  var floor = quoted * 99n / 100n;
-  return floor > 0n ? floor : 1n;
+  return quotedOutputFloor(quoted, 9900);
 }
 
 // JBTerminalStore converts an amount in the payout-limit currency to the terminal token as

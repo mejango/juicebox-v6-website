@@ -14,7 +14,7 @@
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, createPublicClient, decodeEventLog, http } from 'viem';
 import { mainnet } from 'viem/chains';
 import { isSafeConnected } from './wallet.js';
-import { ipfsHttpUrl } from './chain.js';
+import { ipfsHttpUrl, usdcByChain } from './chain.js';
 import { normalize as ensNormalize } from 'viem/ens';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
@@ -81,13 +81,9 @@ var CHAIN_OPTIONS = [
   { id: 84532, name: 'Base Sepolia', testnet: true }, { id: 421614, name: 'Arb Sepolia', testnet: true },
 ];
 
-// USDC per chain (for the "Accepts" accounting-context option). 6 decimals.
-var USDC_BY_CHAIN = {
-  1: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 10: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
-  8453: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', 42161: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
-  84532: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', 11155111: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238',
-  11155420: '0x5fd84259d66cd46123540766be93dfe6d43130d7', 421614: '0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d',
-};
+// USDC per chain (for the "Accepts" accounting-context option, and the immutable sucker token mapping below).
+// 6 decimals. From data/tokens.json via chain.js — see usdcByChain for why there is exactly one table.
+var USDC_BY_CHAIN = usdcByChain();
 
 export var DURATION_PRESETS = [
   { label: '1 day', seconds: 86400 }, { label: '3 days', seconds: 259200 },
@@ -3738,7 +3734,9 @@ async function monitorCreateRelayr(state, session, resumed) {
       state._relayrPending = null;
       state.deployProgress = null;
       error.message += ' No chains confirmed, so you can review and launch a new request.';
-    } else {
+    } else if (error.code !== 'RELAYR_NOT_FOUND') {
+      // A bundle Relayr does not recognize cannot be inspected by "Check Relayr status"; pointing at it there
+      // would contradict the error's own copy. The receipt is kept either way so the bundle ID survives.
       error.message += ' Use “Check Relayr status” to inspect this same paid bundle; do not launch again.';
     }
     throw error;
@@ -3913,6 +3911,10 @@ async function runDeploy(state, owner) {
       ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
       : buildLaunchArgs(state, cid, owner, projectUri, salt, deployStart);
     if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
+    // Fail closed on JBPrices reachability: accounting contexts are immutable, and a missing feed
+    // pair means payments or cash outs revert onchain after launch. Probed live, so a later
+    // default-feed registration unblocks the same configuration with no client change.
+    await verifyLaunchFeedCoverage(state, cid);
     if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
     plan.chainId = cid;
     plan.value = await creationFeeOf(cid); // the deploy charges msg.value == JBProjects.creationFee()
@@ -4161,7 +4163,7 @@ function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
 
   var configuration = {
     description: { name: state.details.name || '', ticker: state.details.ticker || '', uri: projectUri || '', salt: salt },
-    baseCurrency: customAccounting(state) ? customCurrencyId(state) : ((state.accepts || []).indexOf('usdc') !== -1 ? 2 : (state.revBaseCurrency === 2 ? 2 : 1)), // custom id, USD(2) if USDC accepted, else ETH(1)
+    baseCurrency: revnetBaseCurrencyId(state), // custom id, USD(2) if USDC accepted, else ETH(1)
     operator: operator,
     scopeCashOutsToLocalBalances: false,
     stageConfigurations: stages,
@@ -4240,6 +4242,13 @@ function revnetAccept(state, chainId) {
   if (accepts.indexOf('eth') !== -1) ctx.push({ token: NATIVE_TOKEN, decimals: 18, currency: NATIVE_CURRENCY });
   if (accepts.indexOf('usdc') !== -1 && USDC_BY_CHAIN[chainId]) ctx.push({ token: USDC_BY_CHAIN[chainId], decimals: 6, currency: Number(BigInt(USDC_BY_CHAIN[chainId]) % (1n << 32n)) });
   return ctx.length ? ctx : [{ token: NATIVE_TOKEN, decimals: 18, currency: NATIVE_CURRENCY }];
+}
+
+// The revnet-wide base currency: a custom accounting token prices issuance in itself; accepting USDC
+// forces USD(2) so both ETH and USDC resolve via the default USD feeds; otherwise the user's ETH/USD pick.
+function revnetBaseCurrencyId(state) {
+  if (customAccounting(state)) return customCurrencyId(state);
+  return (state.accepts || []).indexOf('usdc') !== -1 ? 2 : (state.revBaseCurrency === 2 ? 2 : 1);
 }
 
 // One REVStageConfig from a revnet stage object.
@@ -4711,6 +4720,143 @@ function buildTerminalConfigs(chainId, state, swapRouter) {
   return configs;
 }
 
+// ---- Price-feed reachability guard ----------------------------------------------------------------
+// JBAccountingContext.currency is always token-keyed (uint32(uint160(token)), native = 61166) while
+// baseCurrency uses standard ids (1=ETH, 2=USD), so the terminal converts between them through
+// JBPrices at runtime: pay converts each context's currency to the ruleset baseCurrency
+// (JBTerminalStore, skipped when equal), and cash-outs/surplus convert every context's balance into
+// the reclaimed context's currency (fires only with 2+ contexts). JBPrices resolves a pair direct,
+// then inverse, then the project-0 defaults — no transitive composition — so launching a currency
+// pair with no registered feed ships a project whose payments or cash outs revert onchain, and the
+// contexts are immutable. Probing the chain (instead of baking in the registered topology) means a
+// later default-feed registration unblocks launches with no client change.
+
+var pricePerUnitProbeAbi = [{
+  type: 'function', name: 'pricePerUnitOf', stateMutability: 'view',
+  inputs: [
+    { name: 'projectId', type: 'uint256' }, { name: 'pricingCurrency', type: 'uint256' },
+    { name: 'unitCurrency', type: 'uint256' }, { name: 'decimals', type: 'uint256' },
+  ],
+  outputs: [{ name: 'price', type: 'uint256' }],
+}];
+
+// The distinct currency pairs a project's terminal math must resolve: every context ↔ every ruleset
+// baseCurrency (skipped when equal — the terminal short-circuits), plus context ↔ context unless
+// `skipCrossContexts`. The queue guard passes it: contexts are immutable, so cross-context
+// reachability is a preexisting property a queued base can't change — and probing it would also block
+// the rescue queue (allowAddPriceFeed) on an already-affected project. Pairs are unordered because
+// JBPrices tries direct then inverse, so one probe covers both directions.
+export function requiredFeedPairs(contexts, baseCurrencies, skipCrossContexts) {
+  var pairs = [], seen = {};
+  function add(a, b) {
+    a = Number(a); b = Number(b);
+    if (!a || !b || a === b) return;
+    var key = a < b ? a + ':' + b : b + ':' + a;
+    if (seen[key]) return;
+    seen[key] = true;
+    pairs.push({ a: a, b: b });
+  }
+  (contexts || []).forEach(function (ctx) {
+    (baseCurrencies || []).forEach(function (base) { add(ctx.currency, base); });
+  });
+  if (!skipCrossContexts) {
+    for (var i = 0; i < (contexts || []).length; i++) {
+      for (var j = i + 1; j < contexts.length; j++) add(contexts[i].currency, contexts[j].currency);
+    }
+  }
+  return pairs;
+}
+
+// Name a currency id for the block message: standard ids and the native sentinel by name, otherwise
+// the matching context's token symbol.
+export function feedCurrencyLabel(currency, contexts) {
+  var c = Number(currency);
+  if (c === NATIVE_CURRENCY || c === 1) return 'ETH';
+  if (c === 2) return 'USD';
+  var ctx = (contexts || []).find(function (x) { return Number(x.currency) === c; });
+  if (ctx && ctx.symbol) return ctx.symbol;
+  return ctx && ctx.token ? truncAddr(ctx.token) : ('currency ' + c);
+}
+
+// A probe rejection is an onchain revert (JBPrices_PriceFeedNotFound, or a registered feed itself
+// reverting — blocked either way) or an outage (HTTP failure, timeout, no RPC). Only a revert means
+// "the feed is missing"; everything else blocks with the retry copy rather than silently passing.
+function feedProbeReverted(err) {
+  for (var e = err, depth = 0; e && depth < 8; e = e.cause, depth++) {
+    if (e.name === 'ContractFunctionRevertedError' || /reverted/i.test(String(e.shortMessage || e.message || ''))) return true;
+  }
+  return false;
+}
+
+// Probe JBPrices (eth_call) for every pair. `opts.projectId` scopes project-level feeds ahead of the
+// project-0 defaults, matching the terminal's runtime lookup; a launch probes 0 — a project that
+// doesn't exist yet can only have the defaults. Fail-closed: a missing feed and a probe outage both
+// reject, with distinct copy. `opts.probe` is injectable for tests.
+export function verifyFeedCoverage(chainId, pairs, labelOf, opts) {
+  opts = opts || {};
+  if (!pairs || !pairs.length) return Promise.resolve();
+  var name = chainName(chainId);
+  var retry = new Error('Couldn’t verify price feed coverage on ' + name + ' right now — nothing was sent. Try again.');
+  var probe = opts.probe;
+  if (!probe) {
+    var prices = getAddress('JBPrices', chainId);
+    if (!prices) return Promise.reject(retry);
+    var pub = createPublicClientForChain(chainId);
+    probe = function (pair) {
+      return pub.readContract({
+        address: prices, abi: pricePerUnitProbeAbi, functionName: 'pricePerUnitOf',
+        args: [BigInt(opts.projectId || 0), BigInt(pair.a), BigInt(pair.b), 18n],
+      });
+    };
+  }
+  return Promise.all(pairs.map(function (pair) {
+    return Promise.resolve().then(function () { return probe(pair); }).then(
+      function () { return null; },
+      function (err) { return { pair: pair, missing: feedProbeReverted(err) }; }
+    );
+  })).then(function (results) {
+    var failures = results.filter(Boolean);
+    if (!failures.length) return;
+    var missing = failures.filter(function (f) { return f.missing; });
+    if (!missing.length) throw retry;
+    var named = missing.map(function (f) { return labelOf(f.pair.a) + ' and ' + labelOf(f.pair.b); }).join(', ');
+    throw new Error('No price feed is registered between ' + named + ' on ' + name +
+      ', so the protocol cannot convert between them — payments or cash outs would revert onchain. ' +
+      'This is blocked until the protocol registers the missing default feed (registration lifts this automatically). Nothing was sent.');
+  });
+}
+
+// The exact accounting contexts the launch will register on one chain, annotated with symbols for the
+// block message.
+function launchProbeContexts(state, chainId) {
+  var contexts = state.projectType === 'revnet'
+    ? revnetAccept(state, chainId)
+    : buildTerminalConfigs(chainId, state, state.swapRouter)[0].accountingContextsToAccept;
+  var usdc = (USDC_BY_CHAIN[chainId] || '').toLowerCase();
+  return contexts.map(function (ctx) {
+    var t = String(ctx.token || '').toLowerCase();
+    var symbol = t === NATIVE_TOKEN.toLowerCase() ? 'ETH' : (t === usdc ? 'USDC' : (customAcctSym(state) || truncAddr(ctx.token)));
+    return { token: ctx.token, currency: ctx.currency, symbol: symbol };
+  });
+}
+
+// Every distinct baseCurrency the launch encodes (custom stages can differ per stage).
+function launchBaseCurrencies(state) {
+  if (state.projectType === 'revnet') return [revnetBaseCurrencyId(state)];
+  var seen = {}, bases = [];
+  resolveStages(state).forEach(function (s) {
+    var cur = Number(s.baseCurrency) || 1;
+    if (!seen[cur]) { seen[cur] = true; bases.push(cur); }
+  });
+  return bases;
+}
+
+function verifyLaunchFeedCoverage(state, chainId, probe) {
+  var contexts = launchProbeContexts(state, chainId);
+  var pairs = requiredFeedPairs(contexts, launchBaseCurrencies(state));
+  return verifyFeedCoverage(chainId, pairs, function (cur) { return feedCurrencyLabel(cur, contexts); }, { probe: probe });
+}
+
 function storeCategoryName(state, category) {
   var id = Number(category) || 0;
   var found = (state.storeCategories || []).find(function (entry) { return Number(entry.id) === id; });
@@ -4910,6 +5056,7 @@ export const __test = {
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
+  verifyLaunchFeedCoverage, launchBaseCurrencies, revnetBaseCurrencyId,
   lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft, renderRevnetStages,
   // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.

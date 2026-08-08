@@ -10,6 +10,7 @@ import {
   getBeneficiaryAddress, createPublicClientForChain, truncAddr, tokenByAddress,
 } from './component-base.js';
 import { cashOutPreviewRulesetId, projectBuybackHook, resolveCashOutPreviewRoute } from './discover.js';
+import { quotedOutputFloor } from './slippage.js';
 
 export var cashOutAbi = [{
   type: 'function', name: 'cashOutTokensOf', stateMutability: 'nonpayable',
@@ -28,12 +29,7 @@ export var cashOutAbi = [{
 // 99% floor on a NET terminal reclaim (after the protocol fee). Passing previewCashOutFrom's gross amount
 // here is unsafe: the terminal compares its minimum after charging the fee, so a gross floor can only revert.
 export function cashOutMinReclaimed(reclaimAmount) {
-  try {
-    var quoted = BigInt(reclaimAmount || 0);
-    if (quoted <= 0n) return 0n;
-    var floor = quoted * 99n / 100n;
-    return floor > 0n ? floor : 1n;
-  } catch (_) { return 0n; }
+  return quotedOutputFloor(reclaimAmount, 9900);
 }
 // Pure builder for JBMultiTerminal.cashOutTokensOf. `o`: { chainId, terminalAddr, holder, projectId,
 // cashOutCount (bigint), tokenToReclaim, beneficiary, minReclaimed (bigint) }.

@@ -12,34 +12,78 @@
     "JBProjects",
     "JBFundAccessLimits",
     "JBERC20",
-    "JBFeelessAddresses"
+    "JBFeelessAddresses",
+    "JBHeldFees"
+  ],
+  "Price Feeds": [
+    "JBChainlinkV3PriceFeed__ETH_USD",
+    "JBChainlinkV3PriceFeed__USDC_USD",
+    "JBChainlinkV3SequencerPriceFeed__ETH_USD",
+    "JBChainlinkV3SequencerPriceFeed__USDC_USD",
+    "JBMatchingPriceFeed"
+  ],
+  "Ruleset Approval Hooks": [
+    "JBDeadline3Hours",
+    "JBDeadline1Day",
+    "JBDeadline3Days",
+    "JBDeadline7Days"
   ],
   "NFT Hooks": [
     "JB721TiersHook",
     "JB721TiersHookStore",
     "JB721TiersHookDeployer",
     "JB721TiersHookProjectDeployer",
-    "Banny721TokenUriResolver"
+    "JB721TiersHookLib",
+    "JB721Checkpoints",
+    "JB721CheckpointsDeployer",
+    "Banny721TokenUriResolver",
+    "JB721TiersHook__ProjectBAN",
+    "JB721TiersHook__ProjectCPN"
   ],
   "Buyback Hook": [
-    "JBBuybackHookRegistry"
+    "JBBuybackHookRegistry",
+    "JBBuybackHook"
   ],
   "Uniswap V4 LP": [
     "JBUniswapV4LPSplitHook",
     "JBUniswapV4LPSplitHookDeployer",
+    "JBUniswapV4LPSplitHookMath",
+    "JBP6FeeLPSplitHook",
     "JBUniswapV4Hook"
   ],
   "Revnets": [
     "REVDeployer",
-    "REVLoans"
+    "REVLoans",
+    "REVOwner"
   ],
   "Cross-Chain": [
     "JBSuckerRegistry",
+    "JBOmnichainDeployer",
     "JBOptimismSucker",
-    "JBArbitrumSucker",
-    "JBCCIPSucker",
+    "JBOptimismSuckerDeployer",
     "JBBaseSucker",
-    "JBOmnichainDeployer"
+    "JBBaseSuckerDeployer",
+    "JBArbitrumSucker",
+    "JBArbitrumSuckerDeployer",
+    "JBCCIPSucker__ETH",
+    "JBCCIPSucker__OP",
+    "JBCCIPSucker__BASE",
+    "JBCCIPSucker__ARB",
+    "JBCCIPSucker__ETH_SEP",
+    "JBCCIPSucker__OP_SEP",
+    "JBCCIPSucker__BASE_SEP",
+    "JBCCIPSucker__ARB_SEP",
+    "JBCCIPSuckerDeployer__ETH",
+    "JBCCIPSuckerDeployer__OP",
+    "JBCCIPSuckerDeployer__BASE",
+    "JBCCIPSuckerDeployer__ARB",
+    "JBCCIPSuckerDeployer__ETH_SEP",
+    "JBCCIPSuckerDeployer__OP_SEP",
+    "JBCCIPSuckerDeployer__BASE_SEP",
+    "JBCCIPSuckerDeployer__ARB_SEP",
+    "JBSuckerLib",
+    "JBCCIPLib",
+    "CCIPHelper"
   ],
   "Content Publishing": [
     "CTDeployer",
@@ -49,20 +93,28 @@
   "Defifa": [
     "DefifaDeployer",
     "DefifaHook",
-    "DefifaGovernor"
+    "DefifaGovernor",
+    "DefifaHookLib",
+    "DefifaTokenUriResolver"
   ],
-  "Distributors": [
-    "JBTokenDistributor",
-    "JB721Distributor"
+  "Project Tokens": [
+    "JBERC20__ProjectNANA",
+    "JBERC20__ProjectREV",
+    "JBERC20__ProjectBAN",
+    "JBERC20__ProjectCPN",
+    "JBERC20__ProjectART",
+    "JBERC20__ProjectDEFIFA",
+    "JBERC20__ProjectMARKEE"
   ],
   "Utilities": [
     "JBProjectPayer",
     "JBProjectPayerDeployer",
+    "JBProjectPayer__ProjectCreationFeeReceiver",
     "JBRouterTerminal",
     "JBRouterTerminalRegistry",
-    "JBPayRouteResolver",
     "JBProjectHandles",
     "JBAddressRegistry",
-    "FeeProjectConfigBuilder"
+    "ERC2771Forwarder",
+    "JBPayoutSplitGroupLib"
   ]
 }

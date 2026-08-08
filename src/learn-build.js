@@ -178,7 +178,7 @@ export function renderLearnTab() {
   ]));
 
   wrap.appendChild(guideSection('learn-fees', '8. FEES', [
-    'The protocol charges a 2.5% fee on payouts and surplus withdrawals. Cash outs with a tax rate above 0% also incur fees.',
+    'The protocol charges a 2.5% fee on payouts and surplus withdrawals. Cash outs also pay it: with a tax rate above 0% the fee applies to the whole reclaimed amount, and with a 0% tax rate it still applies to min(reclaimed, feeFreeSurplusOf) — the portion of surplus that arrived fee-free from a payout or allowance withdrawal, which stops a round trip from escaping the fee. That portion is often zero, but never assume it is.',
     'If the holdFees ruleset flag is enabled, fees are held for 28 days before being processed. During this window, if a project adds funds back, the held fees are returned. After 28 days, the held fees can be forwarded to the Juicebox protocol’s own project — processed via processHeldFeesOf(), or by a later ruleset/operation (it isn’t automatic at the 28-day mark). If holdFees is off, fees are processed immediately.',
     'Some addresses can be designated as fee-exempt — they pay zero fees on all transactions.'
   ], [
@@ -287,16 +287,16 @@ export function renderLearnTab() {
   wrap.appendChild(guideSection('learn-permissions', '13. PERMISSIONS', [
     'The project owner doesn’t have to do everything themselves. They can grant specific abilities to other addresses — like "you can trigger payouts" or "you can queue new rulesets" — without giving away full control.',
     'Each ability has a number (a "permission ID"). Granting permission #5 (SEND_PAYOUTS) to an address lets it distribute funds, but nothing else. There’s also a special "ROOT" permission (#1) that grants everything — use with care.',
-    'Permissions are per-project. Granting someone access to project #5 doesn’t give them any access to project #6. You can also grant wildcard permissions that apply across all projects an address interacts with.'
+    'Permissions are per-project. Granting someone access to project #5 doesn’t give them any access to project #6. Granting with project ID 0 is the wildcard: it applies to every project the GRANTING account controls on that chain — not to every project the operator touches.'
   ], [
     propertyTable('COMMON PERMISSIONS', [
       ['ROOT', 'Full control over all operations. Like giving someone the project NFT, but revocable.'],
       ['QUEUE_RULESETS', 'Can schedule new rulesets for the project.'],
       ['MINT_TOKENS', 'Can mint tokens on-demand (if the ruleset allows it).'],
-      ['SET_SPLITS', 'Can change how payouts and reserved tokens are distributed.'],
+      ['SET_SPLIT_GROUPS', 'Can change how payouts and reserved tokens are distributed.'],
       ['SET_PROJECT_URI', 'Can update the project’s name, description, and logo.'],
       ['SEND_PAYOUTS', 'Can trigger payout distributions.'],
-      ['MANAGE_TERMINALS', 'Can add or remove payment terminals.'],
+      ['SET_TERMINALS', 'Can replace the project’s terminal list (ADD_TERMINALS only appends).'],
     ]),
     infoBox('Permissions are separate from ownership. Transferring the project NFT transfers control, but granted permissions remain until explicitly revoked.')
   ]));
@@ -630,7 +630,7 @@ export function renderBuildTab() {
       '  taxRate = 0%    → full proportional redemption',
       '  taxRate = 100%  → value stays in project (early holders protected)',
     ]),
-    infoBox('Cash outs with tax rate > 0% incur the 2.5% protocol fee.')
+    infoBox('Cash outs with tax rate > 0% pay the 2.5% protocol fee on the whole reclaimed amount. At tax rate 0% the fee still applies, on min(reclaimed, feeFreeSurplusOf) — often zero, but not always.')
   ]));
 
   wrap.appendChild(guideSection('build-evolve', '7. EVOLVE', [
@@ -735,7 +735,7 @@ export function renderBuildTab() {
       '  account,         // the address granting permission\n' +
       '  permissionsData  // { operator, projectId, permissionIds[] }\n' +
       ')\n' +
-      '// projectId = 0 grants permission across all projects'
+      '// projectId = 0 is the wildcard: every project `account` controls on this chain'
     ),
     fnRefTable('CHECKING PERMISSIONS', [
       ['JBPermissions.hasPermission(operator, account, projectId, permissionId, includeRoot, includeWildcard)', 'Check a single permission'],
@@ -766,6 +766,22 @@ export function renderBuildTab() {
       ['21 - ADD_ACCOUNTING_CONTEXTS', 'Add accounting contexts (accepted tokens) to a terminal.'],
       ['22 - SET_TOKEN_METADATA', 'Set the project token’s name and symbol.'],
       ['23 - SIGN_FOR_ERC20', 'Sign ERC-20 permit approvals on the project’s behalf.'],
+      ['24 - ADJUST_721_TIERS', 'Add or remove tiers on a 721 hook.'],
+      ['25 - SET_721_METADATA', 'Update a 721 hook’s metadata (base URI, resolver, contract URI).'],
+      ['26 - MINT_721', 'Mint NFTs directly, without a payment.'],
+      ['27 - SET_721_DISCOUNT_PERCENT', 'Set the 721 hook’s discount percent.'],
+      ['28 - SET_BUYBACK_TWAP', 'Set the buyback hook’s TWAP window.'],
+      ['29 - SET_BUYBACK_POOL', 'Set the buyback hook’s Uniswap pool.'],
+      ['30 - SET_BUYBACK_HOOK', 'Set which buyback hook the registry routes the project to.'],
+      ['31 - SET_ROUTER_TERMINAL', 'Configure the project’s router terminal.'],
+      ['32 - MAP_SUCKER_TOKEN', 'Map a token across a sucker pair.'],
+      ['33 - DEPLOY_SUCKERS', 'Deploy cross-chain suckers for the project.'],
+      ['34 - SET_SUCKER_PEER', 'Set a sucker’s cross-chain peer.'],
+      ['35 - SUCKER_SAFETY', 'Emergency token recovery on a sucker.'],
+      ['36 - SET_SUCKER_DEPRECATION', 'Deprecate a sucker.'],
+      ['37 - OPEN_LOAN', 'Open a REVLoans loan against project tokens.'],
+      ['38 - REALLOCATE_LOAN', 'Move collateral between loans. Also borrows the full current capacity.'],
+      ['39 - REPAY_LOAN', 'Repay a loan on a holder’s behalf.'],
     ]),
     infoBox('Permissions are per-operator, per-project. Granting QUEUE_RULESETS to address X for project 5 doesn’t give X any access to project 6.')
   ]));

@@ -102,6 +102,39 @@ describe('Relayr execution state', () => {
     await expect(polling.catch((error) => relayrErrorIsUncertain(error))).resolves.toBe(true);
   });
 
+  it('reports a bundle Relayr never had as a terminal not-found, not a retryable timeout', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // The whole point: this must NOT burn the full window and then tell the user to keep waiting.
+    const polling = relayrPoll('bundle-unknown', null, 10, 5 * 60 * 1000);
+    const rejected = expect(polling).rejects.toMatchObject({
+      name: 'RelayrExecutionError',
+      code: 'RELAYR_NOT_FOUND',
+      bundleUuid: 'bundle-unknown',
+      retryable: false,
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    await rejected;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await expect(polling.catch((error) => relayrErrorIsUncertain(error))).resolves.toBe(false);
+  });
+
+  it('tolerates a brief 404 blip and keeps polling the same bundle', async () => {
+    vi.useFakeTimers();
+    const records = [{ status: { state: 'Success' } }];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 404 })
+      .mockResolvedValueOnce({ ok: false, status: 404 })
+      .mockResolvedValueOnce(relayrResponse(records));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const polling = relayrPoll('bundle-blip', null, 10, 100);
+    await vi.advanceTimersByTimeAsync(30);
+    await expect(polling).resolves.toEqual(records);
+  });
+
   it('automatically retries transient Relayr status errors against the same bundle', async () => {
     vi.useFakeTimers();
     const records = [{ status: { state: 'Success' } }];

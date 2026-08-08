@@ -20,6 +20,8 @@ var RELAYR_API = 'https://api.relayr.ba5ed.com';
 var RELAYR_PENDING_PREFIX = 'jb-relayr-pending-v1:';
 var RELAYR_QUOTE_TIMEOUT_MS = 45 * 1000;
 var RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15 * 1000;
+// Consecutive 404s that prove the uuid was never Relayr's rather than a single blip from the gateway.
+var RELAYR_NOT_FOUND_ATTEMPTS = 3;
 
 // A backend fetch can stall without ever rejecting, which used to leave the UI frozen forever. Bound each
 // HTTP attempt; status polling will retry the same bundle, while quote requests fail before any payment.
@@ -353,6 +355,9 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs) {
   var start = Date.now();
   var lastRecords = [];
   return new Promise(function (resolve, reject) {
+    // Sentinel body meaning "Relayr keeps saying it has never heard of this uuid" — distinct from any real payload.
+    var NOT_FOUND = {};
+    var notFoundStreak = 0;
     function timedOut() { return Date.now() - start >= timeoutMs; }
     function timeout() {
       return relayrExecutionError('Relayr is still processing paid bundle ' + uuid + '. Do not submit this action again; check the original bundle later.', 'RELAYR_TIMEOUT', uuid, lastRecords, true);
@@ -360,9 +365,22 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs) {
     function tick() {
       var remaining = Math.max(1, timeoutMs - (Date.now() - start));
       relayrFetch(RELAYR_API + '/v1/bundle/' + uuid, null, Math.min(RELAYR_STATUS_REQUEST_TIMEOUT_MS, remaining)).then(function (r) {
+        // A 404 is not a transient status error: Relayr has no such bundle. Retrying it to the full window and
+        // then reporting RELAYR_TIMEOUT tells the user to keep waiting on something that will never land. Tolerate
+        // a short blip from the gateway; only an unbroken run of 404s is terminal, and it is NOT retryable.
+        if (r.status === 404) {
+          notFoundStreak++;
+          if (notFoundStreak >= RELAYR_NOT_FOUND_ATTEMPTS) return NOT_FOUND;
+          throw new Error('Relayr status HTTP 404');
+        }
+        notFoundStreak = 0;
         if (!r.ok) throw new Error('Relayr status HTTP ' + r.status);
         return r.json();
       }).then(function (body) {
+        if (body === NOT_FOUND) return reject(relayrExecutionError(
+          'Relayr does not recognize bundle ' + uuid + '. Nothing is pending under it and nothing more will land. If you already paid, keep the payment hash and bundle ID for support before starting over.',
+          'RELAYR_NOT_FOUND', uuid, lastRecords, false
+        ));
         var txs = (body && body.transactions) || [];
         lastRecords = txs;
         if (onUpdate) onUpdate(txs, body);

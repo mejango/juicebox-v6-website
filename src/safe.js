@@ -12,7 +12,7 @@
 
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData } from 'viem';
 import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR } from './component-base.js';
-import { CHAINS } from './chain.js';
+import { CHAINS, chainList, isTestnetChain } from './chain.js';
 
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
 function cs(a) { try { return checksumAddress(a); } catch (_) { return a; } }
@@ -300,27 +300,29 @@ export function safeExecSignatures(tx) {
 
 // A base-fee-buffered EIP-1559 fee cap. Some wallets under-estimate maxFeePerGas on L2s (e.g. set 0.02 gwei when
 // the base fee just ticked to 0.0200056 gwei) and the RPC then rejects with "max fee per gas less than block base
-// fee". Cap at 2× base + a small tip so a tick-up between estimate and submit can't reject the tx. Returns {} for
-// non-EIP-1559 chains (let the wallet decide) or if the read fails.
+// fee". Cap at 3× base + a small tip so a tick-up between estimate and submit can't reject the tx. Returns {} for
+// non-EIP-1559 chains (let the wallet decide) or if the read fails — a hard-coded cap in either of those cases
+// would be BELOW the base fee on any chain trading above it, turning an unknown into a guaranteed reject.
 async function feeOverrides(chainId) {
   try {
     var pub = createPublicClientForChain(chainId);
     var block = await pub.getBlock();
-    var base = (block && block.baseFeePerGas != null) ? BigInt(block.baseFeePerGas) : 0n;
+    if (!block || block.baseFeePerGas == null) return {};
+    var base = BigInt(block.baseFeePerGas);
     // A too-low priority tip (we shipped 0.002 gwei) reads as "underpriced": some wallet submission RPCs reject it
     // with an opaque -32603 "internal error" / "HTTP client error" rather than a clear message. Base/Arb Sepolia
     // base fees are ~0.005–0.02 gwei, so 0.05 gwei is a healthy, still-negligible tip.
     var tip = 50000000n; // 0.05 gwei priority
-    // maxFeePerGas is a CAP (you only pay base + tip), and testnet gas is free — so over-cap generously. Our RPC's
-    // base-fee reading can lag or differ from the wallet's SUBMISSION RPC, so floor at 1 gwei (~200× the ~0.005 gwei
-    // Base Sepolia base fee): clears any transient spike or cross-RPC disagreement at zero real cost. NOTE: this only
-    // covers fee-caused rejects — a genuinely broken/flaky wallet RPC still fails; the fix there is switching the
-    // wallet's Base Sepolia RPC (e.g. to https://sepolia.base.org).
+    // maxFeePerGas is a CAP (you only pay base + tip), so raising it never costs more — it only widens the window a
+    // base-fee spike has to clear. Our RPC's base-fee reading can lag or differ from the wallet's SUBMISSION RPC, so
+    // floor at 1 gwei (~200× the ~0.005 gwei Base Sepolia base fee): clears any transient spike or cross-RPC
+    // disagreement at zero real cost. NOTE: this only covers fee-caused rejects — a genuinely broken/flaky wallet RPC
+    // still fails; the fix there is switching the wallet's Base Sepolia RPC (e.g. to https://sepolia.base.org).
     var maxFee = base * 3n + tip;
     var floor = 1000000000n; // 1 gwei
     if (maxFee < floor) maxFee = floor;
     return { maxFeePerGas: maxFee, maxPriorityFeePerGas: tip };
-  } catch (_) { return { maxFeePerGas: 1000000000n, maxPriorityFeePerGas: 50000000n }; }
+  } catch (_) { return {}; }
 }
 
 // Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an onchain revert surfaces as
@@ -405,10 +407,30 @@ export async function safesForOwner(owner, chainId) {
 // any chain where that same factory+singleton exist (the canonical Safe deploys are on essentially every chain).
 var PROXY_FACTORY_ABI = [{ type: 'function', name: 'createProxyWithNonce', stateMutability: 'nonpayable', inputs: [{ name: '_singleton', type: 'address' }, { name: 'initializer', type: 'bytes' }, { name: 'saltNonce', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 
+// Every chain this client can reach a hosted Safe Transaction Service on, TESTNETS FIRST. Derived from the
+// service map (plus the localStorage override and the manifest's chains) rather than a hand-written list: the
+// literal it replaced omitted Base Sepolia entirely, so a Safe that only exists on testnets could never have its
+// creation record read. `hasSafeService` filters the rest, so a chain whose service 404s is never probed.
+export function safeServiceChainIds() {
+  var ids = {};
+  function add(id) { var n = Number(id); if (Number.isFinite(n)) ids[n] = true; }
+  Object.keys(SAFE_PREFIX).forEach(add);
+  Object.keys(SAFE_TX_BASE).forEach(add);
+  try {
+    var override = JSON.parse(localStorage.getItem('jb-safe-tx-base') || 'null');
+    if (override) Object.keys(override).forEach(add);
+  } catch (_) {}
+  chainList().forEach(function (c) { add(c.id); });
+  // Same-address redeploys are overwhelmingly a testnet flow, and the creation record is chain-independent —
+  // the first hit wins, so probing testnets first saves the mainnet round-trips.
+  return Object.keys(ids).map(Number).filter(hasSafeService)
+    .sort(function (a, b) { return (isTestnetChain(a) ? 0 : 1) - (isTestnetChain(b) ? 0 : 1); });
+}
+
 // Read the Safe's original creation params from the tx-service of ANY chain where it already exists (params are
 // chain-independent). Public endpoint (no key required); the address MUST be checksummed or it 422s.
 export async function fetchSafeCreation(safe) {
-  var candidates = [11155111, 1, 42161, 8453, 10]; // chains with a hosted tx-service
+  var candidates = safeServiceChainIds();
   for (var i = 0; i < candidates.length; i++) {
     var base = txBase(candidates[i]); if (!base) continue;
     try {

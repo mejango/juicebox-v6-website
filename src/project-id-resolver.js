@@ -1,14 +1,10 @@
 import { bendystrawQueryForNetwork } from './bendystraw-client.js';
+import { chainNameFor, isTestnetChain } from './chain.js';
 
 const PROJECT_IDENTITY_QUERY = 'query($projectId: Float!, $chainId: Float!, $version: Float!) { '
   + 'project(projectId: $projectId, chainId: $chainId, version: $version) { '
   + 'name handle metadata suckerGroupId } }';
 
-const TESTNET_CHAIN_IDS = new Set([11155111, 11155420, 421614, 84532]);
-const CHAIN_NAMES = {
-  1: 'Ethereum', 10: 'Optimism', 42161: 'Arbitrum', 8453: 'Base',
-  11155111: 'Sepolia', 11155420: 'OP Sepolia', 421614: 'Arbitrum Sepolia', 84532: 'Base Sepolia',
-};
 const positiveCache = new Map();
 
 function metadataName(metadata) {
@@ -21,7 +17,7 @@ function metadataName(metadata) {
   } catch (_) { return null; }
 }
 
-function chainName(chainId) { return CHAIN_NAMES[chainId] || ('chain ' + chainId); }
+function chainName(chainId) { return chainNameFor(chainId); }
 
 export async function lookupProjectIdentity(projectId, chainId) {
   var id = Number(projectId);
@@ -31,7 +27,7 @@ export async function lookupProjectIdentity(projectId, chainId) {
   var result = { chainId: cid, found: false, name: null, suckerGroupId: null, unavailable: false };
   try {
     var data = await bendystrawQueryForNetwork(
-      TESTNET_CHAIN_IDS.has(cid) ? 'testnet' : 'mainnet',
+      isTestnetChain(cid) ? 'testnet' : 'mainnet',
       PROJECT_IDENTITY_QUERY,
       { projectId: id, chainId: cid, version: 6 },
     );

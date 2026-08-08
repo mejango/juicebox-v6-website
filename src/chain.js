@@ -49,6 +49,36 @@ export function getManifestChains() {
   return manifest.chains;
 }
 
+// Display order for the chains we ship UI for. This is an ORDER hint, not a membership list: chains present in
+// the manifest but missing here are appended rather than dropped, so a newly deployed chain can never fall out
+// of a picker or get classified as mainnet just because a hand-maintained copy wasn't updated.
+const CHAIN_DISPLAY_ORDER = [1, 10, 42161, 8453, 11155111, 11155420, 84532, 421614];
+
+/** Every chain in the deployment manifest as `{ id, name, testnet }`, in display order. */
+export function chainList() {
+  const chains = manifest.chains || {};
+  const rank = id => {
+    const index = CHAIN_DISPLAY_ORDER.indexOf(id);
+    return index === -1 ? CHAIN_DISPLAY_ORDER.length : index;
+  };
+  return Object.keys(chains)
+    .map(Number)
+    .sort((a, b) => (rank(a) - rank(b)) || (a - b))
+    .map(id => ({ id, name: chains[id].name, testnet: !!chains[id].testnet }));
+}
+
+/** The manifest's display name for a chain, or a plain `chain <id>` for anything it doesn't carry. */
+export function chainNameFor(chainId) {
+  const row = (manifest.chains || {})[String(chainId)];
+  return (row && row.name) || ('chain ' + chainId);
+}
+
+/** Manifest-declared testnet flag. Keyed off the deployment data so a new testnet is never treated as mainnet. */
+export function isTestnetChain(chainId) {
+  const row = (manifest.chains || {})[String(chainId)];
+  return !!(row && row.testnet);
+}
+
 const NATIVE_NAMES = {};
 
 export function getChainTokens(chainId) {
@@ -62,6 +92,22 @@ export function getChainTokens(chainId) {
     return t.address.toLowerCase() !== native.address.toLowerCase();
   });
   return [native, ...extras];
+}
+
+// Canonical (Circle-issued) USDC per chain, lowercased to avoid viem checksum validation, derived from the one
+// shipped token table. Consumption is split between display/pay paths and the create flow's IMMUTABLE sucker token
+// mapping, so a chain present in one copy and absent from the other would either mislabel USDC or silently drop
+// its bridge mapping — hence one source.
+let _usdcByChain = null;
+export function usdcByChain() {
+  if (!_usdcByChain) {
+    _usdcByChain = {};
+    for (const chainId in tokens) {
+      const row = (tokens[chainId] || []).find(token => token.symbol === 'USDC');
+      if (row) _usdcByChain[Number(chainId)] = row.address.toLowerCase();
+    }
+  }
+  return _usdcByChain;
 }
 
 // Reverse map: lowercased address → contractName, across every chain in the manifest.

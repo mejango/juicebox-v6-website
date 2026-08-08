@@ -33,10 +33,16 @@ describe('parseRulesetWeight — inherit sentinel vs fixed-point', () => {
     expect(parseRulesetWeight('0')).toBe(0n);
   });
 
-  it('still clamps and rejects garbage safely', () => {
+  it('clamps huge values and degrades negatives to 0n', () => {
     expect(parseRulesetWeight('999999999999999999999999999999999999')).toBe(UINT112_MAX);
     expect(parseRulesetWeight('-1')).toBe(0n);
-    expect(parseRulesetWeight('abc')).toBe(0n);
+  });
+
+  it('non-blank unparseable input throws (fail closed) instead of silently encoding zero issuance', () => {
+    expect(() => parseRulesetWeight('abc')).toThrow(/Invalid issuance weight/);
+    expect(() => parseRulesetWeight('1,000')).toThrow(/Invalid issuance weight/);
+    expect(() => parseRulesetWeight('10e3')).toThrow(/Invalid issuance weight/);
+    expect(() => parseRulesetWeight('1,000', 'launch')).toThrow(/Invalid issuance weight/);
   });
 });
 

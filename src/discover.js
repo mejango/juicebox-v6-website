@@ -4,8 +4,9 @@
 
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
-import { CHAINS, getChainTokens, IPFS_PATH_GATEWAYS } from './chain.js';
+import { CHAINS, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { downsampleTimeSeries } from './time-series.js';
+import { quotedOutputFloor } from './slippage.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -14,7 +15,7 @@ import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgre
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-flow.js';
+import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -314,20 +315,9 @@ function sameAddr(a, b) {
   return !!(a && b && String(a).toLowerCase() === String(b).toLowerCase());
 }
 
-// Canonical Circle testnet USDC (6 decimals), lowercased to avoid viem checksum validation. Offered as
-// a pay currency on revnets (which have the router); previewPayFor reads "unavailable" where no pool.
-var USDC_BY_CHAIN = {
-  // Mainnets — native (Circle-issued) USDC.
-  1: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-  10: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
-  8453: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-  42161: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
-  // Testnets.
-  84532: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
-  11155111: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238',
-  11155420: '0x5fd84259d66cd46123540766be93dfe6d43130d7',
-  421614: '0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d',
-};
+// Canonical USDC (6 decimals) per chain, from data/tokens.json via chain.js. Offered as a pay currency on
+// revnets (which have the router); previewPayFor reads "unavailable" where no pool.
+var USDC_BY_CHAIN = usdcByChain();
 
 // Minimal JBMultiTerminal.pay fragment for the inline pay card (preview reads go through pay-preview.js).
 var payAbi = [{
@@ -3519,11 +3509,7 @@ export function borrowCurrencyForAccountContext(acct) {
   return tokenCurrencyIdForAccounting(acct.address);
 }
 export function borrowMinAmountFromPreview(borrowableAmount) {
-  var amount;
-  try { amount = BigInt(borrowableAmount || 0); } catch (_) { return 0n; }
-  if (amount <= 0n) return 0n;
-  var floor = amount * 99n / 100n;
-  return floor > 0n ? floor : 1n;
+  return quotedOutputFloor(borrowableAmount, 9900);
 }
 // Pure builder for REVLoans.repayLoan (payable). `o`: { chainId, loansAddr, loanId, maxRepay (bigint),
 // collateralToReturn (bigint), beneficiary, value (bigint), allowance? (permit2 tuple) }.
@@ -4176,7 +4162,10 @@ function inspectProjectContractsOnChain(project, chain) {
       return baseHookAuditP.then(function () { return { chainId: chainId, chain: chainName, unknown: unknown }; });
     });
   }).catch(function () {
-    return { chainId: chainId, chain: chainName, unknown: [] };
+    // This is a SECURITY surface: an empty `unknown` renders as "every contract this project points at is
+    // recognized". An RPC or registry failure must not be able to produce that attestation, so keep whatever was
+    // resolved and mark the chain unverified — the caller says so out loud.
+    return { chainId: chainId, chain: chainName, unknown: unknown, failed: true };
   });
 }
 
@@ -4185,18 +4174,38 @@ function inspectProjectContracts(project) {
     return inspectProjectContractsOnChain(project, chain);
   })).then(function (rows) {
     var unknown = [];
-    rows.forEach(function (r) { unknown = unknown.concat(r.unknown || []); });
-    return { chains: rows, unknown: unknown };
+    var failed = [];
+    rows.forEach(function (r) {
+      unknown = unknown.concat(r.unknown || []);
+      if (r && r.failed) failed.push(r.chain || chainNameOf(r.chainId));
+    });
+    return { chains: rows, unknown: unknown, failed: failed };
   });
 }
 
 function renderProjectContractWarnings(project) {
   var host = el('div', 'project-contract-audit');
   host.style.display = 'none';
+  // An unfinished audit is not a clean audit. Removing the card on failure would make "we could not read this
+  // chain" look identical to "every contract checked out", which is the strongest possible claim this surface
+  // can make — so an incomplete run says so instead.
+  function showUnverified(chains) {
+    if (!host.isConnected) return;
+    host.style.display = '';
+    host.innerHTML = '';
+    var card = el('div', 'project-contract-warning');
+    var title = el('div', 'project-contract-warning-title'); title.textContent = 'Could not verify this project’s contracts'; card.appendChild(title);
+    var copy = el('div', 'project-contract-warning-copy');
+    copy.textContent = 'The contract check did not finish' + (chains && chains.length ? ' on ' + chains.join(', ') : '')
+      + '. That is not evidence the contracts are canonical — reload, or review them yourself, before transacting.';
+    card.appendChild(copy);
+    host.appendChild(card);
+  }
   inspectProjectContracts(project).then(function (audit) {
     if (!host.isConnected) return;
     var unknown = (audit && audit.unknown) || [];
-    if (!unknown.length) { host.remove(); return; }
+    var failed = (audit && audit.failed) || [];
+    if (!unknown.length) { if (failed.length) showUnverified(failed); else host.remove(); return; }
     host.style.display = '';
     host.innerHTML = '';
     var card = el('div', 'project-contract-warning');
@@ -4220,8 +4229,13 @@ function renderProjectContractWarnings(project) {
       list.appendChild(row);
     });
     card.appendChild(list);
+    if (failed.length) {
+      var partial = el('div', 'project-contract-warning-copy');
+      partial.textContent = 'The check also did not finish on ' + failed.join(', ') + ', so contracts there are unverified.';
+      card.appendChild(partial);
+    }
     host.appendChild(card);
-  }).catch(function () { if (host.isConnected) host.remove(); });
+  }).catch(function () { showUnverified([]); });
   return host;
 }
 
@@ -5787,10 +5801,22 @@ function formatUsd(n) {
 // intentionally not cached: a brief RPC/oracle outage must not pin a project to its raw-token fallback.
 var ETH_USD_CACHE = {};
 var ETH_USD_FEED_ABI = [{ type: 'function', name: 'currentUnitPrice', stateMutability: 'view', inputs: [{ type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
+// L2 mainnets (Optimism, Base, Arbitrum) deploy the ETH/USD feed under the sequencer-uptime-guarded name instead.
+// Both contracts expose the same currentUnitPrice(uint256) — reading only the plain name left exactly those three
+// chains without a fallback, i.e. the chains that DO have a protocol feed were the ones that lost it.
+var ETH_USD_FEED_NAMES = ['JBChainlinkV3PriceFeed__ETH_USD', 'JBChainlinkV3SequencerPriceFeed__ETH_USD'];
+function ethUsdFeedAddress(chainId) {
+  for (var i = 0; i < ETH_USD_FEED_NAMES.length; i++) {
+    var address = getAddress(ETH_USD_FEED_NAMES[i], chainId);
+    if (address) return address;
+  }
+  return null;
+}
 function fetchEthUsd(chainId) {
   if (ETH_USD_CACHE[chainId] != null) return Promise.resolve(ETH_USD_CACHE[chainId]);
-  if (!getAddress('JBChainlinkV3PriceFeed__ETH_USD', chainId)) return Promise.resolve(null);
-  return read(chainId, 'JBChainlinkV3PriceFeed__ETH_USD', ETH_USD_FEED_ABI, 'currentUnitPrice', [18n])
+  var feed = ethUsdFeedAddress(chainId);
+  if (!feed) return Promise.resolve(null);
+  return clientFor(chainId).readContract({ address: feed, abi: ETH_USD_FEED_ABI, functionName: 'currentUnitPrice', args: [18n] })
     .then(function (p) {
       var v = Number(p) / 1e18;
       if (isFinite(v) && v > 0) ETH_USD_CACHE[chainId] = v;
@@ -6222,13 +6248,18 @@ async function bendystrawRevnetOperatorOf(projectId, chainId) {
   return addressOrNull(pick && pick.operator);
 }
 
-async function revnetOperatorOf(projectId, chainId) {
+function revnetOperatorOf(projectId, chainId) {
   var key = chainId + ':' + projectId;
   if (_operatorCache[key]) return _operatorCache[key];
-  // Bendystraw only — no deploy-script fallback. If the indexer fails or has nothing, return null
-  // (the UI then hides the operator rather than showing fabricated data).
-  _operatorCache[key] = bendystrawRevnetOperatorOf(projectId, chainId).catch(function () { return null; });
-  return _operatorCache[key];
+  // Bendystraw only — no deploy-script fallback. A FAILED read is not "this revnet has no operator": collapsing
+  // the two to null renders an unread indexer exactly like a genuinely operator-less project, and every
+  // authority-gated surface then behaves as if no operator exists. The rejection propagates so callers can say
+  // which it is. Failures are not cached either, so a transient indexer blip doesn't pin "unavailable" for the
+  // whole session.
+  var p = bendystrawRevnetOperatorOf(projectId, chainId);
+  _operatorCache[key] = p;
+  p.catch(function () { if (_operatorCache[key] === p) delete _operatorCache[key]; });
+  return p;
 }
 
 function projectAuthorityLabel(project) {
@@ -6239,21 +6270,61 @@ function projectAuthorityAddress(project) {
   return project && project.isRevnet ? project.operator : project.owner;
 }
 
+// True when the authority address is missing because the read FAILED, not because there is none.
+export function projectAuthorityUnavailable(project) {
+  return !!(project && project.isRevnet && project.operatorUnavailable && !project.operator);
+}
+
+// Wrap an authority address node so an unread operator reads as unread. Matches the unknown-contracts card and
+// the FUNDS ACCESS block: an unfinished read says so rather than rendering the same "—" as a verified absence.
+function authorityValueNode(project, node) {
+  if (!projectAuthorityUnavailable(project)) return node;
+  var span = el('span', 'detail-address authority-unavailable');
+  span.textContent = 'Could not load ' + (projectAuthorityLabel(project) || 'operator').toLowerCase();
+  return span;
+}
+
 function projectOwnerRecipientLabel(project) {
   return project && project.isRevnet ? 'REVOwner' : 'Project owner';
 }
 
-// Render the "Account" cell for a single JBSplit. Precedence matches the JBSplit struct's own routing:
-//   projectId > 0          → reserved tokens are minted to that project
-//   beneficiary != 0       → tokens go to that address
-//   hook != 0              → tokens are forwarded to a split hook (e.g. JBP6FeeLPSplitHook for LP'ing)
-//   otherwise              → the project owner / REVOwner
-// The hook check MUST come before the owner fallback: a hook-routed split has beneficiary == 0 by design,
-// so without this the row mislabels the LP split hook as the project owner. Returns a fresh node.
+// Routing precedence for a JBSplit, mirroring the contracts. JBController.sendReservedTokensToSplitsOf
+// and JBMultiTerminal.executePayout both branch in this order:
+//   hook != 0        → 100% of the split is forwarded to the split hook. A projectId/beneficiary also
+//                      set on the split is only context passed to the hook, NOT a recipient.
+//   projectId > 0    → the split pays that project (the beneficiary receives the destination's tokens)
+//   beneficiary != 0 → funds/tokens go directly to that address
+//   otherwise        → the project owner / REVOwner fallback
+// The hook check MUST come first: classifying projectId before hook would label a split whose funds go
+// entirely to arbitrary hook code as a benign "Pay project #N". Shared by splitAccountNode (read/audit
+// surface) and recFromSplit (queue form) so the two can't diverge.
+function splitRoutingKind(sp) {
+  if (!isZeroishAddress(sp.hook)) return 'hook';
+  if (Number(sp.projectId) > 0) return 'project';
+  if (!isZeroishAddress(sp.beneficiary)) return 'beneficiary';
+  return 'owner';
+}
+
+// Render the "Account" cell for a single JBSplit. Precedence follows splitRoutingKind (hook →
+// project → beneficiary → owner fallback). Returns a fresh node.
 function splitAccountNode(sp, project, chainId, opts) {
   opts = opts || {};
   var node = el('span', 'splits-acct-inner');
-  if (Number(sp.projectId) > 0) {
+  var kind = splitRoutingKind(sp);
+  if (kind === 'hook') {
+    var label = el('span', 'split-hook-label'); label.textContent = 'Split hook'; label.title = 'Reserved tokens are forwarded to a split hook';
+    node.appendChild(label);
+    node.appendChild(document.createTextNode(' '));
+    node.appendChild(addressNode(sp.hook, chainId));
+    registeredInstanceProvenance(sp.hook, chainId).then(function (provenance) {
+      if (!provenance || !provenance.known || !label.isConnected) return;
+      label.textContent = provenance.family;
+      label.title = 'Registered in JBAddressRegistry as deployed by ' + provenance.deployerName;
+      label.classList.add('known');
+    }).catch(function () {});
+    return node;
+  }
+  if (kind === 'project') {
     node.classList.add('split-project-recipient');
     var pid = Number(sp.projectId);
     var link = document.createElement('a'); link.className = 'split-project-link';
@@ -6286,20 +6357,7 @@ function splitAccountNode(sp, project, chainId, opts) {
     }
     return node;
   }
-  if (sp.beneficiary && sp.beneficiary !== ZERO_ADDRESS) { node.appendChild(addressNode(sp.beneficiary, chainId)); return node; }
-  if (sp.hook && sp.hook !== ZERO_ADDRESS) {
-    var label = el('span', 'split-hook-label'); label.textContent = 'Split hook'; label.title = 'Reserved tokens are forwarded to a split hook';
-    node.appendChild(label);
-    node.appendChild(document.createTextNode(' '));
-    node.appendChild(addressNode(sp.hook, chainId));
-    registeredInstanceProvenance(sp.hook, chainId).then(function (provenance) {
-      if (!provenance || !provenance.known || !label.isConnected) return;
-      label.textContent = provenance.family;
-      label.title = 'Registered in JBAddressRegistry as deployed by ' + provenance.deployerName;
-      label.classList.add('known');
-    }).catch(function () {});
-    return node;
-  }
+  if (kind === 'beneficiary') { node.appendChild(addressNode(sp.beneficiary, chainId)); return node; }
   node.textContent = projectOwnerRecipientLabel(project);
   return node;
 }
@@ -6805,7 +6863,14 @@ async function fetchProjectOnce(id, chainId) {
   await Promise.all(jobs);
 
   if (project.isRevnet) {
-    project.operator = await revnetOperatorOf(id, chainId);
+    // A revnet always HAS an operator, so a blank operator can only mean the indexed read didn't land. Record
+    // which it was; the authority surfaces say "couldn't load" instead of presenting an unread value as absent.
+    try {
+      project.operator = await revnetOperatorOf(id, chainId);
+    } catch (_) {
+      project.operator = null;
+      project.operatorUnavailable = true;
+    }
   }
 
   // Symbol priority: deployed ERC-20 symbol (authoritative) → offchain projectUri symbol (credits-only
@@ -7431,7 +7496,7 @@ function renderProjectCard(project) {
   // Line 3: owner/operator authority.
   var meta2 = el('div', 'discover-card-meta discover-card-on');
   meta2.appendChild(cardLbl(projectAuthorityLabel(project) + ': '));
-  meta2.appendChild(addressNode(projectAuthorityAddress(project)));
+  meta2.appendChild(authorityValueNode(project, addressNode(projectAuthorityAddress(project))));
   card.appendChild(meta2);
 
   var descText = project.tagline || project.description || '';
@@ -9320,7 +9385,7 @@ function renderDetailHeader(project) {
   var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
   row1.appendChild(mkPair('Flavor: ', [typeVal]));
   row1.appendChild(document.createTextNode(' '));
-  row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)), ownerWarn]));
+  row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [authorityValueNode(project, addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id))), ownerWarn]));
   if (project.createdAt) {
     row1.appendChild(document.createTextNode(' '));
     var createdVal = el('span', 'detail-head-val'); createdVal.textContent = formatDate(project.createdAt);
@@ -9569,7 +9634,9 @@ function fetchOperatorsPerChain(project) {
   return Promise.all(chains.map(function (c) {
     return revnetOperatorOf(Number(pidOn(project, c.id)), c.id)
       .then(function (o) { return { chainId: c.id, name: c.name, owner: o }; })
-      .catch(function () { return { chainId: c.id, name: c.name, owner: null }; });
+      // `unavailable` keeps an unread chain out of the divergence comparison AND out of the "—" that means
+      // "no operator here". authorityRowsDiverged already ignores rows with no address.
+      .catch(function () { return { chainId: c.id, name: c.name, owner: null, unavailable: true }; });
   })).then(function (rows) {
     return { rows: rows, diverged: authorityRowsDiverged(rows) };
   });
@@ -9631,7 +9698,7 @@ function renderOtherInfoPanel(project) {
   // Operator/owner — ENS-resolved, with a transfer CTA below (revnets only — REVOwner.setOperatorOf).
   var opItem = el('div', 'detail-info-item');
   var opLbl = el('div', 'detail-info-label'); opLbl.textContent = projectAuthorityLabel(project); opItem.appendChild(opLbl);
-  var opVal = el('div', 'detail-info-value info-operator-val'); opVal.appendChild(fullAddressNode(projectAuthorityAddress(project), true, project.chainId)); opItem.appendChild(opVal);
+  var opVal = el('div', 'detail-info-value info-operator-val'); opVal.appendChild(authorityValueNode(project, fullAddressNode(projectAuthorityAddress(project), true, project.chainId))); opItem.appendChild(opVal);
   // If ownership/operator control isn't uniform across chains, replace the single value with a per-chain breakdown.
   if (idChains.length > 1) {
     fetchAuthorityPerChain(project).then(function (res) {
@@ -9642,7 +9709,8 @@ function renderOtherInfoPanel(project) {
         var row = el('div', 'detail-owner-chainrow');
         row.appendChild(chainLogo(r.chainId, null));
         var nm = el('span', 'detail-info-chainname'); nm.textContent = ' ' + r.name + ' '; row.appendChild(nm);
-        if (r.owner) row.appendChild(fullAddressNode(r.owner, false, r.chainId)); else { var dash = el('span'); dash.textContent = '—'; row.appendChild(dash); }
+        if (r.owner) row.appendChild(fullAddressNode(r.owner, false, r.chainId));
+        else { var dash = el('span'); dash.textContent = r.unavailable ? 'could not load' : '—'; row.appendChild(dash); }
         opVal.appendChild(row);
       });
     }).catch(function () {});
@@ -10029,6 +10097,12 @@ async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, 
 // Shared: require a connected wallet equal to the project's operator/owner. Returns the account or null.
 async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
+  // An unread operator is not an absent one. Without this, the `operatorAddr &&` check below is skipped
+  // entirely and any wallet is waved through to sign a transaction the chain will reject.
+  if (!operatorAddr && projectAuthorityUnavailable(project)) {
+    setStatus('Could not read this revnet’s operator, so this action can’t be authorized. Reload and try again.', 'error');
+    return null;
+  }
   var account = getAccount();
   if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
   if (!account) { setStatus('Connect a wallet to continue', 'error'); return null; }
@@ -10857,7 +10931,14 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         rec.deployed = true; rec.threshold = info.threshold; rec.owners = info.owners;
         if (hasSafeService(c.id)) {
           st.textContent = 'Safe service | ' + info.threshold + '-of-' + info.owners.length + ' multisig.';
-          return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function () { return []; })]).then(function (rr) {
+          // The pending list is load-bearing twice over: it is the only thing that spots an already-queued
+          // proposal, and it picks the nonce this one is signed at. Swallowing a service outage into `[]` makes
+          // an unread queue look empty, so this proposal defaults to the Safe's next nonce ON TOP of whatever is
+          // really queued there — the two become competing replacements at one nonce and only one can ever
+          // execute. Let the failure reject so this chain is skipped instead of proposing on fabricated data.
+          return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function (err) {
+            throw new Error('could not read the Safe’s pending queue — ' + ((err && (err.shortMessage || err.message)) || String(err)));
+          })]).then(function (rr) {
             var next = rr[0] != null ? rr[0] : 0;
             var queuedNonces = (rr[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
             var def = queuedNonces.length ? Math.max(next, queuedNonces[queuedNonces.length - 1] + 1) : next;
@@ -10870,7 +10951,10 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         }
         rec.onChain = true;
         return refreshOnChainStatus(rec);
-      }).catch(function () { block.classList.add('safe-propose-skip'); rec.deployed = false; st.textContent = 'Could not read the Safe here — skipped.'; });
+      }).catch(function (e) {
+        block.classList.add('safe-propose-skip'); rec.deployed = false;
+        st.textContent = 'Could not read the Safe here — skipped. ' + ((e && (e.shortMessage || e.message)) || String(e));
+      });
     });
 
     // (Re-)read an onchain chain's approvals AT THE CHOSEN NONCE and paint its status. On first call it renders an
@@ -12231,7 +12315,14 @@ function renderRulesetsFundsSection(project) {
           psBox.innerHTML = ''; psBox.textContent = 'Could not verify payout splits.'; foot.remove();
         });
       });
-    }).catch(function () { faContainer.remove(); });
+    }).catch(function () {
+      // acctKindsForFunds rejects for BOTH "this project configures no accounting contexts" and any RPC failure
+      // (resolveAcctTokens throws on an empty list and never catches the read), so removing the block silently
+      // would present an unread chain exactly like a verified-empty one. Say which it is, like the sibling
+      // reserved-token and payout-split loaders above.
+      faContainer.innerHTML = '';
+      faContainer.textContent = 'Could not verify funds access.';
+    });
   }
 
   function renderUpcomingNotice() {
@@ -13582,6 +13673,10 @@ function boSep() { var s = el('span', 'bo-sep'); s.textContent = '|'; return s; 
 
 // Classify an owner address on a chain: Safe (read its policy/signers), EOA (no code), Known contract
 // (has code + in our registry), or Unknown contract. Returns { type, safe }.
+// A failed getCode read is NOT an answer: EOA and contract are the two things a reader decides trust on
+// (who can sign, whether code can move the funds), so guessing either way from a dropped RPC call states
+// something about the account we never learned. An unread chain says so, like the contract-audit and
+// funds-access blocks.
 function classifyOwner(chainId, addr) {
   return fetchSafeInfo(addr, chainId).then(function (safe) {
     if (safe) return { type: 'Safe Multisig', safe: safe };
@@ -13591,7 +13686,7 @@ function classifyOwner(chainId, addr) {
       if (!code || code === '0x') return { type: 'EOA', safe: null };
       var name = resolveContractName(addr, chainId);
       return { type: name ? ('Known contract (' + name + ')') : 'Unknown contract', safe: null };
-    }).catch(function () { return { type: 'Contract', safe: null }; });
+    }).catch(function () { return { type: 'Unknown — could not read code', safe: null }; });
   }).catch(function () { return { type: 'Unknown', safe: null }; });
 }
 
@@ -15523,13 +15618,7 @@ export function remainingAccessAmount(limit, used) {
   return limit > used ? limit - used : 0n;
 }
 
-export function quotedOutputFloor(quoted, bps) {
-  quoted = toBigInt(quoted);
-  bps = bps == null ? 9900n : BigInt(bps);
-  if (quoted <= 0n) return 0n;
-  var floor = quoted * bps / 10000n;
-  return floor > 0n ? floor : 1n;
-}
+export { quotedOutputFloor };
 
 // Distribute payouts: send the project's funds to its recipients (splits, then owner) on one chain.
 // Permissionless — anyone can trigger it. Amount is in the payout limit's currency (usually the accounting token).
@@ -17696,18 +17785,13 @@ var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $
 // Scoped by (chainId, poolId), never by sucker group: prices are only comparable inside one exact pool,
 // and the group id would have to come from the project row — a slow query behind a short soft timeout,
 // which silently emptied this history whenever the indexer was busy.
-// Preferred shape. `accountingTokenUsdRate` lands with peripheralist/bendystraw#25; until that
-// indexer deploys, GraphQL rejects the whole document for the unknown field and the request
-// falls through to BENDYSTRAW_SWAP_EVENTS_QUERY below. It starts being used the moment the
-// indexer serves it — no frontend release.
-var BENDYSTRAW_RATED_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
-  + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
-  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
-  + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash sqrtPriceX96 projectTokenIsCurrency0 accountingTokenUsdRate } totalCount } }';
+// `accountingTokenUsdRate` is the USD per accounting token in force at each swap's own block.
+// It is nullable: the indexer writes null where no feed bridged the pair, which usdRateOf turns
+// into "use the live rate for this point".
 export var BENDYSTRAW_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
-  + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash sqrtPriceX96 projectTokenIsCurrency0 } totalCount } }';
+  + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash sqrtPriceX96 projectTokenIsCurrency0 accountingTokenUsdRate } totalCount } }';
 export var BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
@@ -17732,12 +17816,8 @@ var BENDYSTRAW_AUTO_ISSUE_EVENTS_QUERY = 'query($projectId: Int!, $chainId: Int!
   + 'autoIssueEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { timestamp txHash caller beneficiary stageId count } totalCount } }';
+// `accountingTokenUsdRate` is nullable for the same reason as the swap query above.
 var BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
-  + 'suckerGroupMoments(where: { suckerGroupId: $suckerGroupId, version: $version }, '
-  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
-  + 'items { timestamp balance tokenSupply } totalCount } }';
-// Same rollout as the rated swap query above: preferred, with the un-rated document as fallback.
-var BENDYSTRAW_RATED_SUCKER_GROUP_MOMENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'suckerGroupMoments(where: { suckerGroupId: $suckerGroupId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp balance tokenSupply accountingTokenUsdRate } totalCount } }';
@@ -18177,15 +18257,10 @@ async function fetchPriceFloorHistory(project, stages) {
   if (!pair) return [];
   var pairDecimals = Number(pair.decimals);
   var res = await Promise.all([
-    fetchBendystrawCollectionPages(BENDYSTRAW_RATED_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
+    fetchBendystrawCollectionPages(BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
       suckerGroupId: groupId,
       version: BENDYSTRAW_VERSION,
-    }, PRICE_HISTORY_PAGE_SIZE).catch(function () {
-      return fetchBendystrawCollectionPages(BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
-        suckerGroupId: groupId,
-        version: BENDYSTRAW_VERSION,
-      }, PRICE_HISTORY_PAGE_SIZE);
-    }),
+    }, PRICE_HISTORY_PAGE_SIZE),
     fetchBendystrawCollectionPages(BENDYSTRAW_CASH_OUT_TAX_SNAPSHOTS_QUERY, 'cashOutTaxSnapshots', {
       suckerGroupId: groupId,
       version: BENDYSTRAW_VERSION,
@@ -18306,12 +18381,8 @@ async function fetchSwapHistory(project) {
     version: BENDYSTRAW_VERSION,
   };
   var pages = await Promise.all([
-    fetchBendystrawCollectionPages(BENDYSTRAW_RATED_SWAP_EVENTS_QUERY, 'swapEvents', variables,
+    fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', variables,
       PRICE_HISTORY_PAGE_SIZE)
-      .catch(function () {
-        return fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', variables,
-          PRICE_HISTORY_PAGE_SIZE);
-      })
       .catch(function () {
         // Keep existing realized-average history visible during a coordinated
         // Bendystraw/frontend rollout where the new fields are not live yet.
@@ -20984,12 +21055,13 @@ function openQueueRulesetModal(project, preferredQueueAction) {
     if (!Number.isSafeInteger(splitProjectId)) throw new Error('A split project ID is too large to edit in the queue form.');
     var base = { percent: pct || 0, amountEth: amountEth || '', lockedUntil: Number(sp.lockedUntil) || 0,
       preferAddToBalance: !!sp.preferAddToBalance };
+    var kind = splitRoutingKind(sp);
     // Preserve every hook address exactly. Treat even the known LP hook as a custom hook here because the generic
     // create-flow LP preset rewrites its beneficiary from the connected wallet, which would mutate an existing split.
-    if (sp.hook && !/^0x0+$/.test(String(sp.hook))) {
+    if (kind === 'hook') {
       base.type = 'customhook'; base.hookAddress = sp.hook; base.address = sp.beneficiary || ''; base.projectId = splitProjectId; return base;
     }
-    if (splitProjectId > 0) { base.type = 'project'; base.projectId = splitProjectId; base.address = sp.beneficiary || ''; return base; }
+    if (kind === 'project') { base.type = 'project'; base.projectId = splitProjectId; base.address = sp.beneficiary || ''; return base; }
     base.type = 'wallet'; base.address = sp.beneficiary || ''; base.projectId = 0; return base;
   }
 
@@ -21074,6 +21146,40 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var minimumStart = Math.max(Math.floor(Date.now() / 1000) + 60, Number(activeQueueOption.source.start) + 1);
     if (!customQueueStart || customQueueStart < minimumStart) throw new Error('Choose a future start time after the flexible queued ruleset starts.');
   }
+  // A queued ruleset can repoint baseCurrency while the accounting contexts stay immutable — block a
+  // base whose (context ↔ base) JBPrices pair is unreachable on any selected chain, since payments in
+  // that context would revert under the new rules. Cross-context pairs are deliberately not probed:
+  // the queue can't change them, and blocking on them would also block a rescue queue
+  // (allowAddPriceFeed) on an already-affected project. Probed live, so a later default-feed
+  // registration unblocks the same configuration with no client change.
+  setStatus('Verifying price feed coverage…');
+  await Promise.all(selected.map(function (chain) {
+    var cid = chain.id;
+    var bases = [];
+    try {
+      buildQueueRulesetConfigs(state, cid, 0).forEach(function (cfg) {
+        var cur = Number(cfg.metadata && cfg.metadata.baseCurrency) || 1;
+        if (bases.indexOf(cur) === -1) bases.push(cur);
+      });
+    } catch (_) { return null; } // an unencodable ruleset surfaces its own error at build time below
+    var localPid = pidOn(project, cid);
+    var readContexts = getAddress('JBMultiTerminal', cid)
+      ? read(cid, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [toBigInt(localPid)])
+      : Promise.resolve([]);
+    return readContexts.then(
+      function (ctxs) {
+        var usdc = (USDC_BY_CHAIN[cid] || '').toLowerCase();
+        var labeled = (ctxs || []).map(function (ctx) {
+          var t = String(ctx.token || '').toLowerCase();
+          var symbol = t === NATIVE_TOKEN.toLowerCase() ? 'ETH' : (t === usdc ? 'USDC' : acctTokenLabel(ctx.token));
+          return { token: ctx.token, currency: ctx.currency, symbol: symbol };
+        });
+        var pairs = requiredFeedPairs(labeled, bases, true);
+        return verifyFeedCoverage(cid, pairs, function (cur) { return feedCurrencyLabel(cur, labeled); }, { projectId: localPid });
+      },
+      function () { throw new Error('Couldn’t verify price feed coverage on ' + chainNameOf(cid) + ' right now — nothing was sent. Try again.'); }
+    );
+  }));
   var multi = selected.length > 1;
   var usesOmnichainWrapper = !!state.isOmnichain;
   // Share one first-ruleset start across chains (now + 20 min) so cycles align; single chain starts at 0

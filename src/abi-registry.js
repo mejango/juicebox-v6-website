@@ -109981,33 +109981,78 @@ export const registry = {
       "JBProjects",
       "JBFundAccessLimits",
       "JBERC20",
-      "JBFeelessAddresses"
+      "JBFeelessAddresses",
+      "JBHeldFees"
+    ],
+    "Price Feeds": [
+      "JBChainlinkV3PriceFeed__ETH_USD",
+      "JBChainlinkV3PriceFeed__USDC_USD",
+      "JBChainlinkV3SequencerPriceFeed__ETH_USD",
+      "JBChainlinkV3SequencerPriceFeed__USDC_USD",
+      "JBMatchingPriceFeed"
+    ],
+    "Ruleset Approval Hooks": [
+      "JBDeadline3Hours",
+      "JBDeadline1Day",
+      "JBDeadline3Days",
+      "JBDeadline7Days"
     ],
     "NFT Hooks": [
       "JB721TiersHook",
       "JB721TiersHookStore",
       "JB721TiersHookDeployer",
       "JB721TiersHookProjectDeployer",
-      "Banny721TokenUriResolver"
+      "JB721TiersHookLib",
+      "JB721Checkpoints",
+      "JB721CheckpointsDeployer",
+      "Banny721TokenUriResolver",
+      "JB721TiersHook__ProjectBAN",
+      "JB721TiersHook__ProjectCPN"
     ],
     "Buyback Hook": [
-      "JBBuybackHookRegistry"
+      "JBBuybackHookRegistry",
+      "JBBuybackHook"
     ],
     "Uniswap V4 LP": [
       "JBUniswapV4LPSplitHook",
       "JBUniswapV4LPSplitHookDeployer",
+      "JBUniswapV4LPSplitHookMath",
+      "JBP6FeeLPSplitHook",
       "JBUniswapV4Hook"
     ],
     "Revnets": [
       "REVDeployer",
-      "REVLoans"
+      "REVLoans",
+      "REVOwner"
     ],
     "Cross-Chain": [
       "JBSuckerRegistry",
+      "JBOmnichainDeployer",
       "JBOptimismSucker",
-      "JBArbitrumSucker",
+      "JBOptimismSuckerDeployer",
       "JBBaseSucker",
-      "JBOmnichainDeployer"
+      "JBBaseSuckerDeployer",
+      "JBArbitrumSucker",
+      "JBArbitrumSuckerDeployer",
+      "JBCCIPSucker__ETH",
+      "JBCCIPSucker__OP",
+      "JBCCIPSucker__BASE",
+      "JBCCIPSucker__ARB",
+      "JBCCIPSucker__ETH_SEP",
+      "JBCCIPSucker__OP_SEP",
+      "JBCCIPSucker__BASE_SEP",
+      "JBCCIPSucker__ARB_SEP",
+      "JBCCIPSuckerDeployer__ETH",
+      "JBCCIPSuckerDeployer__OP",
+      "JBCCIPSuckerDeployer__BASE",
+      "JBCCIPSuckerDeployer__ARB",
+      "JBCCIPSuckerDeployer__ETH_SEP",
+      "JBCCIPSuckerDeployer__OP_SEP",
+      "JBCCIPSuckerDeployer__BASE_SEP",
+      "JBCCIPSuckerDeployer__ARB_SEP",
+      "JBSuckerLib",
+      "JBCCIPLib",
+      "CCIPHelper"
     ],
     "Content Publishing": [
       "CTDeployer",
@@ -110017,70 +110062,29 @@ export const registry = {
     "Defifa": [
       "DefifaDeployer",
       "DefifaHook",
-      "DefifaGovernor"
+      "DefifaGovernor",
+      "DefifaHookLib",
+      "DefifaTokenUriResolver"
+    ],
+    "Project Tokens": [
+      "JBERC20__ProjectNANA",
+      "JBERC20__ProjectREV",
+      "JBERC20__ProjectBAN",
+      "JBERC20__ProjectCPN",
+      "JBERC20__ProjectART",
+      "JBERC20__ProjectDEFIFA",
+      "JBERC20__ProjectMARKEE"
     ],
     "Utilities": [
       "JBProjectPayer",
       "JBProjectPayerDeployer",
+      "JBProjectPayer__ProjectCreationFeeReceiver",
       "JBRouterTerminal",
       "JBRouterTerminalRegistry",
       "JBProjectHandles",
-      "JBAddressRegistry"
-    ],
-    "Deployments": [
-      "CCIPHelper",
-      "DefifaHookLib",
-      "DefifaTokenUriResolver",
+      "JBAddressRegistry",
       "ERC2771Forwarder",
-      "JB721Checkpoints",
-      "JB721CheckpointsDeployer",
-      "JB721TiersHook__ProjectBAN",
-      "JB721TiersHook__ProjectCPN",
-      "JB721TiersHookLib",
-      "JBArbitrumSuckerDeployer",
-      "JBBaseSuckerDeployer",
-      "JBBuybackHook",
-      "JBCCIPLib",
-      "JBCCIPSucker__ARB",
-      "JBCCIPSucker__ARB_SEP",
-      "JBCCIPSucker__BASE",
-      "JBCCIPSucker__BASE_SEP",
-      "JBCCIPSucker__ETH",
-      "JBCCIPSucker__ETH_SEP",
-      "JBCCIPSucker__OP",
-      "JBCCIPSucker__OP_SEP",
-      "JBCCIPSuckerDeployer__ARB",
-      "JBCCIPSuckerDeployer__ARB_SEP",
-      "JBCCIPSuckerDeployer__BASE",
-      "JBCCIPSuckerDeployer__BASE_SEP",
-      "JBCCIPSuckerDeployer__ETH",
-      "JBCCIPSuckerDeployer__ETH_SEP",
-      "JBCCIPSuckerDeployer__OP",
-      "JBCCIPSuckerDeployer__OP_SEP",
-      "JBChainlinkV3PriceFeed__ETH_USD",
-      "JBChainlinkV3PriceFeed__USDC_USD",
-      "JBChainlinkV3SequencerPriceFeed__ETH_USD",
-      "JBChainlinkV3SequencerPriceFeed__USDC_USD",
-      "JBDeadline1Day",
-      "JBDeadline3Days",
-      "JBDeadline3Hours",
-      "JBDeadline7Days",
-      "JBERC20__ProjectART",
-      "JBERC20__ProjectBAN",
-      "JBERC20__ProjectCPN",
-      "JBERC20__ProjectDEFIFA",
-      "JBERC20__ProjectMARKEE",
-      "JBERC20__ProjectNANA",
-      "JBERC20__ProjectREV",
-      "JBHeldFees",
-      "JBMatchingPriceFeed",
-      "JBOptimismSuckerDeployer",
-      "JBP6FeeLPSplitHook",
-      "JBPayoutSplitGroupLib",
-      "JBProjectPayer__ProjectCreationFeeReceiver",
-      "JBSuckerLib",
-      "JBUniswapV4LPSplitHookMath",
-      "REVOwner"
+      "JBPayoutSplitGroupLib"
     ]
   },
   "contractToCategory": {
@@ -110097,87 +110101,87 @@ export const registry = {
     "JBFundAccessLimits": "Core Protocol",
     "JBERC20": "Core Protocol",
     "JBFeelessAddresses": "Core Protocol",
+    "JBHeldFees": "Core Protocol",
+    "JBChainlinkV3PriceFeed__ETH_USD": "Price Feeds",
+    "JBChainlinkV3PriceFeed__USDC_USD": "Price Feeds",
+    "JBChainlinkV3SequencerPriceFeed__ETH_USD": "Price Feeds",
+    "JBChainlinkV3SequencerPriceFeed__USDC_USD": "Price Feeds",
+    "JBMatchingPriceFeed": "Price Feeds",
+    "JBDeadline3Hours": "Ruleset Approval Hooks",
+    "JBDeadline1Day": "Ruleset Approval Hooks",
+    "JBDeadline3Days": "Ruleset Approval Hooks",
+    "JBDeadline7Days": "Ruleset Approval Hooks",
     "JB721TiersHook": "NFT Hooks",
     "JB721TiersHookStore": "NFT Hooks",
     "JB721TiersHookDeployer": "NFT Hooks",
     "JB721TiersHookProjectDeployer": "NFT Hooks",
+    "JB721TiersHookLib": "NFT Hooks",
+    "JB721Checkpoints": "NFT Hooks",
+    "JB721CheckpointsDeployer": "NFT Hooks",
     "Banny721TokenUriResolver": "NFT Hooks",
+    "JB721TiersHook__ProjectBAN": "NFT Hooks",
+    "JB721TiersHook__ProjectCPN": "NFT Hooks",
     "JBBuybackHookRegistry": "Buyback Hook",
+    "JBBuybackHook": "Buyback Hook",
     "JBUniswapV4LPSplitHook": "Uniswap V4 LP",
     "JBUniswapV4LPSplitHookDeployer": "Uniswap V4 LP",
+    "JBUniswapV4LPSplitHookMath": "Uniswap V4 LP",
+    "JBP6FeeLPSplitHook": "Uniswap V4 LP",
     "JBUniswapV4Hook": "Uniswap V4 LP",
     "REVDeployer": "Revnets",
     "REVLoans": "Revnets",
+    "REVOwner": "Revnets",
     "JBSuckerRegistry": "Cross-Chain",
-    "JBOptimismSucker": "Cross-Chain",
-    "JBArbitrumSucker": "Cross-Chain",
-    "JBBaseSucker": "Cross-Chain",
     "JBOmnichainDeployer": "Cross-Chain",
+    "JBOptimismSucker": "Cross-Chain",
+    "JBOptimismSuckerDeployer": "Cross-Chain",
+    "JBBaseSucker": "Cross-Chain",
+    "JBBaseSuckerDeployer": "Cross-Chain",
+    "JBArbitrumSucker": "Cross-Chain",
+    "JBArbitrumSuckerDeployer": "Cross-Chain",
+    "JBCCIPSucker__ETH": "Cross-Chain",
+    "JBCCIPSucker__OP": "Cross-Chain",
+    "JBCCIPSucker__BASE": "Cross-Chain",
+    "JBCCIPSucker__ARB": "Cross-Chain",
+    "JBCCIPSucker__ETH_SEP": "Cross-Chain",
+    "JBCCIPSucker__OP_SEP": "Cross-Chain",
+    "JBCCIPSucker__BASE_SEP": "Cross-Chain",
+    "JBCCIPSucker__ARB_SEP": "Cross-Chain",
+    "JBCCIPSuckerDeployer__ETH": "Cross-Chain",
+    "JBCCIPSuckerDeployer__OP": "Cross-Chain",
+    "JBCCIPSuckerDeployer__BASE": "Cross-Chain",
+    "JBCCIPSuckerDeployer__ARB": "Cross-Chain",
+    "JBCCIPSuckerDeployer__ETH_SEP": "Cross-Chain",
+    "JBCCIPSuckerDeployer__OP_SEP": "Cross-Chain",
+    "JBCCIPSuckerDeployer__BASE_SEP": "Cross-Chain",
+    "JBCCIPSuckerDeployer__ARB_SEP": "Cross-Chain",
+    "JBSuckerLib": "Cross-Chain",
+    "JBCCIPLib": "Cross-Chain",
+    "CCIPHelper": "Cross-Chain",
     "CTDeployer": "Content Publishing",
     "CTPublisher": "Content Publishing",
     "CTProjectOwner": "Content Publishing",
     "DefifaDeployer": "Defifa",
     "DefifaHook": "Defifa",
     "DefifaGovernor": "Defifa",
+    "DefifaHookLib": "Defifa",
+    "DefifaTokenUriResolver": "Defifa",
+    "JBERC20__ProjectNANA": "Project Tokens",
+    "JBERC20__ProjectREV": "Project Tokens",
+    "JBERC20__ProjectBAN": "Project Tokens",
+    "JBERC20__ProjectCPN": "Project Tokens",
+    "JBERC20__ProjectART": "Project Tokens",
+    "JBERC20__ProjectDEFIFA": "Project Tokens",
+    "JBERC20__ProjectMARKEE": "Project Tokens",
     "JBProjectPayer": "Utilities",
     "JBProjectPayerDeployer": "Utilities",
+    "JBProjectPayer__ProjectCreationFeeReceiver": "Utilities",
     "JBRouterTerminal": "Utilities",
     "JBRouterTerminalRegistry": "Utilities",
     "JBProjectHandles": "Utilities",
     "JBAddressRegistry": "Utilities",
-    "CCIPHelper": "Deployments",
-    "DefifaHookLib": "Deployments",
-    "DefifaTokenUriResolver": "Deployments",
-    "ERC2771Forwarder": "Deployments",
-    "JB721Checkpoints": "Deployments",
-    "JB721CheckpointsDeployer": "Deployments",
-    "JB721TiersHook__ProjectBAN": "Deployments",
-    "JB721TiersHook__ProjectCPN": "Deployments",
-    "JB721TiersHookLib": "Deployments",
-    "JBArbitrumSuckerDeployer": "Deployments",
-    "JBBaseSuckerDeployer": "Deployments",
-    "JBBuybackHook": "Deployments",
-    "JBCCIPLib": "Deployments",
-    "JBCCIPSucker__ARB": "Deployments",
-    "JBCCIPSucker__ARB_SEP": "Deployments",
-    "JBCCIPSucker__BASE": "Deployments",
-    "JBCCIPSucker__BASE_SEP": "Deployments",
-    "JBCCIPSucker__ETH": "Deployments",
-    "JBCCIPSucker__ETH_SEP": "Deployments",
-    "JBCCIPSucker__OP": "Deployments",
-    "JBCCIPSucker__OP_SEP": "Deployments",
-    "JBCCIPSuckerDeployer__ARB": "Deployments",
-    "JBCCIPSuckerDeployer__ARB_SEP": "Deployments",
-    "JBCCIPSuckerDeployer__BASE": "Deployments",
-    "JBCCIPSuckerDeployer__BASE_SEP": "Deployments",
-    "JBCCIPSuckerDeployer__ETH": "Deployments",
-    "JBCCIPSuckerDeployer__ETH_SEP": "Deployments",
-    "JBCCIPSuckerDeployer__OP": "Deployments",
-    "JBCCIPSuckerDeployer__OP_SEP": "Deployments",
-    "JBChainlinkV3PriceFeed__ETH_USD": "Deployments",
-    "JBChainlinkV3PriceFeed__USDC_USD": "Deployments",
-    "JBChainlinkV3SequencerPriceFeed__ETH_USD": "Deployments",
-    "JBChainlinkV3SequencerPriceFeed__USDC_USD": "Deployments",
-    "JBDeadline1Day": "Deployments",
-    "JBDeadline3Days": "Deployments",
-    "JBDeadline3Hours": "Deployments",
-    "JBDeadline7Days": "Deployments",
-    "JBERC20__ProjectART": "Deployments",
-    "JBERC20__ProjectBAN": "Deployments",
-    "JBERC20__ProjectCPN": "Deployments",
-    "JBERC20__ProjectDEFIFA": "Deployments",
-    "JBERC20__ProjectMARKEE": "Deployments",
-    "JBERC20__ProjectNANA": "Deployments",
-    "JBERC20__ProjectREV": "Deployments",
-    "JBHeldFees": "Deployments",
-    "JBMatchingPriceFeed": "Deployments",
-    "JBOptimismSuckerDeployer": "Deployments",
-    "JBP6FeeLPSplitHook": "Deployments",
-    "JBPayoutSplitGroupLib": "Deployments",
-    "JBProjectPayer__ProjectCreationFeeReceiver": "Deployments",
-    "JBSuckerLib": "Deployments",
-    "JBUniswapV4LPSplitHookMath": "Deployments",
-    "REVOwner": "Deployments"
+    "ERC2771Forwarder": "Utilities",
+    "JBPayoutSplitGroupLib": "Utilities"
   },
   "chains": {
     "1": {
@@ -118212,7 +118216,8 @@ export const registry = {
     "JBMultiTerminal": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "4fe059163c9cdc4f005f3b3b5a8a13175b9343f2",
       "path": "src/JBMultiTerminal.sol",
       "startLine": 58,
       "endLine": 2289,
@@ -118939,7 +118944,8 @@ export const registry = {
     "JBController": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "386a9dc71c73a1e614da9cf2a98e207788034a4b",
       "path": "src/JBController.sol",
       "startLine": 52,
       "endLine": 1418,
@@ -119466,7 +119472,8 @@ export const registry = {
     "JBDirectory": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "4fe059163c9cdc4f005f3b3b5a8a13175b9343f2",
       "path": "src/JBDirectory.sol",
       "startLine": 21,
       "endLine": 369,
@@ -119572,7 +119579,8 @@ export const registry = {
     "JBTerminalStore": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "4fe059163c9cdc4f005f3b3b5a8a13175b9343f2",
       "path": "src/JBTerminalStore.sol",
       "startLine": 34,
       "endLine": 1430,
@@ -119913,7 +119921,8 @@ export const registry = {
     "JBTokens": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "824fbbf34d1587460ea0e8f8fde75f40f99cc1d9",
       "path": "src/JBTokens.sol",
       "startLine": 17,
       "endLine": 451,
@@ -120039,10 +120048,11 @@ export const registry = {
     "JBRulesets": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "bce6a4eea9f2442b328128e9861e3cee68704622",
       "path": "src/JBRulesets.sol",
       "startLine": 23,
-      "endLine": 1135,
+      "endLine": 1132,
       "functionsByName": {
         "queueFor": [
           {
@@ -120056,8 +120066,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 121,
-            "endLine": 219,
+            "startLine": 118,
+            "endLine": 216,
             "source": "function queueFor(\n        uint256 projectId,\n        uint256 duration,\n        uint256 weight,\n        uint256 weightCutPercent,\n        IJBRulesetApprovalHook approvalHook,\n        uint256 metadata,\n        uint256 mustStartAtOrAfter\n    )\n        external\n        override\n        onlyControllerOf(projectId)\n        returns (JBRuleset memory)\n    {\n        // Duration must fit in a uint32.\n        if (duration > type(uint32).max) revert JBRulesets_InvalidRulesetDuration(duration, type(uint32).max);\n\n        // Weight cut percent must be less than or equal to 100%.\n        if (weightCutPercent > JBConstants.MAX_WEIGHT_CUT_PERCENT) {\n            revert JBRulesets_InvalidWeightCutPercent({percent: weightCutPercent});\n        }\n\n        // Weight must fit into a uint112.\n        if (weight > type(uint112).max) revert JBRulesets_InvalidWeight(weight, type(uint112).max);\n\n        // If the start date is not set, set it to be the current timestamp.\n        if (mustStartAtOrAfter == 0) {\n            mustStartAtOrAfter = block.timestamp;\n        }\n\n        // Make sure the min start date fits in a uint48, and that the start date of the following ruleset will also fit\n        // within the max.\n        if (mustStartAtOrAfter + duration > type(uint48).max) {\n            revert JBRulesets_InvalidRulesetEndTime({timestamp: mustStartAtOrAfter + duration, limit: type(uint48).max});\n        }\n\n        // Approval hook should be a valid contract, supporting the correct interface\n        if (approvalHook != IJBRulesetApprovalHook(address(0))) {\n            // Revert if there isn't a contract at the address\n            if (address(approvalHook).code.length == 0) revert JBRulesets_InvalidRulesetApprovalHook(approvalHook);\n\n            // Make sure the approval hook supports the expected interface.\n            try approvalHook.supportsInterface(type(IJBRulesetApprovalHook).interfaceId) returns (bool doesSupport) {\n                if (!doesSupport) revert JBRulesets_InvalidRulesetApprovalHook(approvalHook); // Contract exists at the\n                // address but\n                // with the\n                // wrong interface\n            } catch {\n                revert JBRulesets_InvalidRulesetApprovalHook({hook: approvalHook}); // No ERC165 support\n            }\n        }\n\n        // Get a reference to the latest ruleset's ID.\n        uint256 latestId = latestRulesetIdOf[projectId];\n\n        // The new rulesetId timestamp is now, or an increment from now if the current timestamp is taken.\n        // forge-lint: disable-next-line(block-timestamp)\n        uint256 rulesetId = latestId >= block.timestamp ? latestId + 1 : block.timestamp;\n\n        // Set up the ruleset by configuring intrinsic properties.\n        _configureIntrinsicPropertiesFor({\n            projectId: projectId, rulesetId: rulesetId, weight: weight, mustStartAtOrAfter: mustStartAtOrAfter\n        });\n\n        // Efficiently stores the ruleset's user-defined properties.\n        // If all user config properties are zero, no need to store anything as the default value will have the same\n        // outcome.\n        if (approvalHook != IJBRulesetApprovalHook(address(0)) || duration > 0 || weightCutPercent > 0) {\n            // approval hook in bits 0-159 bytes.\n            uint256 packed = uint160(address(approvalHook));\n\n            // duration in bits 160-191 bytes.\n            packed |= duration << 160;\n\n            // weightCutPercent in bits 192-223 bytes.\n            packed |= weightCutPercent << 192;\n\n            // Set in storage.\n            _packedUserPropertiesOf[projectId][rulesetId] = packed;\n        }\n\n        // Set the metadata if needed.\n        if (metadata > 0) _metadataOf[projectId][rulesetId] = metadata;\n\n        emit RulesetQueued({\n            rulesetId: rulesetId,\n            projectId: projectId,\n            duration: duration,\n            weight: weight,\n            weightCutPercent: weightCutPercent,\n            approvalHook: approvalHook,\n            metadata: metadata,\n            mustStartAtOrAfter: mustStartAtOrAfter,\n            caller: msg.sender\n        });\n\n        // Return the struct for the new ruleset's ID, with metadata.\n        return _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: true});\n    }"
           }
         ],
@@ -120068,8 +120078,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 226,
-            "endLine": 276,
+            "startLine": 223,
+            "endLine": 273,
             "source": "function updateRulesetWeightCache(uint256 projectId, uint256 rulesetId) external override {\n        // Get the target ruleset.\n        JBRuleset memory targetRuleset =\n            _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: false});\n\n        // Nothing to cache if the target ruleset doesn't have a duration or a weight cut percent.\n        if (targetRuleset.duration == 0 || targetRuleset.weightCutPercent == 0) return;\n\n        // Get a reference to the current cache.\n        JBRulesetWeightCache storage cache = _weightCacheOf[projectId][targetRuleset.id];\n\n        // Determine the largest start timestamp the cache can be filled to.\n        // Cap the advance to the cache lookup threshold per call to stay within the iteration limit in\n        // deriveWeightFrom.\n        // Multiple calls are needed to advance the cache for large cycle gaps.\n        uint256 maxStart = targetRuleset.start + (cache.weightCutMultiple + _WEIGHT_CUT_MULTIPLE_CACHE_LOOKUP_THRESHOLD)\n            * targetRuleset.duration;\n\n        // Determine the start timestamp to derive a weight from for the cache.\n        // forge-lint: disable-next-line(block-timestamp)\n        uint256 start = block.timestamp < maxStart ? block.timestamp : maxStart;\n\n        // The difference between the start of the latest queued ruleset and the start of the ruleset we're caching the\n        // weight of.\n        uint256 startDistance = start - targetRuleset.start;\n\n        // Calculate the weight cut multiple.\n        uint168 weightCutMultiple;\n        unchecked {\n            // forge-lint: disable-next-line(unsafe-typecast)\n            weightCutMultiple = uint168(startDistance / targetRuleset.duration);\n        }\n\n        // Store the new values.\n        cache.weight = uint112(\n            deriveWeightFrom({\n                projectId: projectId,\n                baseRulesetStart: targetRuleset.start,\n                baseRulesetDuration: targetRuleset.duration,\n                baseRulesetWeight: targetRuleset.weight,\n                baseRulesetWeightCutPercent: targetRuleset.weightCutPercent,\n                baseRulesetCacheId: targetRuleset.id,\n                start: start\n            })\n        );\n        cache.weightCutMultiple = weightCutMultiple;\n\n        emit WeightCacheUpdated({\n            projectId: projectId, weight: cache.weight, weightCutMultiple: weightCutMultiple, caller: msg.sender\n        });\n    }"
           }
         ],
@@ -120081,8 +120091,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 288,
-            "endLine": 341,
+            "startLine": 285,
+            "endLine": 338,
             "source": "function allOf(\n        uint256 projectId,\n        uint256 startingId,\n        uint256 size\n    )\n        external\n        view\n        override\n        returns (JBRuleset[] memory rulesets)\n    {\n        // If no starting ID was provided, set it to the latest ruleset's ID.\n        if (startingId == 0) startingId = latestRulesetIdOf[projectId];\n\n        // Keep a reference to the number of rulesets being returned.\n        uint256 count = 0;\n\n        // Keep a reference to the starting ruleset (metadata not needed — only counting).\n        JBRuleset memory ruleset = _getStructFor({projectId: projectId, rulesetId: startingId, withMetadata: false});\n\n        // First, count the number of rulesets to include in the result by iterating backwards from the starting\n        // ruleset.\n        while (ruleset.id != 0 && count < size) {\n            // Increment the counter.\n            count++;\n\n            // Iterate to the ruleset it was based on.\n            ruleset = _getStructFor({projectId: projectId, rulesetId: ruleset.basedOnId, withMetadata: false});\n        }\n\n        // Keep a reference to the array of rulesets that'll be populated.\n        rulesets = new JBRuleset[](count);\n\n        // Return an empty array if there are no rulesets to return.\n        if (count == 0) {\n            return rulesets;\n        }\n\n        // Reset the ruleset being iterated on to the starting ruleset, now with metadata for the return array.\n        ruleset = _getStructFor({projectId: projectId, rulesetId: startingId, withMetadata: true});\n\n        // Set the counter.\n        uint256 i;\n\n        // Populate the array of rulesets to return.\n        while (i < count) {\n            // Add the ruleset to the array.\n            rulesets[i++] = ruleset;\n\n            // Get the ruleset it was based on if needed, with metadata for the return array.\n            if (i != count) {\n                ruleset = _getStructFor({projectId: projectId, rulesetId: ruleset.basedOnId, withMetadata: true});\n            }\n        }\n    }"
           }
         ],
@@ -120092,8 +120102,8 @@ export const registry = {
             "paramTypes": [
               "uint256"
             ],
-            "startLine": 346,
-            "endLine": 359,
+            "startLine": 343,
+            "endLine": 356,
             "source": "function currentApprovalStatusForLatestRulesetOf(uint256 projectId)\n        external\n        view\n        override\n        returns (JBApprovalStatus)\n    {\n        // Get a reference to the latest ruleset ID.\n        uint256 rulesetId = latestRulesetIdOf[projectId];\n\n        // Resolve the struct for the latest ruleset, with metadata (forwarded to the external approval hook).\n        JBRuleset memory ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: true});\n\n        return _approvalStatusOf({projectId: projectId, ruleset: ruleset});\n    }"
           }
         ],
@@ -120103,8 +120113,8 @@ export const registry = {
             "paramTypes": [
               "uint256"
             ],
-            "startLine": 368,
-            "endLine": 429,
+            "startLine": 365,
+            "endLine": 426,
             "source": "function currentOf(uint256 projectId) external view override returns (JBRuleset memory ruleset) {\n        // If the project does not have a ruleset, return an empty struct.\n        if (latestRulesetIdOf[projectId] == 0) {\n            return _getStructFor({projectId: 0, rulesetId: 0, withMetadata: false});\n        }\n\n        // Get a reference to the currently approvable ruleset's ID.\n        uint256 rulesetId = _currentlyApprovableRulesetIdOf(projectId);\n\n        // If a currently approvable ruleset exists...\n        if (rulesetId != 0) {\n            // Resolve the struct for the currently approvable ruleset, with metadata (forwarded to external hooks\n            // and potentially returned).\n            ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: true});\n\n            // Get a reference to the approval status.\n            JBApprovalStatus approvalStatus = _approvalStatusOf({projectId: projectId, ruleset: ruleset});\n\n            // Check to see if this ruleset's approval hook is approved if it exists.\n            // If so, return it.\n            if (approvalStatus == JBApprovalStatus.Approved || approvalStatus == JBApprovalStatus.Empty) {\n                return ruleset;\n            }\n\n            // If it hasn't been approved, set the ruleset configuration to be the configuration of the ruleset that\n            // it's based on,\n            // which carries the last approved configuration.\n            rulesetId = ruleset.basedOnId;\n\n            // Keep a reference to its ruleset, with metadata (used by `_simulateCycledRulesetBasedOn` and may be\n            // returned).\n            ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: true});\n        } else {\n            // No upcoming ruleset found that is currently approvable,\n            // so use the latest ruleset ID.\n            rulesetId = latestRulesetIdOf[projectId];\n\n            // Get the struct for the latest ID, with metadata (forwarded to external hooks and may be returned).\n            ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: true});\n\n            // Get a reference to the approval status.\n            JBApprovalStatus approvalStatus = _approvalStatusOf({projectId: projectId, ruleset: ruleset});\n\n            // While the ruleset has an approval hook that isn't approved or if it hasn't yet started, get a reference\n            // to the ruleset that the latest is based on, which has the latest approved configuration.\n            while (\n                (approvalStatus != JBApprovalStatus.Approved && approvalStatus != JBApprovalStatus.Empty)\n                    // forge-lint: disable-next-line(block-timestamp)\n                    || block.timestamp < ruleset.start\n            ) {\n                rulesetId = ruleset.basedOnId;\n                ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: true});\n                approvalStatus = _approvalStatusOf({projectId: projectId, ruleset: ruleset});\n            }\n        }\n\n        // If the base has no duration, it's still the current one.\n        if (ruleset.duration == 0) return ruleset;\n\n        // Return a simulation of the current ruleset.\n        return _simulateCycledRulesetBasedOn({projectId: projectId, baseRuleset: ruleset, allowMidRuleset: true});\n    }"
           }
         ],
@@ -120115,8 +120125,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 435,
-            "endLine": 445,
+            "startLine": 432,
+            "endLine": 442,
             "source": "function getRulesetOf(\n        uint256 projectId,\n        uint256 rulesetId\n    )\n        external\n        view\n        override\n        returns (JBRuleset memory ruleset)\n    {\n        ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: true});\n    }"
           }
         ],
@@ -120126,8 +120136,8 @@ export const registry = {
             "paramTypes": [
               "uint256"
             ],
-            "startLine": 453,
-            "endLine": 468,
+            "startLine": 450,
+            "endLine": 465,
             "source": "function latestQueuedOf(uint256 projectId)\n        external\n        view\n        override\n        returns (JBRuleset memory ruleset, JBApprovalStatus approvalStatus)\n    {\n        // Get a reference to the latest ruleset's ID.\n        uint256 rulesetId = latestRulesetIdOf[projectId];\n\n        // Resolve the struct for the latest ruleset, with metadata (forwarded to the external approval hook and\n        // returned).\n        ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: true});\n\n        // Resolve the approval status.\n        approvalStatus = _approvalStatusOf({projectId: projectId, ruleset: ruleset});\n    }"
           }
         ],
@@ -120137,8 +120147,8 @@ export const registry = {
             "paramTypes": [
               "uint256"
             ],
-            "startLine": 475,
-            "endLine": 539,
+            "startLine": 472,
+            "endLine": 536,
             "source": "function upcomingOf(uint256 projectId) external view override returns (JBRuleset memory ruleset) {\n        // If the project does not have a latest ruleset, return an empty struct.\n        if (latestRulesetIdOf[projectId] == 0) {\n            return _getStructFor({projectId: 0, rulesetId: 0, withMetadata: false});\n        }\n\n        // Get a reference to the upcoming approvable ruleset's ID.\n        uint256 upcomingApprovableRulesetId = _upcomingApprovableRulesetIdOf(projectId);\n\n        // Keep a reference to its approval status.\n        JBApprovalStatus approvalStatus;\n\n        // If an upcoming approvable ruleset has been queued, and its approval status is Approved or ApprovalExpected,\n        // return its ruleset struct\n        if (upcomingApprovableRulesetId != 0) {\n            ruleset = _getStructFor({projectId: projectId, rulesetId: upcomingApprovableRulesetId, withMetadata: true});\n\n            // Get a reference to the approval status.\n            approvalStatus = _approvalStatusOf({projectId: projectId, ruleset: ruleset});\n\n            // If the approval hook is empty, expects approval, or has approved the ruleset, return it.\n            if (\n                approvalStatus == JBApprovalStatus.Approved || approvalStatus == JBApprovalStatus.ApprovalExpected\n                    || approvalStatus == JBApprovalStatus.Empty\n            ) return ruleset;\n\n            // Resolve the ruleset for the ruleset the upcoming approvable ruleset was based on, with metadata\n            // (used by `_simulateCycledRulesetBasedOn`).\n            ruleset = _getStructFor({projectId: projectId, rulesetId: ruleset.basedOnId, withMetadata: true});\n        } else {\n            // Resolve the ruleset for the latest queued ruleset, with metadata (forwarded to external hooks and used\n            // by `_simulateCycledRulesetBasedOn`).\n            ruleset = _getStructFor({projectId: projectId, rulesetId: latestRulesetIdOf[projectId], withMetadata: true});\n\n            // If the latest ruleset starts in the future, it must start in the distant future\n            // Since it's not the upcoming approvable ruleset. In this case, base the upcoming ruleset on the base\n            // ruleset.\n            // forge-lint: disable-next-line(block-timestamp)\n            while (ruleset.start > block.timestamp) {\n                ruleset = _getStructFor({projectId: projectId, rulesetId: ruleset.basedOnId, withMetadata: true});\n            }\n        }\n\n        // There's no queued if the current has a duration of 0.\n        if (ruleset.duration == 0) return _getStructFor({projectId: 0, rulesetId: 0, withMetadata: false});\n\n        // Get a reference to the approval status.\n        approvalStatus = _approvalStatusOf({projectId: projectId, ruleset: ruleset});\n\n        // Check to see if this ruleset's approval hook hasn't failed.\n        // If so, return a ruleset based on it.\n        if (approvalStatus == JBApprovalStatus.Approved || approvalStatus == JBApprovalStatus.Empty) {\n            return _simulateCycledRulesetBasedOn({projectId: projectId, baseRuleset: ruleset, allowMidRuleset: false});\n        }\n\n        // Get the ruleset of its base ruleset, which carries the last approved configuration. Metadata is needed by\n        // `_simulateCycledRulesetBasedOn`.\n        ruleset = _getStructFor({projectId: projectId, rulesetId: ruleset.basedOnId, withMetadata: true});\n\n        // There's no queued if the base, which must still be the current, has a duration of 0.\n        if (ruleset.duration == 0) return _getStructFor({projectId: 0, rulesetId: 0, withMetadata: false});\n\n        // Return a simulated cycled ruleset.\n        return _simulateCycledRulesetBasedOn({projectId: projectId, baseRuleset: ruleset, allowMidRuleset: false});\n    }"
           }
         ],
@@ -120151,8 +120161,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 552,
-            "endLine": 572,
+            "startLine": 549,
+            "endLine": 569,
             "source": "function deriveCycleNumberFrom(\n        uint256 baseRulesetCycleNumber,\n        uint256 baseRulesetStart,\n        uint256 baseRulesetDuration,\n        uint256 start\n    )\n        public\n        pure\n        returns (uint256)\n    {\n        // A subsequent ruleset to one with a duration of 0 should be the next number.\n        if (baseRulesetDuration == 0) {\n            return baseRulesetCycleNumber + 1;\n        }\n\n        // The difference between the start of the base ruleset and the proposed start.\n        uint256 startDistance = start - baseRulesetStart;\n\n        // Find the number of base rulesets that fit in the start distance.\n        return baseRulesetCycleNumber + (startDistance / baseRulesetDuration);\n    }"
           }
         ],
@@ -120164,8 +120174,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 579,
-            "endLine": 610,
+            "startLine": 576,
+            "endLine": 607,
             "source": "function deriveStartFrom(\n        uint256 baseRulesetStart,\n        uint256 baseRulesetDuration,\n        uint256 mustStartAtOrAfter\n    )\n        public\n        pure\n        returns (uint256 start)\n    {\n        // A subsequent ruleset to one with a duration of 0 should start as soon as possible.\n        if (baseRulesetDuration == 0) return mustStartAtOrAfter;\n\n        // The time when the ruleset immediately after the specified ruleset starts.\n        uint256 nextImmediateStart = baseRulesetStart + baseRulesetDuration;\n\n        // If the next immediate start is now or in the future, return it.\n        if (nextImmediateStart >= mustStartAtOrAfter) {\n            return nextImmediateStart;\n        }\n\n        // The amount of seconds since the `mustStartAtOrAfter` time which results in a start time that might satisfy\n        // the specified limits.\n        uint256 timeFromImmediateStartMultiple = (mustStartAtOrAfter - nextImmediateStart) % baseRulesetDuration;\n\n        // A reference to the first possible start timestamp.\n        start = mustStartAtOrAfter - timeFromImmediateStartMultiple;\n\n        // Add increments of duration as necessary to satisfy the threshold.\n        while (mustStartAtOrAfter > start) {\n            start += baseRulesetDuration;\n        }\n    }"
           }
         ],
@@ -120181,8 +120191,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 622,
-            "endLine": 695,
+            "startLine": 619,
+            "endLine": 692,
             "source": "function deriveWeightFrom(\n        uint256 projectId,\n        uint256 baseRulesetStart,\n        uint256 baseRulesetDuration,\n        uint256 baseRulesetWeight,\n        uint256 baseRulesetWeightCutPercent,\n        uint256 baseRulesetCacheId,\n        uint256 start\n    )\n        public\n        view\n        returns (uint256 weight)\n    {\n        // A subsequent ruleset to one with a duration of 0 should have the next possible weight.\n        if (baseRulesetDuration == 0) {\n            return mulDiv({\n                x: baseRulesetWeight,\n                y: JBConstants.MAX_WEIGHT_CUT_PERCENT - baseRulesetWeightCutPercent,\n                denominator: JBConstants.MAX_WEIGHT_CUT_PERCENT\n            });\n        }\n\n        // The weight should be based off the base ruleset's weight.\n        weight = baseRulesetWeight;\n\n        // If the weight cut percent is 0, the weight doesn't change.\n        if (baseRulesetWeightCutPercent == 0) return weight;\n\n        // The difference between the start of the base ruleset and the proposed start.\n        uint256 startDistance = start - baseRulesetStart;\n\n        // Apply the base ruleset's weight cut percent for each ruleset that has passed.\n        uint256 weightCutMultiple;\n        unchecked {\n            weightCutMultiple = startDistance / baseRulesetDuration; // Non-null duration is excluded above\n        }\n\n        // Check the cache if needed.\n        if (baseRulesetCacheId > 0 && weightCutMultiple > _WEIGHT_CUT_MULTIPLE_CACHE_LOOKUP_THRESHOLD) {\n            // Get a cached weight for the rulesetId.\n            JBRulesetWeightCache memory cache = _weightCacheOf[projectId][baseRulesetCacheId];\n\n            // If a cached value is available, use it.\n            if (cache.weightCutMultiple > 0) {\n                // Set the starting weight to be the cached value.\n                weight = cache.weight;\n\n                // Set the weight cut multiple to be the difference between the cached value and the total weight cut\n                // multiple that should be applied.\n                weightCutMultiple -= cache.weightCutMultiple;\n            }\n        }\n\n        // If too many iterations remain after cache lookup, require the cache to be populated first.\n        // This prevents gas exhaustion for short-duration rulesets with large cycle counts.\n        if (weightCutMultiple > _WEIGHT_CUT_MULTIPLE_CACHE_LOOKUP_THRESHOLD) {\n            revert JBRulesets_WeightCacheRequired({projectId: projectId});\n        }\n\n        // Cache the cut factor and max percent to avoid recomputing each iteration.\n        uint256 cutFactor = JBConstants.MAX_WEIGHT_CUT_PERCENT - baseRulesetWeightCutPercent;\n        uint256 maxPercent = JBConstants.MAX_WEIGHT_CUT_PERCENT;\n\n        for (uint256 i; i < weightCutMultiple;) {\n            // Base the new weight on the specified ruleset's weight.\n            weight = mulDiv({x: weight, y: cutFactor, denominator: maxPercent});\n\n            // The calculation doesn't need to continue if the weight is 0.\n            if (weight == 0) break;\n            unchecked {\n                ++i;\n            }\n        }\n    }"
           }
         ],
@@ -120195,8 +120205,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 706,
-            "endLine": 786,
+            "startLine": 703,
+            "endLine": 783,
             "source": "function _configureIntrinsicPropertiesFor(\n        uint256 projectId,\n        uint256 rulesetId,\n        uint256 weight,\n        uint256 mustStartAtOrAfter\n    )\n        internal\n    {\n        // Keep a reference to the project's latest ruleset's ID.\n        uint256 latestId = latestRulesetIdOf[projectId];\n\n        // If the project doesn't have a ruleset yet, initialize one.\n        if (latestId == 0) {\n            // Use an empty ruleset as the base.\n            return _initializeRulesetFor({\n                projectId: projectId,\n                baseRuleset: _getStructFor({projectId: 0, rulesetId: 0, withMetadata: false}),\n                rulesetId: rulesetId,\n                mustStartAtOrAfter: mustStartAtOrAfter,\n                weight: weight\n            });\n        }\n\n        // Get a reference to the latest ruleset's struct, with metadata because `_approvalStatusOf` forwards the\n        // struct to external approval hooks.\n        JBRuleset memory baseRuleset = _getStructFor({projectId: projectId, rulesetId: latestId, withMetadata: true});\n\n        // Get a reference to the approval status.\n        JBApprovalStatus approvalStatus = _approvalStatusOf({projectId: projectId, ruleset: baseRuleset});\n\n        // If the base ruleset has started but wasn't approved if an approval hook exists\n        // OR it hasn't started but is currently approved\n        // OR it hasn't started but it is likely to be approved and takes place before the proposed one,\n        // set the struct to be the ruleset it's based on, which carries the latest approved ruleset.\n        if (\n            // forge-lint: disable-next-line(block-timestamp)\n            (block.timestamp >= baseRuleset.start\n                    && approvalStatus != JBApprovalStatus.Approved\n                    && approvalStatus != JBApprovalStatus.Empty)\n                // forge-lint: disable-next-line(block-timestamp)\n                || (block.timestamp < baseRuleset.start\n                    && mustStartAtOrAfter < baseRuleset.start + baseRuleset.duration\n                    && approvalStatus != JBApprovalStatus.Approved)\n                // forge-lint: disable-next-line(block-timestamp)\n                || (block.timestamp < baseRuleset.start\n                    && mustStartAtOrAfter >= baseRuleset.start + baseRuleset.duration\n                    && approvalStatus != JBApprovalStatus.Approved\n                    && approvalStatus != JBApprovalStatus.ApprovalExpected\n                    && approvalStatus != JBApprovalStatus.Empty)\n        ) {\n            // Metadata not needed — the fallback ruleset is only used for intrinsic fields (start, basedOnId, etc.)\n            // and not forwarded to any external approval hook.\n            baseRuleset = _getStructFor({projectId: projectId, rulesetId: baseRuleset.basedOnId, withMetadata: false});\n        }\n\n        // Make sure the ruleset starts after the base ruleset.\n        if (baseRuleset.start > mustStartAtOrAfter) mustStartAtOrAfter = baseRuleset.start;\n\n        // The time when the duration of the base ruleset's approval hook has finished.\n        // If the provided ruleset has no approval hook, return 0 (no constraint on start time).\n        uint256 timestampAfterApprovalHook;\n        if (baseRuleset.approvalHook != IJBRulesetApprovalHook(address(0))) {\n            try baseRuleset.approvalHook.DURATION() returns (uint256 duration) {\n                timestampAfterApprovalHook = rulesetId + duration;\n            } catch {\n                // If DURATION() reverts, treat as no approval hook constraint.\n                timestampAfterApprovalHook = 0;\n            }\n        }\n\n        _initializeRulesetFor({\n            projectId: projectId,\n            baseRuleset: baseRuleset,\n            rulesetId: rulesetId,\n            // Can only start after the approval hook.\n            mustStartAtOrAfter: timestampAfterApprovalHook > mustStartAtOrAfter\n                ? timestampAfterApprovalHook\n                : mustStartAtOrAfter,\n            weight: weight\n        });\n    }"
           }
         ],
@@ -120210,8 +120220,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 794,
-            "endLine": 861,
+            "startLine": 791,
+            "endLine": 858,
             "source": "function _initializeRulesetFor(\n        uint256 projectId,\n        JBRuleset memory baseRuleset,\n        uint256 rulesetId,\n        uint256 mustStartAtOrAfter,\n        uint256 weight\n    )\n        internal\n    {\n        // If there is no base, initialize a first ruleset.\n        if (baseRuleset.cycleNumber == 0) {\n            // Set fresh intrinsic properties.\n            _packAndStoreIntrinsicPropertiesOf({\n                rulesetId: rulesetId,\n                projectId: projectId,\n                rulesetCycleNumber: 1,\n                weight: weight,\n                basedOnId: baseRuleset.id,\n                start: mustStartAtOrAfter\n            });\n        } else {\n            // Derive the correct next start time from the base.\n            uint256 start = deriveStartFrom({\n                baseRulesetStart: baseRuleset.start,\n                baseRulesetDuration: baseRuleset.duration,\n                mustStartAtOrAfter: mustStartAtOrAfter\n            });\n\n            // A weight of 1 is a special case that represents inheriting the cut weight of the previous\n            // ruleset.\n            weight = weight == 1\n                ? deriveWeightFrom({\n                    projectId: projectId,\n                    baseRulesetStart: baseRuleset.start,\n                    baseRulesetDuration: baseRuleset.duration,\n                    baseRulesetWeight: baseRuleset.weight,\n                    baseRulesetWeightCutPercent: baseRuleset.weightCutPercent,\n                    baseRulesetCacheId: baseRuleset.id,\n                    start: start\n                })\n                : weight;\n\n            // Derive the correct ruleset cycle number.\n            uint256 rulesetCycleNumber = deriveCycleNumberFrom({\n                baseRulesetCycleNumber: baseRuleset.cycleNumber,\n                baseRulesetStart: baseRuleset.start,\n                baseRulesetDuration: baseRuleset.duration,\n                start: start\n            });\n\n            // Update the intrinsic properties.\n            _packAndStoreIntrinsicPropertiesOf({\n                rulesetId: rulesetId,\n                projectId: projectId,\n                rulesetCycleNumber: rulesetCycleNumber,\n                weight: weight,\n                basedOnId: baseRuleset.id,\n                start: start\n            });\n        }\n\n        // Set the project's latest ruleset configuration.\n        latestRulesetIdOf[projectId] = rulesetId;\n\n        emit RulesetInitialized({\n            rulesetId: rulesetId, projectId: projectId, basedOnId: baseRuleset.id, caller: msg.sender\n        });\n    }"
           }
         ],
@@ -120226,8 +120236,8 @@ export const registry = {
               "uint256",
               "uint256"
             ],
-            "startLine": 870,
-            "endLine": 894,
+            "startLine": 867,
+            "endLine": 891,
             "source": "function _packAndStoreIntrinsicPropertiesOf(\n        uint256 rulesetId,\n        uint256 projectId,\n        uint256 rulesetCycleNumber,\n        uint256 weight,\n        uint256 basedOnId,\n        uint256 start\n    )\n        internal\n    {\n        // `weight` in bits 0-111.\n        uint256 packed = weight;\n\n        // `basedOnId` in bits 112-159.\n        packed |= basedOnId << 112;\n\n        // `start` in bits 160-207.\n        packed |= start << 160;\n\n        // cycle number in bits 208-255.\n        packed |= rulesetCycleNumber << 208;\n\n        // Store the packed value.\n        _packedIntrinsicPropertiesOf[projectId][rulesetId] = packed;\n    }"
           }
         ],
@@ -120238,8 +120248,8 @@ export const registry = {
               "uint256",
               "JBRuleset"
             ],
-            "startLine": 904,
-            "endLine": 928,
+            "startLine": 901,
+            "endLine": 925,
             "source": "function _approvalStatusOf(uint256 projectId, JBRuleset memory ruleset) internal view returns (JBApprovalStatus) {\n        // If there is no ruleset ID to check the approval hook of, the approval hook is empty.\n        if (ruleset.basedOnId == 0) return JBApprovalStatus.Empty;\n\n        // Read only the packed user properties to extract the approval hook address,\n        // avoiding the cost of loading the full parent ruleset struct.\n        uint256 packedUserProperties = _packedUserPropertiesOf[projectId][ruleset.basedOnId];\n        // forge-lint: disable-next-line(unsafe-typecast)\n        IJBRulesetApprovalHook approvalHook = IJBRulesetApprovalHook(address(uint160(packedUserProperties)));\n\n        // If there is no approval hook, it's considered empty.\n        if (approvalHook == IJBRulesetApprovalHook(address(0))) {\n            return JBApprovalStatus.Empty;\n        }\n\n        // Return the approval hook's approval status.\n        // Wrap in try/catch to prevent a reverting approval hook from permanently freezing the project.\n        // Note: A malicious hook that consumes all gas (e.g. infinite loop) could still DoS via gas exhaustion.\n        // This is accepted risk since the project owner chose their own approval hook.\n        try approvalHook.approvalStatusOf({projectId: projectId, ruleset: ruleset}) returns (JBApprovalStatus status) {\n            return status;\n        } catch {\n            return JBApprovalStatus.Failed;\n        }\n    }"
           }
         ],
@@ -120249,8 +120259,8 @@ export const registry = {
             "paramTypes": [
               "uint256"
             ],
-            "startLine": 936,
-            "endLine": 963,
+            "startLine": 933,
+            "endLine": 960,
             "source": "function _currentlyApprovableRulesetIdOf(uint256 projectId) internal view returns (uint256) {\n        // Get a reference to the project's latest ruleset.\n        uint256 rulesetId = latestRulesetIdOf[projectId];\n\n        // Get the struct for the latest ruleset (metadata not needed — only traversal fields are checked).\n        JBRuleset memory ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: false});\n\n        // Loop through all most recently queued rulesets until an approvable one is found, or we've proven one can't\n        // exist.\n        do {\n            // If the latest ruleset is expired, return an empty ruleset.\n            // A ruleset with a duration of 0 cannot expire.\n            // forge-lint: disable-next-line(block-timestamp)\n            if (ruleset.duration != 0 && block.timestamp >= ruleset.start + ruleset.duration) {\n                return 0;\n            }\n\n            // Return the ruleset's `rulesetId` if it has started.\n            // forge-lint: disable-next-line(block-timestamp)\n            if (block.timestamp >= ruleset.start) {\n                return ruleset.id;\n            }\n\n            ruleset = _getStructFor({projectId: projectId, rulesetId: ruleset.basedOnId, withMetadata: false});\n        } while (ruleset.cycleNumber != 0);\n\n        return 0;\n    }"
           }
         ],
@@ -120262,8 +120272,8 @@ export const registry = {
               "uint256",
               "bool"
             ],
-            "startLine": 972,
-            "endLine": 1016,
+            "startLine": 969,
+            "endLine": 1013,
             "source": "function _getStructFor(\n        uint256 projectId,\n        uint256 rulesetId,\n        bool withMetadata\n    )\n        internal\n        view\n        returns (JBRuleset memory ruleset)\n    {\n        // Return an empty ruleset if the specified `rulesetId` is 0.\n        if (rulesetId == 0) return ruleset;\n\n        // forge-lint: disable-next-line(unsafe-typecast)\n        ruleset.id = uint48(rulesetId);\n\n        uint256 packedIntrinsicProperties = _packedIntrinsicPropertiesOf[projectId][rulesetId];\n\n        // `weight` in bits 0-111 bits.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        ruleset.weight = uint112(packedIntrinsicProperties);\n        // `basedOnId` in bits 112-159 bits.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        ruleset.basedOnId = uint48(packedIntrinsicProperties >> 112);\n        // `start` in bits 160-207 bits.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        ruleset.start = uint48(packedIntrinsicProperties >> 160);\n        // `cycleNumber` in bits 208-255 bits.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        ruleset.cycleNumber = uint48(packedIntrinsicProperties >> 208);\n\n        uint256 packedUserProperties = _packedUserPropertiesOf[projectId][rulesetId];\n\n        // approval hook in bits 0-159 bits.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        ruleset.approvalHook = IJBRulesetApprovalHook(address(uint160(packedUserProperties)));\n        // `duration` in bits 160-191 bits.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        ruleset.duration = uint32(packedUserProperties >> 160);\n        // weight cut percent in bits 192-223 bits.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        ruleset.weightCutPercent = uint32(packedUserProperties >> 192);\n\n        // Load metadata only when needed — saves one cold SLOAD (~2,100 gas) for traversal-only paths.\n        if (withMetadata) ruleset.metadata = _metadataOf[projectId][rulesetId];\n    }"
           }
         ],
@@ -120275,8 +120285,8 @@ export const registry = {
               "JBRuleset",
               "bool"
             ],
-            "startLine": 1027,
-            "endLine": 1082,
+            "startLine": 1024,
+            "endLine": 1079,
             "source": "function _simulateCycledRulesetBasedOn(\n        uint256 projectId,\n        JBRuleset memory baseRuleset,\n        bool allowMidRuleset\n    )\n        internal\n        view\n        returns (JBRuleset memory)\n    {\n        // Get the distance from the current time to the start of the next possible ruleset.\n        // If the simulated ruleset must not yet have started, the start time of the simulated ruleset must be in the\n        // future.\n        uint256 mustStartAtOrAfter = !allowMidRuleset\n            ? block.timestamp + 1\n            // forge-lint: disable-next-line(block-timestamp)\n            : baseRuleset.duration >= block.timestamp ? 1 : block.timestamp - baseRuleset.duration + 1;\n\n        // Calculate what the start time should be.\n        uint256 start = deriveStartFrom({\n            baseRulesetStart: baseRuleset.start,\n            baseRulesetDuration: baseRuleset.duration,\n            mustStartAtOrAfter: mustStartAtOrAfter\n        });\n\n        // Calculate what the cycle number should be.\n        uint256 rulesetCycleNumber = deriveCycleNumberFrom({\n            baseRulesetCycleNumber: baseRuleset.cycleNumber,\n            baseRulesetStart: baseRuleset.start,\n            baseRulesetDuration: baseRuleset.duration,\n            start: start\n        });\n\n        return JBRuleset({\n            // forge-lint: disable-next-line(unsafe-typecast)\n            cycleNumber: uint48(rulesetCycleNumber),\n            id: baseRuleset.id,\n            basedOnId: baseRuleset.basedOnId,\n            // forge-lint: disable-next-line(unsafe-typecast)\n            start: uint48(start),\n            duration: baseRuleset.duration,\n            weight: uint112(\n                deriveWeightFrom({\n                    projectId: projectId,\n                    baseRulesetStart: baseRuleset.start,\n                    baseRulesetDuration: baseRuleset.duration,\n                    baseRulesetWeight: baseRuleset.weight,\n                    baseRulesetWeightCutPercent: baseRuleset.weightCutPercent,\n                    baseRulesetCacheId: baseRuleset.id,\n                    start: start\n                })\n            ),\n            weightCutPercent: baseRuleset.weightCutPercent,\n            approvalHook: baseRuleset.approvalHook,\n            metadata: baseRuleset.metadata\n        });\n    }"
           }
         ],
@@ -120286,8 +120296,8 @@ export const registry = {
             "paramTypes": [
               "uint256"
             ],
-            "startLine": 1089,
-            "endLine": 1134,
+            "startLine": 1086,
+            "endLine": 1131,
             "source": "function _upcomingApprovableRulesetIdOf(uint256 projectId) internal view returns (uint256 rulesetId) {\n        // Get a reference to the ID of the project's latest ruleset.\n        rulesetId = latestRulesetIdOf[projectId];\n\n        // Get the struct for the latest ruleset (metadata not needed — only traversal fields are checked).\n        JBRuleset memory ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: false});\n\n        // There is no upcoming ruleset if the latest ruleset has already started.\n        // forge-lint: disable-next-line(block-timestamp)\n        if (block.timestamp >= ruleset.start) return 0;\n\n        // If this is the first ruleset, it is queued.\n        if (ruleset.cycleNumber == 1) return rulesetId;\n\n        // Get a reference to the ID of the ruleset the latest ruleset was based on.\n        uint256 basedOnId = ruleset.basedOnId;\n\n        // Get the necessary properties for the base ruleset.\n        JBRuleset memory baseRuleset;\n\n        // Find the base ruleset that is not still queued.\n        while (true) {\n            baseRuleset = _getStructFor({projectId: projectId, rulesetId: basedOnId, withMetadata: false});\n\n            // If the base ruleset starts in the future,\n            // forge-lint: disable-next-line(block-timestamp)\n            if (block.timestamp < baseRuleset.start) {\n                // Set the `rulesetId` to the one found.\n                rulesetId = baseRuleset.id;\n                // Check the ruleset it was based on in the next iteration.\n                basedOnId = baseRuleset.basedOnId;\n            } else {\n                // Break out of the loop when a base ruleset which has already started is found.\n                break;\n            }\n        }\n\n        // Get the ruleset struct for the ID found (metadata not needed — only `start` and `duration` are checked).\n        ruleset = _getStructFor({projectId: projectId, rulesetId: rulesetId, withMetadata: false});\n\n        // If the latest ruleset doesn't start until after another base ruleset return 0.\n        // forge-lint: disable-next-line(block-timestamp)\n        if (baseRuleset.duration != 0 && block.timestamp < ruleset.start - baseRuleset.duration) {\n            return 0;\n        }\n    }"
           }
         ]
@@ -120296,7 +120306,8 @@ export const registry = {
     "JBSplits": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "824fbbf34d1587460ea0e8f8fde75f40f99cc1d9",
       "path": "src/JBSplits.sol",
       "startLine": 17,
       "endLine": 390,
@@ -120383,7 +120394,8 @@ export const registry = {
     "JBPermissions": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "4fe059163c9cdc4f005f3b3b5a8a13175b9343f2",
       "path": "src/JBPermissions.sol",
       "startLine": 15,
       "endLine": 266,
@@ -120460,7 +120472,8 @@ export const registry = {
     "JBPrices": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "824fbbf34d1587460ea0e8f8fde75f40f99cc1d9",
       "path": "src/JBPrices.sol",
       "startLine": 21,
       "endLine": 406,
@@ -120617,7 +120630,8 @@ export const registry = {
     "JBProjects": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "386a9dc71c73a1e614da9cf2a98e207788034a4b",
       "path": "src/JBProjects.sol",
       "startLine": 18,
       "endLine": 210,
@@ -120710,7 +120724,8 @@ export const registry = {
     "JBFundAccessLimits": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "824fbbf34d1587460ea0e8f8fde75f40f99cc1d9",
       "path": "src/JBFundAccessLimits.sol",
       "startLine": 16,
       "endLine": 381,
@@ -120791,7 +120806,8 @@ export const registry = {
     "JBERC20": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "aebf2e7d4c7f73751e24418a3b33b72018a2b524",
       "path": "src/JBERC20.sol",
       "startLine": 26,
       "endLine": 311,
@@ -121001,7 +121017,8 @@ export const registry = {
     "JBFeelessAddresses": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "824fbbf34d1587460ea0e8f8fde75f40f99cc1d9",
       "path": "src/JBFeelessAddresses.sol",
       "startLine": 14,
       "endLine": 130,
@@ -121071,7 +121088,8 @@ export const registry = {
     "JBDeadline1Day": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "e6f57bdf1fb59430b836631a8f5955a1e60f3e7c",
       "path": "src/periphery/JBDeadline1Day.sol",
       "startLine": 7,
       "endLine": 9,
@@ -121080,7 +121098,8 @@ export const registry = {
     "JBDeadline3Days": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "e6f57bdf1fb59430b836631a8f5955a1e60f3e7c",
       "path": "src/periphery/JBDeadline3Days.sol",
       "startLine": 7,
       "endLine": 9,
@@ -121089,7 +121108,8 @@ export const registry = {
     "JBDeadline3Hours": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "e6f57bdf1fb59430b836631a8f5955a1e60f3e7c",
       "path": "src/periphery/JBDeadline3Hours.sol",
       "startLine": 7,
       "endLine": 9,
@@ -121098,7 +121118,8 @@ export const registry = {
     "JBDeadline7Days": {
       "repo": "nana-core-v6",
       "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+      "ref": "e6f57bdf1fb59430b836631a8f5955a1e60f3e7c",
       "path": "src/periphery/JBDeadline7Days.sol",
       "startLine": 7,
       "endLine": 9,
@@ -121107,7 +121128,8 @@ export const registry = {
     "JB721TiersHook": {
       "repo": "nana-721-hook-v6",
       "githubUrl": "https://github.com/Bananapus/nana-721-hook-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/721-hook-v6@1.0.1",
+      "ref": "fda0fcd8525703b7c8fd28653d04e381fc87d0fb",
       "path": "src/JB721TiersHook.sol",
       "startLine": 39,
       "endLine": 811,
@@ -121428,7 +121450,8 @@ export const registry = {
     "JB721TiersHookStore": {
       "repo": "nana-721-hook-v6",
       "githubUrl": "https://github.com/Bananapus/nana-721-hook-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/721-hook-v6@1.0.1",
+      "ref": "19c2f3bcfb6399338bd494ca08e8189da6d29426",
       "path": "src/JB721TiersHookStore.sol",
       "startLine": 25,
       "endLine": 1643,
@@ -121963,7 +121986,8 @@ export const registry = {
     "JB721TiersHookDeployer": {
       "repo": "nana-721-hook-v6",
       "githubUrl": "https://github.com/Bananapus/nana-721-hook-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/721-hook-v6@1.0.1",
+      "ref": "91f729aa797a7d020f6a73ddc9eda2564accde20",
       "path": "src/JB721TiersHookDeployer.sol",
       "startLine": 19,
       "endLine": 117,
@@ -121986,7 +122010,8 @@ export const registry = {
     "JB721TiersHookProjectDeployer": {
       "repo": "nana-721-hook-v6",
       "githubUrl": "https://github.com/Bananapus/nana-721-hook-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/721-hook-v6@1.0.1",
+      "ref": "627b2626c2a87bed23f1cb8d03d9bfb30d18a0df",
       "path": "src/JB721TiersHookProjectDeployer.sol",
       "startLine": 32,
       "endLine": 489,
@@ -122126,7 +122151,8 @@ export const registry = {
     "JBBuybackHookRegistry": {
       "repo": "nana-buyback-hook-v6",
       "githubUrl": "https://github.com/Bananapus/nana-buyback-hook-v6",
-      "branch": "chore/consolidate-deployment-tree",
+      "sourceRef": "npm:@bananapus/buyback-hook-v6@1.0.0",
+      "ref": "c9757886e2df0797bb4f4e2aa0530de387e63cbc",
       "path": "src/JBBuybackHookRegistry.sol",
       "startLine": 32,
       "endLine": 577,
@@ -122339,7 +122365,8 @@ export const registry = {
     "JBSuckerRegistry": {
       "repo": "nana-suckers-v6",
       "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-      "branch": "agent/native-erc20-mapping-regressions",
+      "sourceRef": "npm:@bananapus/suckers-v6@1.0.2",
+      "ref": "09b6570654aa7c58c75c530cc8f6fa38541fc02c",
       "path": "src/JBSuckerRegistry.sol",
       "startLine": 35,
       "endLine": 1191,
@@ -122778,7 +122805,8 @@ export const registry = {
     "JBOptimismSucker": {
       "repo": "nana-suckers-v6",
       "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-      "branch": "agent/native-erc20-mapping-regressions",
+      "sourceRef": "npm:@bananapus/suckers-v6@1.0.2",
+      "ref": "37dd72f587aad7506f234c5cfd20575ad30f7181",
       "path": "src/JBOptimismSucker.sol",
       "startLine": 25,
       "endLine": 169,
@@ -122836,7 +122864,8 @@ export const registry = {
     "JBArbitrumSucker": {
       "repo": "nana-suckers-v6",
       "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-      "branch": "agent/native-erc20-mapping-regressions",
+      "sourceRef": "npm:@bananapus/suckers-v6@1.0.2",
+      "ref": "37dd72f587aad7506f234c5cfd20575ad30f7181",
       "path": "src/JBArbitrumSucker.sol",
       "startLine": 33,
       "endLine": 391,
@@ -122953,7 +122982,8 @@ export const registry = {
     "JBCCIPSucker": {
       "repo": "nana-suckers-v6",
       "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-      "branch": "agent/native-erc20-mapping-regressions",
+      "sourceRef": "npm:@bananapus/suckers-v6@1.0.2",
+      "ref": "37dd72f587aad7506f234c5cfd20575ad30f7181",
       "path": "src/JBCCIPSucker.sol",
       "startLine": 36,
       "endLine": 399,
@@ -123067,7 +123097,8 @@ export const registry = {
     "JBBaseSucker": {
       "repo": "nana-suckers-v6",
       "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-      "branch": "agent/native-erc20-mapping-regressions",
+      "sourceRef": "npm:@bananapus/suckers-v6@1.0.2",
+      "ref": "7ee76a4456bcb7ae42201aaaccb7eff7ea5071e1",
       "path": "src/JBBaseSucker.sol",
       "startLine": 13,
       "endLine": 48,
@@ -123086,7 +123117,8 @@ export const registry = {
     "JBOmnichainDeployer": {
       "repo": "nana-omnichain-deployers-v6",
       "githubUrl": "https://github.com/Bananapus/nana-omnichain-deployers-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/omnichain-deployers-v6@1.0.1",
+      "ref": "164181be912d5a4956094a215a43cae75b900d05",
       "path": "src/JBOmnichainDeployer.sol",
       "startLine": 49,
       "endLine": 1130,
@@ -123421,549 +123453,11 @@ export const registry = {
         ]
       }
     },
-    "JBTokenDistributor": {
-      "repo": "nana-distributor-v6",
-      "githubUrl": "https://github.com/Bananapus/nana-distributor-v6",
-      "branch": "main",
-      "path": "src/JBTokenDistributor.sol",
-      "startLine": 37,
-      "endLine": 490,
-      "functionsByName": {
-        "processSplitWith": [
-          {
-            "name": "processSplitWith",
-            "paramTypes": [
-              "JBSplitHookContext"
-            ],
-            "startLine": 115,
-            "endLine": 153,
-            "source": "function processSplitWith(JBSplitHookContext calldata context) external payable override {\n        // Only terminals and controllers for the project can call this.\n        if (\n            !DIRECTORY.isTerminalOf({projectId: context.projectId, terminal: IJBTerminal(msg.sender)})\n                && DIRECTORY.controllerOf(context.projectId) != IERC165(msg.sender)\n        ) revert JBTokenDistributor_Unauthorized({projectId: context.projectId, caller: msg.sender});\n\n        // The target hook is the split's beneficiary (the IVotes token address).\n        address hook = address(context.split.beneficiary);\n\n        // Native splits must conserve the terminal's stated context amount exactly.\n        if (context.token == JBConstants.NATIVE_TOKEN) {\n            if (msg.value != context.amount) {\n                revert JBTokenDistributor_NativeAmountMismatch({msgValue: msg.value, contextAmount: context.amount});\n            }\n\n            if (msg.value != 0) {\n                // Split-funded pots go to the default group (0); a split cannot carry a tier set.\n                _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: msg.value});\n            }\n        } else {\n            // Validate that native ETH is not cross-booked under an ERC-20 token.\n            if (msg.value != 0) {\n                revert JBTokenDistributor_TokenMismatch({\n                    token: context.token, expectedToken: JBConstants.NATIVE_TOKEN, msgValue: msg.value\n                });\n            }\n\n            if (context.amount == 0) return;\n\n            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20\n            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.\n            uint256 delta =\n                _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});\n\n            // Assign only the amount actually received to this round's reward pot (default group, 0).\n            _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: delta});\n        }\n    }"
-          }
-        ],
-        "supportsInterface": [
-          {
-            "name": "supportsInterface",
-            "paramTypes": [
-              "bytes4"
-            ],
-            "startLine": 167,
-            "endLine": 170,
-            "source": "function supportsInterface(bytes4 interfaceId) public pure override returns (bool) {\n        return interfaceId == type(IJBTokenDistributor).interfaceId || interfaceId == type(IJBSplitHook).interfaceId\n            || interfaceId == type(IERC165).interfaceId;\n    }"
-          }
-        ],
-        "_claimPastRewards": [
-          {
-            "name": "_claimPastRewards",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "uint256[]",
-              "IERC20[]"
-            ],
-            "startLine": 181,
-            "endLine": 229,
-            "source": "function _claimPastRewards(\n        address hook,\n        uint256 groupId,\n        uint256[] calldata tokenIds,\n        IERC20[] calldata tokens\n    )\n        internal\n        override\n    {\n        // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.\n        uint256 round = currentRound();\n        if (round == 0) return;\n\n        // Current-round funding is excluded. It becomes claimable only after a later round starts. Token distributors\n        // have no tier concept, so `tierIds` stays empty; the group only isolates reward storage.\n        JBClaimContext memory ctx = JBClaimContext({\n            hook: hook,\n            groupId: groupId,\n            tierIds: new uint256[](0),\n            lastClaimableRound: round - 1,\n            vestingReleaseRound: round + VESTING_ROUNDS\n        });\n\n        // Process each reward token independently because each token has its own round funding and claim cursor.\n        for (uint256 i; i < tokens.length;) {\n            IERC20 token = tokens[i];\n            uint256 totalVestingAmount;\n\n            // Materialize this reward token for every staker address encoded in tokenIds.\n            for (uint256 j; j < tokenIds.length;) {\n                uint256 tokenId = tokenIds[j];\n                uint256 tokenAmount = _claimPastRewardsForTokenId({ctx: ctx, tokenId: tokenId, token: token});\n\n                // Accumulate once per reward token so totalVestingAmountOf is updated with one storage write.\n                totalVestingAmount += tokenAmount;\n\n                unchecked {\n                    ++j;\n                }\n            }\n\n            // Track the newly claimed amount as vesting, so later collections unlock against it over time.\n            if (totalVestingAmount != 0) totalVestingAmountOf[hook][token] += totalVestingAmount;\n\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_claimPastRewardsForTokenId": [
-          {
-            "name": "_claimPastRewardsForTokenId",
-            "paramTypes": [
-              "JBClaimContext",
-              "uint256",
-              "IERC20"
-            ],
-            "startLine": 236,
-            "endLine": 282,
-            "source": "function _claimPastRewardsForTokenId(\n        JBClaimContext memory ctx,\n        uint256 tokenId,\n        IERC20 token\n    )\n        internal\n        returns (uint256 tokenAmount)\n    {\n        // Load this staker's cursor for the reward token. All earlier rounds have already been settled.\n        uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][ctx.groupId][tokenId][token];\n\n        // If the cursor is already past the last completed round, this staker is current.\n        if (nextClaimRound > ctx.lastClaimableRound) return 0;\n\n        // Sum this staker's pro-rata share from every resolved completed reward round.\n        uint256 newNextClaimRound;\n        (tokenAmount, newNextClaimRound) = _claimRewardsFor({\n            hook: ctx.hook,\n            groupId: ctx.groupId,\n            tokenId: tokenId,\n            token: token,\n            firstRound: nextClaimRound,\n            lastRound: ctx.lastClaimableRound\n        });\n\n        // Advance the cursor through resolved rounds.\n        nextClaimRoundOf[ctx.hook][ctx.groupId][tokenId][token] = newNextClaimRound;\n\n        // Avoid writing empty vesting entries when no past round allocates rewards to this staker.\n        if (tokenAmount == 0) return 0;\n\n        // All accumulated past rewards start a single fresh vesting schedule at the claim round.\n        vestingDataOf[ctx.hook][ctx.groupId][tokenId][token].push(\n            JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmount, shareClaimed: 0})\n        );\n\n        // Emit once per staker and reward token so offchain systems can track the materialized vesting entry.\n        emit Claimed({\n            hook: ctx.hook,\n            tokenId: tokenId,\n            groupId: ctx.groupId,\n            token: token,\n            amount: tokenAmount,\n            vestingReleaseRound: ctx.vestingReleaseRound,\n            caller: msg.sender\n        });\n    }"
-          }
-        ],
-        "_claimRewardRoundFor": [
-          {
-            "name": "_claimRewardRoundFor",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "JBRewardRoundData"
-            ],
-            "startLine": 289,
-            "endLine": 317,
-            "source": "function _claimRewardRoundFor(\n        address hook,\n        uint256 tokenId,\n        JBRewardRoundData storage rewardRound\n    )\n        internal\n        returns (uint256 tokenAmount)\n    {\n        // Empty-denominator rounds have no pro-rata basis, so they cannot allocate rewards to any staker.\n        if (rewardRound.totalStake == 0) return 0;\n\n        // Use the funding round's snapshot block, not the block at which the staker finally claims.\n        uint256 tokenStakeAmount = _tokenStakeAt({hook: hook, tokenId: tokenId, blockNumber: rewardRound.snapshotBlock});\n\n        // Zero-vote stakers advance their cursor but do not consume reward inventory.\n        if (tokenStakeAmount == 0) return 0;\n\n        // The round's reward pot is split pro-rata across checkpointed voting power.\n        uint256 claimAmount = mulDiv({x: rewardRound.amount, y: tokenStakeAmount, denominator: rewardRound.totalStake});\n\n        // Ignore floor-rounded zero claims to avoid unnecessary storage writes.\n        if (claimAmount == 0) return 0;\n\n        // Track the portion that has started vesting so expiry recycles only the remainder.\n        rewardRound.claimedAmount = _toUint208(uint256(rewardRound.claimedAmount) + claimAmount);\n\n        // Return the exact amount that the caller should append to the staker's vesting entry.\n        tokenAmount = claimAmount;\n    }"
-          }
-        ],
-        "_claimRewardsFor": [
-          {
-            "name": "_claimRewardsFor",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "uint256",
-              "IERC20",
-              "uint256",
-              "uint256"
-            ],
-            "startLine": 328,
-            "endLine": 361,
-            "source": "function _claimRewardsFor(\n        address hook,\n        uint256 groupId,\n        uint256 tokenId,\n        IERC20 token,\n        uint256 firstRound,\n        uint256 lastRound\n    )\n        internal\n        returns (uint256 tokenAmount, uint256 newNextClaimRound)\n    {\n        newNextClaimRound = lastRound + 1;\n\n        // Walk every unclaimed historical round. The caller bounds this to completed rounds only.\n        for (uint256 rewardRoundNumber = firstRound; rewardRoundNumber <= lastRound;) {\n            // Load this round's reward data for the hook, group, and reward token.\n            JBRewardRoundData storage rewardRound = rewardRoundOf[hook][groupId][token][rewardRoundNumber];\n\n            // Skip rounds that never received funding.\n            if (rewardRound.amount != 0) {\n                // Expired rounds forfeit unmaterialized inventory into the current active-voter set.\n                if (_rewardRoundExpired(rewardRound)) {\n                    _recycleExpiredRewardRound({hook: hook, groupId: groupId, token: token, round: rewardRoundNumber});\n                } else {\n                    // Live rounds can still be materialized by snapshot voters into fresh vesting entries.\n                    tokenAmount += _claimRewardRoundFor({hook: hook, tokenId: tokenId, rewardRound: rewardRound});\n                }\n            }\n\n            unchecked {\n                ++rewardRoundNumber;\n            }\n        }\n    }"
-          }
-        ],
-        "_canClaim": [
-          {
-            "name": "_canClaim",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "address"
-            ],
-            "startLine": 373,
-            "endLine": 376,
-            "source": "function _canClaim(address hook, uint256 tokenId, address account) internal pure override returns (bool canClaim) {\n        hook; // Silence unused variable warning.\n        canClaim = _claimBeneficiaryOf({hook: hook, tokenId: tokenId}) == account;\n    }"
-          }
-        ],
-        "_claimBeneficiaryOf": [
-          {
-            "name": "_claimBeneficiaryOf",
-            "paramTypes": [
-              "address",
-              "uint256"
-            ],
-            "startLine": 383,
-            "endLine": 389,
-            "source": "function _claimBeneficiaryOf(address hook, uint256 tokenId) internal pure override returns (address beneficiary) {\n        hook; // Silence unused variable warning.\n        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId({tokenId: tokenId});\n        // The high bits were checked above, so this cast recovers the encoded address.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        beneficiary = address(uint160(tokenId));\n    }"
-          }
-        ],
-        "_requireCanClaimTokenIds": [
-          {
-            "name": "_requireCanClaimTokenIds",
-            "paramTypes": [
-              "address",
-              "uint256[]"
-            ],
-            "startLine": 394,
-            "endLine": 405,
-            "source": "function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view override {\n        // Each tokenId is an encoded address, so every requested claim must belong to msg.sender.\n        for (uint256 i; i < tokenIds.length;) {\n            if (!_canClaim({hook: hook, tokenId: tokenIds[i], account: msg.sender})) {\n                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: msg.sender});\n            }\n\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_tokenBurned": [
-          {
-            "name": "_tokenBurned",
-            "paramTypes": [
-              "address",
-              "uint256"
-            ],
-            "startLine": 412,
-            "endLine": 416,
-            "source": "function _tokenBurned(address hook, uint256 tokenId) internal pure override returns (bool tokenWasBurned) {\n        hook;\n        tokenId;\n        tokenWasBurned = false;\n    }"
-          }
-        ],
-        "_tokenStake": [
-          {
-            "name": "_tokenStake",
-            "paramTypes": [
-              "address",
-              "uint256"
-            ],
-            "startLine": 424,
-            "endLine": 427,
-            "source": "function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {\n        tokenStakeAmount =\n            _tokenStakeAt({hook: hook, tokenId: tokenId, blockNumber: roundSnapshotBlock[currentRound()]});\n    }"
-          }
-        ],
-        "_tokenStakeAt": [
-          {
-            "name": "_tokenStakeAt",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "uint256"
-            ],
-            "startLine": 434,
-            "endLine": 452,
-            "source": "function _tokenStakeAt(\n        address hook,\n        uint256 tokenId,\n        uint256 blockNumber\n    )\n        internal\n        view\n        returns (uint256 tokenStakeAmount)\n    {\n        // Reject aliases where high bits would be truncated by the address cast below.\n        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId({tokenId: tokenId});\n\n        // The high bits were checked above, so this cast recovers the encoded address.\n        // forge-lint: disable-next-line(unsafe-typecast)\n        address account = address(uint160(tokenId));\n\n        // Query the staker's delegated votes at the reward round's fixed snapshot block.\n        tokenStakeAmount = IVotes(hook).getPastVotes({account: account, timepoint: blockNumber});\n    }"
-          }
-        ],
-        "_totalStake": [
-          {
-            "name": "_totalStake",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "uint256"
-            ],
-            "startLine": 461,
-            "endLine": 475,
-            "source": "function _totalStake(\n        address hook,\n        uint256 groupId,\n        uint256 blockNumber\n    )\n        internal\n        view\n        override\n        returns (uint256 totalStakedAmount)\n    {\n        groupId; // Silence unused variable warning — token distributors are group-agnostic in weight.\n\n        // All token reward rounds split only across units delegated to nonzero delegates at the snapshot block.\n        totalStakedAmount = IJBActiveVotes(hook).getPastTotalActiveVotes(blockNumber);\n    }"
-          }
-        ],
-        "_validateTokenIds": [
-          {
-            "name": "_validateTokenIds",
-            "paramTypes": [
-              "address",
-              "uint256[]"
-            ],
-            "startLine": 480,
-            "endLine": 489,
-            "source": "function _validateTokenIds(address hook, uint256[] calldata tokenIds) internal pure override {\n        // Permissionless helpers can start vesting for any valid encoded staker slot.\n        for (uint256 i; i < tokenIds.length;) {\n            _claimBeneficiaryOf({hook: hook, tokenId: tokenIds[i]});\n\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ]
-      }
-    },
-    "JB721Distributor": {
-      "repo": "nana-distributor-v6",
-      "githubUrl": "https://github.com/Bananapus/nana-distributor-v6",
-      "branch": "main",
-      "path": "src/JB721Distributor.sol",
-      "startLine": 34,
-      "endLine": 914,
-      "functionsByName": {
-        "beginVesting": [
-          {
-            "name": "beginVesting",
-            "paramTypes": [
-              "address",
-              "uint256[]",
-              "uint256[]",
-              "IERC20[]"
-            ],
-            "startLine": 152,
-            "endLine": 162,
-            "source": "function beginVesting(\n        address hook,\n        uint256[] calldata tierIds,\n        uint256[] calldata tokenIds,\n        IERC20[] calldata tokens\n    )\n        external\n        override\n    {\n        _beginVesting({hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens});\n    }"
-          }
-        ],
-        "fund": [
-          {
-            "name": "fund",
-            "paramTypes": [
-              "address",
-              "uint256[]",
-              "IERC20",
-              "uint256"
-            ],
-            "startLine": 171,
-            "endLine": 181,
-            "source": "function fund(address hook, uint256[] calldata tierIds, IERC20 token, uint256 amount) external payable override {\n        // Derive the canonical group ID for the tier set.\n        uint256 groupId = _groupIdFor(tierIds);\n\n        // Record the tier set the first time a tier-scoped group is funded, so the stake math can scope it later.\n        if (groupId != 0 && _tierIdsOfGroup[hook][groupId].length == 0) {\n            _tierIdsOfGroup[hook][groupId] = tierIds;\n        }\n\n        _fund({hook: hook, groupId: groupId, token: token, amount: amount});\n    }"
-          }
-        ],
-        "processSplitWith": [
-          {
-            "name": "processSplitWith",
-            "paramTypes": [
-              "JBSplitHookContext"
-            ],
-            "startLine": 189,
-            "endLine": 227,
-            "source": "function processSplitWith(JBSplitHookContext calldata context) external payable override {\n        // Only terminals and controllers for the project can call this.\n        if (\n            !DIRECTORY.isTerminalOf({projectId: context.projectId, terminal: IJBTerminal(msg.sender)})\n                && DIRECTORY.controllerOf(context.projectId) != IERC165(msg.sender)\n        ) revert JB721Distributor_Unauthorized({projectId: context.projectId, caller: msg.sender});\n\n        // The target hook is the split's beneficiary.\n        address hook = address(context.split.beneficiary);\n\n        // Native splits must conserve the terminal's stated context amount exactly.\n        if (context.token == JBConstants.NATIVE_TOKEN) {\n            if (msg.value != context.amount) {\n                revert JB721Distributor_NativeAmountMismatch({msgValue: msg.value, contextAmount: context.amount});\n            }\n\n            if (msg.value != 0) {\n                // Split-funded pots go to the all-tiers group (0); a split cannot carry a tier set.\n                _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: msg.value});\n            }\n        } else {\n            // Validate that native ETH is not cross-booked under an ERC-20 token.\n            if (msg.value != 0) {\n                revert JB721Distributor_TokenMismatch({\n                    token: context.token, expectedToken: JBConstants.NATIVE_TOKEN, msgValue: msg.value\n                });\n            }\n\n            if (context.amount == 0) return;\n\n            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20\n            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.\n            uint256 delta =\n                _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});\n\n            // Assign only the amount actually received to this round's reward pot (all-tiers group, 0).\n            _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: delta});\n        }\n    }"
-          }
-        ],
-        "recycleExpiredRewards": [
-          {
-            "name": "recycleExpiredRewards",
-            "paramTypes": [
-              "address",
-              "uint256[]",
-              "IERC20",
-              "uint256[]"
-            ],
-            "startLine": 235,
-            "endLine": 246,
-            "source": "function recycleExpiredRewards(\n        address hook,\n        uint256[] calldata tierIds,\n        IERC20 token,\n        uint256[] calldata rounds\n    )\n        external\n        override\n        returns (uint256 amount)\n    {\n        amount = _recycleExpiredRewards({hook: hook, groupId: _groupIdFor(tierIds), token: token, rounds: rounds});\n    }"
-          }
-        ],
-        "releaseForfeitedRewards": [
-          {
-            "name": "releaseForfeitedRewards",
-            "paramTypes": [
-              "address",
-              "uint256[]",
-              "uint256[]",
-              "IERC20[]",
-              "address"
-            ],
-            "startLine": 256,
-            "endLine": 269,
-            "source": "function releaseForfeitedRewards(\n        address hook,\n        uint256[] calldata tierIds,\n        uint256[] calldata tokenIds,\n        IERC20[] calldata tokens,\n        address beneficiary\n    )\n        external\n        override\n    {\n        _releaseForfeitedRewards({\n            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary\n        });\n    }"
-          }
-        ],
-        "claimedFor": [
-          {
-            "name": "claimedFor",
-            "paramTypes": [
-              "address",
-              "uint256[]",
-              "uint256",
-              "IERC20"
-            ],
-            "startLine": 281,
-            "endLine": 294,
-            "source": "function claimedFor(\n        address hook,\n        uint256[] calldata tierIds,\n        uint256 tokenId,\n        IERC20 token\n    )\n        external\n        view\n        override\n        returns (uint256 tokenAmount)\n    {\n        tokenAmount =\n            _unclaimedVestingAmountOf({hook: hook, groupId: _groupIdFor(tierIds), tokenId: tokenId, token: token});\n    }"
-          }
-        ],
-        "collectableFor": [
-          {
-            "name": "collectableFor",
-            "paramTypes": [
-              "address",
-              "uint256[]",
-              "uint256",
-              "IERC20"
-            ],
-            "startLine": 303,
-            "endLine": 315,
-            "source": "function collectableFor(\n        address hook,\n        uint256[] calldata tierIds,\n        uint256 tokenId,\n        IERC20 token\n    )\n        external\n        view\n        override\n        returns (uint256 tokenAmount)\n    {\n        tokenAmount = _collectableFor({hook: hook, groupId: _groupIdFor(tierIds), tokenId: tokenId, token: token});\n    }"
-          }
-        ],
-        "tierIdsOf": [
-          {
-            "name": "tierIdsOf",
-            "paramTypes": [
-              "address",
-              "uint256"
-            ],
-            "startLine": 321,
-            "endLine": 323,
-            "source": "function tierIdsOf(address hook, uint256 groupId) external view override returns (uint256[] memory tierIds) {\n        tierIds = _tierIdsOfGroup[hook][groupId];\n    }"
-          }
-        ],
-        "borrowAgainstVesting": [
-          {
-            "name": "borrowAgainstVesting",
-            "paramTypes": [
-              "address",
-              "uint256[]",
-              "uint256[]",
-              "IERC20[]",
-              "address",
-              "uint256",
-              "uint256",
-              "address payable"
-            ],
-            "startLine": 340,
-            "endLine": 364,
-            "source": "function borrowAgainstVesting(\n        address hook,\n        uint256[] calldata tierIds,\n        uint256[] calldata tokenIds,\n        IERC20[] calldata tokens,\n        address sourceToken,\n        uint256 minBorrowAmount,\n        uint256 prepaidFeePercent,\n        address payable beneficiary\n    )\n        external\n        override\n        returns (uint256 loanId, uint256 collateralCount)\n    {\n        (loanId, collateralCount) = _borrowAgainstVestingFor({\n            hook: hook,\n            groupId: _groupIdFor(tierIds),\n            tokenIds: tokenIds,\n            tokens: tokens,\n            sourceToken: sourceToken,\n            minBorrowAmount: minBorrowAmount,\n            prepaidFeePercent: prepaidFeePercent,\n            beneficiary: beneficiary\n        });\n    }"
-          }
-        ],
-        "collectVestedRewards": [
-          {
-            "name": "collectVestedRewards",
-            "paramTypes": [
-              "address",
-              "uint256[]",
-              "uint256[]",
-              "IERC20[]",
-              "address"
-            ],
-            "startLine": 372,
-            "endLine": 385,
-            "source": "function collectVestedRewards(\n        address hook,\n        uint256[] calldata tierIds,\n        uint256[] calldata tokenIds,\n        IERC20[] calldata tokens,\n        address beneficiary\n    )\n        external\n        override\n    {\n        _collectVestedRewards({\n            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary\n        });\n    }"
-          }
-        ],
-        "supportsInterface": [
-          {
-            "name": "supportsInterface",
-            "paramTypes": [
-              "bytes4"
-            ],
-            "startLine": 394,
-            "endLine": 397,
-            "source": "function supportsInterface(bytes4 interfaceId) public pure override returns (bool) {\n        return interfaceId == type(IJB721Distributor).interfaceId || interfaceId == type(IJBSplitHook).interfaceId\n            || interfaceId == type(IERC165).interfaceId;\n    }"
-          }
-        ],
-        "_claimPastRewards": [
-          {
-            "name": "_claimPastRewards",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "uint256[]",
-              "IERC20[]"
-            ],
-            "startLine": 408,
-            "endLine": 443,
-            "source": "function _claimPastRewards(\n        address hook,\n        uint256 groupId,\n        uint256[] calldata tokenIds,\n        IERC20[] calldata tokens\n    )\n        internal\n        override\n    {\n        // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.\n        uint256 round = currentRound();\n        if (round == 0) return;\n\n        // Current-round funding is excluded. It becomes claimable only after a later round starts. For a tier-scoped\n        // group, load the tier set once so per-token eligibility can be checked without repeated storage reads.\n        JBClaimContext memory ctx = JBClaimContext({\n            hook: hook,\n            groupId: groupId,\n            tierIds: groupId == 0 ? new uint256[](0) : _tierIdsOfGroup[hook][groupId],\n            lastClaimableRound: round - 1,\n            vestingReleaseRound: round + VESTING_ROUNDS\n        });\n\n        // Process each reward token independently because each token has its own round funding and claim cursor.\n        for (uint256 i; i < tokens.length;) {\n            IERC20 token = tokens[i];\n            uint256 totalVestingAmount = _claimPastRewardsForToken({ctx: ctx, tokenIds: tokenIds, token: token});\n\n            // Track the newly claimed amount as vesting, so later collections unlock against it over time.\n            if (totalVestingAmount != 0) totalVestingAmountOf[hook][token] += totalVestingAmount;\n\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_claimPastRewardsForToken": [
-          {
-            "name": "_claimPastRewardsForToken",
-            "paramTypes": [
-              "JBClaimContext",
-              "uint256[]",
-              "IERC20"
-            ],
-            "startLine": 450,
-            "endLine": 548,
-            "source": "function _claimPastRewardsForToken(\n        JBClaimContext memory ctx,\n        uint256[] calldata tokenIds,\n        IERC20 token\n    )\n        internal\n        returns (uint256 totalVestingAmount)\n    {\n        uint256[] memory tokenAmounts = new uint256[](tokenIds.length);\n        uint256 firstClaimRound = ctx.lastClaimableRound + 1;\n\n        // Find the earliest cursor in the batch, skipping token IDs that are already current.\n        for (uint256 i; i < tokenIds.length;) {\n            uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[i]][token];\n            if (nextClaimRound <= ctx.lastClaimableRound && nextClaimRound < firstClaimRound) {\n                firstClaimRound = nextClaimRound;\n            }\n\n            unchecked {\n                ++i;\n            }\n        }\n\n        // If every token ID is already current, there is nothing to materialize.\n        if (firstClaimRound > ctx.lastClaimableRound) return 0;\n\n        // Walk every unclaimed historical round needed by at least one token ID.\n        for (uint256 rewardRoundNumber = firstClaimRound; rewardRoundNumber <= ctx.lastClaimableRound;) {\n            // Load this reward round's funding, snapshot, claim counter, and deadline.\n            JBRewardRoundData storage rewardRound = rewardRoundOf[ctx.hook][ctx.groupId][token][rewardRoundNumber];\n\n            // Skip rounds that never received funding.\n            if (rewardRound.amount != 0) {\n                // Expired rounds can no longer be claimed as-is; recycle their unclaimed remainder instead.\n                if (_rewardRoundExpired(rewardRound)) {\n                    _recycleExpiredRewardRound({\n                        hook: ctx.hook, groupId: ctx.groupId, token: token, round: rewardRoundNumber\n                    });\n                } else if (rewardRound.totalStake != 0) {\n                    // Bundle the fixed round data used by every NFT in the batch.\n                    JBVestContext memory vestCtx = JBVestContext({\n                        hook: ctx.hook,\n                        groupId: ctx.groupId,\n                        tierIds: ctx.tierIds,\n                        token: token,\n                        distributable: rewardRound.amount,\n                        totalStakeAmount: rewardRound.totalStake,\n                        vestingReleaseRound: ctx.vestingReleaseRound,\n                        rewardRound: rewardRoundNumber,\n                        snapshotBlock: rewardRound.snapshotBlock\n                    });\n\n                    // Claim this round for every eligible token ID that has not already advanced past it.\n                    uint256 roundVestingAmount =\n                        _claimRewardRoundForTokenIds({ctx: vestCtx, tokenIds: tokenIds, tokenAmounts: tokenAmounts});\n\n                    // Track only the amount that actually started vesting, leaving zero-vote and dust amounts\n                    // recyclable.\n                    if (roundVestingAmount != 0) {\n                        rewardRound.claimedAmount = _toUint208(uint256(rewardRound.claimedAmount) + roundVestingAmount);\n\n                        // Add this round's vesting amount into the reward token batch total.\n                        totalVestingAmount += roundVestingAmount;\n                    }\n                }\n            }\n\n            unchecked {\n                ++rewardRoundNumber;\n            }\n        }\n\n        // Advance cursors even when a token ID earned zero, so empty or zero-stake rounds are not rescanned forever.\n        for (uint256 i; i < tokenIds.length;) {\n            uint256 tokenId = tokenIds[i];\n            nextClaimRoundOf[ctx.hook][ctx.groupId][tokenId][token] = ctx.lastClaimableRound + 1;\n\n            // All accumulated past rewards for this NFT start a single fresh vesting schedule at the claim round.\n            if (tokenAmounts[i] != 0) {\n                vestingDataOf[ctx.hook][ctx.groupId][tokenId][token].push(\n                    JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmounts[i], shareClaimed: 0})\n                );\n\n                emit Claimed({\n                    hook: ctx.hook,\n                    tokenId: tokenId,\n                    groupId: ctx.groupId,\n                    token: token,\n                    amount: tokenAmounts[i],\n                    vestingReleaseRound: ctx.vestingReleaseRound,\n                    caller: msg.sender\n                });\n            }\n\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_claimRewardRoundForTokenIds": [
-          {
-            "name": "_claimRewardRoundForTokenIds",
-            "paramTypes": [
-              "JBVestContext",
-              "uint256[]",
-              "uint256[]"
-            ],
-            "startLine": 555,
-            "endLine": 598,
-            "source": "function _claimRewardRoundForTokenIds(\n        JBVestContext memory ctx,\n        uint256[] calldata tokenIds,\n        uint256[] memory tokenAmounts\n    )\n        internal\n        returns (uint256 totalVestingAmount)\n    {\n        // Allocate scratch arrays sized to the maximum possible number of distinct owner-tier caps in this batch.\n        address[] memory owners = new address[](tokenIds.length);\n        uint256[] memory tierIds = new uint256[](tokenIds.length);\n        uint256[] memory consumed = new uint256[](tokenIds.length);\n        uint256 uniqueCount;\n\n        // Claim each token ID that has not yet advanced past this reward round.\n        for (uint256 j; j < tokenIds.length;) {\n            if (nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[j]][ctx.token] <= ctx.rewardRound) {\n                (uint256 tokenAmount, uint256 newUniqueCount) = _claimRewardRoundForTokenId({\n                    ctx: ctx,\n                    tokenId: tokenIds[j],\n                    owners: owners,\n                    tierIds: tierIds,\n                    consumed: consumed,\n                    uniqueCount: uniqueCount\n                });\n\n                uniqueCount = newUniqueCount;\n                tokenAmounts[j] += tokenAmount;\n                totalVestingAmount += tokenAmount;\n            }\n\n            unchecked {\n                ++j;\n            }\n        }\n\n        // Persist consumed active tier units to storage to prevent cap resets across separate claim calls.\n        for (uint256 k; k < uniqueCount;) {\n            _consumedTierVotesOf[ctx.hook][ctx.groupId][ctx.token][ctx.rewardRound][owners[k]][tierIds[k]] = consumed[k];\n            unchecked {\n                ++k;\n            }\n        }\n    }"
-          }
-        ],
-        "_claimRewardRoundForTokenId": [
-          {
-            "name": "_claimRewardRoundForTokenId",
-            "paramTypes": [
-              "JBVestContext",
-              "uint256",
-              "address[]",
-              "uint256[]",
-              "uint256[]",
-              "uint256"
-            ],
-            "startLine": 609,
-            "endLine": 685,
-            "source": "function _claimRewardRoundForTokenId(\n        JBVestContext memory ctx,\n        uint256 tokenId,\n        address[] memory owners,\n        uint256[] memory tierIds,\n        uint256[] memory consumed,\n        uint256 uniqueCount\n    )\n        internal\n        view\n        returns (uint256 tokenAmount, uint256 newUniqueCount)\n    {\n        newUniqueCount = uniqueCount;\n\n        // Read the token's tier so all-tiers and tier-scoped groups use the same active tier cap.\n        uint256 tierId = IJB721TiersHook(ctx.hook).STORE().tierIdOfToken(tokenId);\n\n        // Tier-scoped groups only include NFTs whose tier is part of the funded tier set.\n        if (ctx.groupId != 0 && !_isTierInSet({tierId: tierId, tierIds: ctx.tierIds})) {\n            return (0, newUniqueCount);\n        }\n\n        uint256 ownerIndex;\n        uint256 activeTierVotes;\n        uint256 votingUnits;\n        {\n            // Read the token's tier voting units once; this is the per-token maximum claim numerator.\n            votingUnits =\n            IJB721TiersHook(ctx.hook)\n            .STORE()\n            .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;\n\n            // Use the funding round's snapshot block, not the block at which the NFT owner finally claims.\n            address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock});\n            if (owner == address(0)) return (0, newUniqueCount);\n\n            // Cap this NFT against the snapshot owner's active units for this exact tier.\n            activeTierVotes = IJB721TiersHook(ctx.hook).checkpoints()\n                .getPastAccountTierActiveVotes({account: owner, tierId: tierId, blockNumber: ctx.snapshotBlock});\n            if (activeTierVotes == 0) return (0, newUniqueCount);\n\n            bool found;\n            for (uint256 k; k < newUniqueCount;) {\n                if (owners[k] == owner && tierIds[k] == tierId) {\n                    ownerIndex = k;\n                    found = true;\n                    break;\n                }\n                unchecked {\n                    ++k;\n                }\n            }\n\n            if (!found) {\n                ownerIndex = newUniqueCount;\n                owners[newUniqueCount] = owner;\n                tierIds[newUniqueCount] = tierId;\n                // Initialize from persistent storage to prevent cap resets across separate claim calls.\n                consumed[newUniqueCount] =\n                    _consumedTierVotesOf[ctx.hook][ctx.groupId][ctx.token][ctx.rewardRound][owner][tierId];\n                unchecked {\n                    ++newUniqueCount;\n                }\n            }\n        }\n\n        uint256 remaining = activeTierVotes > consumed[ownerIndex] ? activeTierVotes - consumed[ownerIndex] : 0;\n        uint256 stake = votingUnits < remaining ? votingUnits : remaining;\n        if (stake == 0) return (0, newUniqueCount);\n\n        // The round's reward pot is split pro-rata across checkpointed voting power.\n        tokenAmount = mulDiv({x: ctx.distributable, y: stake, denominator: ctx.totalStakeAmount});\n        if (tokenAmount == 0) return (0, newUniqueCount);\n\n        // Only non-zero reward claims consume the snapshot owner's active tier budget.\n        consumed[ownerIndex] += stake;\n    }"
-          }
-        ],
-        "_canClaim": [
-          {
-            "name": "_canClaim",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "address"
-            ],
-            "startLine": 696,
-            "endLine": 698,
-            "source": "function _canClaim(address hook, uint256 tokenId, address account) internal view override returns (bool canClaim) {\n        canClaim = _claimBeneficiaryOf({hook: hook, tokenId: tokenId}) == account;\n    }"
-          }
-        ],
-        "_claimBeneficiaryOf": [
-          {
-            "name": "_claimBeneficiaryOf",
-            "paramTypes": [
-              "address",
-              "uint256"
-            ],
-            "startLine": 704,
-            "endLine": 707,
-            "source": "function _claimBeneficiaryOf(address hook, uint256 tokenId) internal view override returns (address beneficiary) {\n        // The hook's `ownerOf` reverts for burned or nonexistent NFTs, so only live NFTs can collect.\n        beneficiary = IERC721(hook).ownerOf(tokenId);\n    }"
-          }
-        ],
-        "_groupIdFor": [
-          {
-            "name": "_groupIdFor",
-            "paramTypes": [
-              "uint256[]"
-            ],
-            "startLine": 712,
-            "endLine": 723,
-            "source": "function _groupIdFor(uint256[] calldata tierIds) internal pure returns (uint256 groupId) {\n        if (tierIds.length == 0) return 0;\n        for (uint256 i = 1; i < tierIds.length;) {\n            if (tierIds[i] <= tierIds[i - 1]) {\n                revert JB721Distributor_TierIdsNotIncreasing({previousTierId: tierIds[i - 1], tierId: tierIds[i]});\n            }\n            unchecked {\n                ++i;\n            }\n        }\n        groupId = uint256(keccak256(abi.encode(tierIds)));\n    }"
-          }
-        ],
-        "_isTierInSet": [
-          {
-            "name": "_isTierInSet",
-            "paramTypes": [
-              "uint256",
-              "uint256[]"
-            ],
-            "startLine": 729,
-            "endLine": 738,
-            "source": "function _isTierInSet(uint256 tierId, uint256[] memory tierIds) internal pure returns (bool found) {\n        for (uint256 i; i < tierIds.length;) {\n            if (tierIds[i] == tierId) return true;\n            // The set is strictly increasing, so once an entry exceeds the target it cannot appear later.\n            if (tierIds[i] > tierId) return false;\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_requireCanClaimTokenIds": [
-          {
-            "name": "_requireCanClaimTokenIds",
-            "paramTypes": [
-              "address",
-              "uint256[]"
-            ],
-            "startLine": 743,
-            "endLine": 760,
-            "source": "function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view override {\n        // Each requested NFT must currently belong to msg.sender and appear in strictly increasing order.\n        for (uint256 i; i < tokenIds.length;) {\n            uint256 tokenId = tokenIds[i];\n\n            if (i != 0 && tokenId <= tokenIds[i - 1]) {\n                revert JB721Distributor_TokenIdsNotIncreasing({previousTokenId: tokenIds[i - 1], tokenId: tokenId});\n            }\n\n            if (!_canClaim({hook: hook, tokenId: tokenId, account: msg.sender})) {\n                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenId, account: msg.sender});\n            }\n\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_tokenBurned": [
-          {
-            "name": "_tokenBurned",
-            "paramTypes": [
-              "address",
-              "uint256"
-            ],
-            "startLine": 766,
-            "endLine": 772,
-            "source": "function _tokenBurned(address hook, uint256 tokenId) internal view override returns (bool tokenWasBurned) {\n        try IERC721(hook).ownerOf(tokenId) returns (address) {\n            tokenWasBurned = false;\n        } catch {\n            tokenWasBurned = true;\n        }\n    }"
-          }
-        ],
-        "_validateForfeitedTokenIds": [
-          {
-            "name": "_validateForfeitedTokenIds",
-            "paramTypes": [
-              "address",
-              "uint256[]"
-            ],
-            "startLine": 779,
-            "endLine": 794,
-            "source": "function _validateForfeitedTokenIds(address hook, uint256[] calldata tokenIds) internal pure override {\n        hook;\n\n        // Permissionless forfeiture callers must submit each burned NFT once in canonical order.\n        for (uint256 i; i < tokenIds.length;) {\n            uint256 tokenId = tokenIds[i];\n\n            if (i != 0 && tokenId <= tokenIds[i - 1]) {\n                revert JB721Distributor_TokenIdsNotIncreasing({previousTokenId: tokenIds[i - 1], tokenId: tokenId});\n            }\n\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_tokenStake": [
-          {
-            "name": "_tokenStake",
-            "paramTypes": [
-              "address",
-              "uint256"
-            ],
-            "startLine": 803,
-            "endLine": 824,
-            "source": "function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {\n        uint256 tierId = IJB721TiersHook(hook).STORE().tierIdOfToken(tokenId);\n        uint256 votingUnits =\n            IJB721TiersHook(hook)\n        .STORE()\n        .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;\n\n        // Stake eligibility is fixed at the round snapshot block, not the caller's current block.\n        uint256 snapshotBlock = roundSnapshotBlock[currentRound()];\n        address owner = _snapshotOwnerOf({hook: hook, tokenId: tokenId, snapshotBlock: snapshotBlock});\n        if (owner == address(0)) return 0;\n\n        // Read the owner's active units for this token's tier at the snapshot block.\n        uint256 activeTierVotes = IJB721TiersHook(hook).checkpoints()\n            .getPastAccountTierActiveVotes({account: owner, tierId: tierId, blockNumber: snapshotBlock});\n\n        // If the owner had no active units in this tier at the snapshot block, the token is ineligible.\n        if (activeTierVotes == 0) return 0;\n\n        // Cap at the token's tier voting units; owner-level consumption is applied when a round is claimed.\n        tokenStakeAmount = votingUnits < activeTierVotes ? votingUnits : activeTierVotes;\n    }"
-          }
-        ],
-        "_totalStake": [
-          {
-            "name": "_totalStake",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "uint256"
-            ],
-            "startLine": 834,
-            "endLine": 859,
-            "source": "function _totalStake(\n        address hook,\n        uint256 groupId,\n        uint256 blockNumber\n    )\n        internal\n        view\n        override\n        returns (uint256 total)\n    {\n        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).checkpoints();\n\n        // All-tiers group (0): the global checkpointed active voting supply.\n        if (groupId == 0) {\n            return checkpoints.getPastTotalActiveVotes(blockNumber);\n        }\n\n        // Tier-scoped group: sum each funded tier's active voting units at the snapshot block.\n        uint256[] memory tierIds = _tierIdsOfGroup[hook][groupId];\n        for (uint256 i; i < tierIds.length;) {\n            total += checkpoints.getPastTotalTierActiveVotes({tierId: tierIds[i], blockNumber: blockNumber});\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_validateTokenIds": [
-          {
-            "name": "_validateTokenIds",
-            "paramTypes": [
-              "address",
-              "uint256[]"
-            ],
-            "startLine": 864,
-            "endLine": 880,
-            "source": "function _validateTokenIds(address hook, uint256[] calldata tokenIds) internal view override {\n        // Permissionless helpers can start vesting only for live NFTs in a canonical order.\n        for (uint256 i; i < tokenIds.length;) {\n            uint256 tokenId = tokenIds[i];\n\n            if (i != 0 && tokenId <= tokenIds[i - 1]) {\n                revert JB721Distributor_TokenIdsNotIncreasing({previousTokenId: tokenIds[i - 1], tokenId: tokenId});\n            }\n\n            // `ownerOf` reverts for burned or nonexistent NFTs, keeping forfeiture-only IDs out of vesting claims.\n            _claimBeneficiaryOf({hook: hook, tokenId: tokenId});\n\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_snapshotOwnerOf": [
-          {
-            "name": "_snapshotOwnerOf",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "uint256"
-            ],
-            "startLine": 894,
-            "endLine": 913,
-            "source": "function _snapshotOwnerOf(\n        address hook,\n        uint256 tokenId,\n        uint256 snapshotBlock\n    )\n        private\n        view\n        returns (address owner)\n    {\n        // The 721 hook owns the checkpoint module; the distributor only trusts that module's historical proof.\n        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).checkpoints();\n\n        // Use staticcall so older hooks without `ownerOfAt` fail closed instead of reverting the whole distribution.\n        (bool success, bytes memory data) =\n            address(checkpoints).staticcall(abi.encodeCall(IJB721Checkpoints.ownerOfAt, (tokenId, snapshotBlock)));\n        if (!success || data.length < 32) return address(0);\n\n        // A zero owner means the token was not owned at the snapshot block and is not eligible this round.\n        owner = abi.decode(data, (address));\n    }"
-          }
-        ]
-      }
-    },
     "JBProjectPayer": {
       "repo": "nana-project-payer-v6",
       "githubUrl": "https://github.com/Bananapus/nana-project-payer-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/project-payer-v6@1.0.1",
+      "ref": "313f478332b4b7edfc48af261b915102f4e135e3",
       "path": "src/JBProjectPayer.sol",
       "startLine": 22,
       "endLine": 455,
@@ -124088,7 +123582,8 @@ export const registry = {
     "JBProjectPayerDeployer": {
       "repo": "nana-project-payer-v6",
       "githubUrl": "https://github.com/Bananapus/nana-project-payer-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/project-payer-v6@1.0.1",
+      "ref": "738fb596e3040541cd01af4735e8b53c7526043c",
       "path": "src/JBProjectPayerDeployer.sol",
       "startLine": 12,
       "endLine": 82,
@@ -124114,7 +123609,8 @@ export const registry = {
     "JBRouterTerminal": {
       "repo": "nana-router-terminal-v6",
       "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-      "branch": "chore/consolidate-deployment-tree",
+      "sourceRef": "npm:@bananapus/router-terminal-v6@1.1.1",
+      "ref": "fa92c626d304d81bd8cf6ea3ee249c51b511b03e",
       "path": "src/JBRouterTerminal.sol",
       "startLine": 58,
       "endLine": 2881,
@@ -125171,7 +124667,8 @@ export const registry = {
     "JBRouterTerminalRegistry": {
       "repo": "nana-router-terminal-v6",
       "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-      "branch": "chore/consolidate-deployment-tree",
+      "sourceRef": "npm:@bananapus/router-terminal-v6@1.0.1",
+      "ref": "099aa58328058e2e4449e451ea9cb6d7875c3bc1",
       "path": "src/JBRouterTerminalRegistry.sol",
       "startLine": 35,
       "endLine": 827,
@@ -125530,343 +125027,11 @@ export const registry = {
         ]
       }
     },
-    "JBPayRouteResolver": {
-      "repo": "nana-router-terminal-v6",
-      "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-      "branch": "chore/consolidate-deployment-tree",
-      "path": "src/JBPayRouteResolver.sol",
-      "startLine": 21,
-      "endLine": 1230,
-      "functionsByName": {
-        "_candidatePayRouteTokens": [
-          {
-            "name": "_candidatePayRouteTokens",
-            "paramTypes": [
-              "IJBDirectory",
-              "uint256",
-              "IJBTerminal[]"
-            ],
-            "startLine": 61,
-            "endLine": 151,
-            "source": "function _candidatePayRouteTokens(\n        IJBDirectory directory,\n        uint256 projectId,\n        IJBTerminal[] memory terminals\n    )\n        internal\n        view\n        returns (address[] memory tokens, uint256 count)\n    {\n        // Read every terminal's accounting contexts once upfront to avoid double external calls.\n        JBAccountingContext[][] memory allContexts = new JBAccountingContext[][](terminals.length);\n        uint256 totalContexts;\n        for (uint256 i; i < terminals.length;) {\n            // Codeless terminal entries return empty data, whose decode failure is not caught by try/catch.\n            if (address(terminals[i]).code.length == 0) {\n                unchecked {\n                    ++i;\n                }\n                continue;\n            }\n\n            // Wrap in try/catch so a single reverting terminal does not DoS the entire route enumeration.\n            try terminals[i].accountingContextsOf(projectId) returns (JBAccountingContext[] memory ctx) {\n                allContexts[i] = ctx;\n                totalContexts += ctx.length;\n            } catch {\n                // Skip terminals that revert — allContexts[i] remains an empty array.\n            }\n            unchecked {\n                ++i;\n            }\n        }\n\n        // Allocate enough space for the worst case where every accounting context contributes a distinct token.\n        tokens = new address[](totalContexts);\n\n        for (uint256 i; i < terminals.length;) {\n            // Reuse the contexts already read in the sizing pass above.\n            JBAccountingContext[] memory contexts = allContexts[i];\n\n            for (uint256 j; j < contexts.length;) {\n                // Start from the token surfaced by this accounting context.\n                address candidateToken = contexts[j].token;\n\n                // Track whether the token was already emitted by a previous terminal/context pair.\n                bool alreadySeen;\n\n                for (uint256 k; k < count;) {\n                    if (tokens[k] == candidateToken) {\n                        // Mark the candidate as already emitted so the outer loop can skip it below.\n                        alreadySeen = true;\n                        break;\n                    }\n                    unchecked {\n                        ++k;\n                    }\n                }\n\n                // Skip duplicate tokens so the preview scorer only evaluates each candidate once.\n                if (alreadySeen) {\n                    unchecked {\n                        ++j;\n                    }\n                    continue;\n                }\n\n                // Skip tokens that no longer resolve to a primary terminal for this project.\n                if (\n                    address(_safePrimaryTerminalOf({directory: directory, projectId: projectId, token: candidateToken}))\n                        == address(0)\n                ) {\n                    unchecked {\n                        ++j;\n                    }\n                    continue;\n                }\n\n                // Record the unique token in the compacted prefix of the array.\n                tokens[count] = candidateToken;\n\n                // Advance the populated length so the next unique token lands in the next slot.\n                count++;\n                unchecked {\n                    ++j;\n                }\n            }\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_discoverAcceptedToken": [
-          {
-            "name": "_discoverAcceptedToken",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address"
-            ],
-            "startLine": 162,
-            "endLine": 253,
-            "source": "function _discoverAcceptedToken(\n        IJBPayRoutePreviewer router,\n        address wrappedNativeToken,\n        uint256 projectId,\n        address tokenIn\n    )\n        internal\n        view\n        returns (address tokenOut, IJBTerminal destTerminal)\n    {\n        // Normalize the input token once so liquidity comparisons use the router's canonical token form.\n        tokenIn = _normalizedTokenOf({wrappedNativeToken: wrappedNativeToken, token: tokenIn});\n\n        // Read the destination project's currently known terminals directly from the directory.\n        IJBTerminal[] memory terminals = DIRECTORY.terminalsOf(projectId);\n\n        // Track the best liquidity discovered so far across all accepted candidate tokens.\n        uint128 bestLiquidity;\n\n        for (uint256 i; i < terminals.length;) {\n            // Codeless terminal entries return empty data, whose decode failure is not caught by try/catch.\n            if (address(terminals[i]).code.length == 0) {\n                unchecked {\n                    ++i;\n                }\n                continue;\n            }\n\n            // Read each terminal's accepted accounting contexts so the scorer can inspect every candidate token.\n            // Wrap in try/catch so a single reverting terminal does not DoS the entire route discovery.\n            JBAccountingContext[] memory contexts;\n            try terminals[i].accountingContextsOf(projectId) returns (JBAccountingContext[] memory ctx) {\n                contexts = ctx;\n            } catch {\n                // Skip terminals that revert.\n                unchecked {\n                    ++i;\n                }\n                continue;\n            }\n\n            for (uint256 j; j < contexts.length;) {\n                // Pull the candidate token out of the accounting context being inspected.\n                address candidateToken = contexts[j].token;\n\n                // Normalize the candidate so native-vs-wrapped comparisons behave the same as the router.\n                // Skip tokens that are equivalent to the input token because they do not require route discovery.\n                address normalizedCandidateToken =\n                    _normalizedTokenOf({wrappedNativeToken: wrappedNativeToken, token: candidateToken});\n                if (normalizedCandidateToken == tokenIn) {\n                    unchecked {\n                        ++j;\n                    }\n                    continue;\n                }\n\n                // Resolve the candidate token back to its usable primary terminal so discovery agrees with\n                // preview/execution terminal selection.\n                IJBTerminal candidateTerminal = _usablePrimaryTerminalForCandidate({\n                    router: router, directory: DIRECTORY, projectId: projectId, candidateToken: candidateToken\n                });\n                if (address(candidateTerminal) == address(0)) {\n                    unchecked {\n                        ++j;\n                    }\n                    continue;\n                }\n\n                // Keep the first viable candidate as a fallback in case no pool-backed route exists.\n                if (address(destTerminal) == address(0)) {\n                    tokenOut = candidateToken;\n                    destTerminal = candidateTerminal;\n                }\n\n                // Compare candidate pools by the router's discovered-liquidity heuristic.\n                uint128 candidateLiquidity =\n                    router.bestPoolLiquidityOf({tokenA: tokenIn, tokenB: normalizedCandidateToken});\n                if (candidateLiquidity > bestLiquidity) {\n                    // Replace the fallback with the candidate backed by the deepest discovered pool so far.\n                    bestLiquidity = candidateLiquidity;\n                    tokenOut = candidateToken;\n                    destTerminal = candidateTerminal;\n                }\n                unchecked {\n                    ++j;\n                }\n            }\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_effectivePreviewPayTokenCounts": [
-          {
-            "name": "_effectivePreviewPayTokenCounts",
-            "paramTypes": [
-              "address",
-              "uint256",
-              "uint256",
-              "JBPayHookSpecification[]"
-            ],
-            "startLine": 262,
-            "endLine": 364,
-            "source": "function _effectivePreviewPayTokenCounts(\n        address buybackHook,\n        uint256 beneficiaryTokenCount,\n        uint256 reservedTokenCount,\n        JBPayHookSpecification[] memory hookSpecifications\n    )\n        internal\n        pure\n        returns (uint256 effectiveBeneficiaryTokenCount, uint256 effectiveReservedTokenCount)\n    {\n        // Start from the raw preview values returned by the destination terminal.\n        effectiveBeneficiaryTokenCount = beneficiaryTokenCount;\n        effectiveReservedTokenCount = reservedTokenCount;\n\n        // Skip hook decoding when the terminal already surfaced non-zero counts directly.\n        if (beneficiaryTokenCount != 0 || reservedTokenCount != 0) {\n            return (beneficiaryTokenCount, reservedTokenCount);\n        }\n\n        for (uint256 i; i < hookSpecifications.length;) {\n            // Inspect one hook specification at a time so only understood buyback metadata influences scoring.\n            JBPayHookSpecification memory specification = hookSpecifications[i];\n\n            // Ignore no-op hooks and hooks the router does not recognize as the canonical buyback hook.\n            if (specification.noop || address(specification.hook) != buybackHook) {\n                unchecked {\n                    ++i;\n                }\n                continue;\n            }\n\n            // Read the canonical 15-word static pay metadata tuple emitted by the published buyback hook.\n            bytes memory hookMetadata = specification.metadata;\n            if (hookMetadata.length < 15 * 32) {\n                unchecked {\n                    ++i;\n                }\n                continue;\n            }\n\n            uint256 amountToMintWith;\n            uint256 minimumSwapAmountOut;\n            uint256 tokenCountWithoutHook;\n            uint256 minimumBeneficiaryTokenCount;\n            uint256 minimumReservedTokenCount;\n            uint256 rawSwapQuote;\n            uint256 oracleUnseededWord;\n            assembly (\"memory-safe\") {\n                amountToMintWith := mload(add(hookMetadata, 0x40))\n                minimumSwapAmountOut := mload(add(hookMetadata, 0x60))\n                tokenCountWithoutHook := mload(add(hookMetadata, 0xc0))\n                minimumBeneficiaryTokenCount := mload(add(hookMetadata, 0x180))\n                minimumReservedTokenCount := mload(add(hookMetadata, 0x1a0))\n                rawSwapQuote := mload(add(hookMetadata, 0x1c0))\n                oracleUnseededWord := mload(add(hookMetadata, 0x1e0))\n            }\n            bool oracleUnseeded = oracleUnseededWord != 0;\n\n            // The hook's beneficiary/reserved commitments are only for the AMM leg. If the hook leaves part of the\n            // payment to mint directly, estimate that direct-mint leg at the same issuance rate used for the swapped\n            // amount so the router compares a whole-route token count against ordinary terminal previews.\n            uint256 directMintTokenCount;\n            if (amountToMintWith != 0 && specification.amount != 0 && tokenCountWithoutHook != 0) {\n                directMintTokenCount =\n                    mulDiv({x: amountToMintWith, y: tokenCountWithoutHook, denominator: specification.amount});\n            }\n\n            // Score the executable floor first. This supports callers that only provide a minimum and no live quote.\n            (uint256 candidateBeneficiaryTokenCount, uint256 candidateReservedTokenCount) = _scaledPreviewPayTokenCounts({\n                tokenCount: minimumSwapAmountOut + directMintTokenCount,\n                referenceTokenCount: minimumSwapAmountOut,\n                referenceBeneficiaryTokenCount: minimumBeneficiaryTokenCount,\n                referenceReservedTokenCount: minimumReservedTokenCount\n            });\n            (effectiveBeneficiaryTokenCount, effectiveReservedTokenCount) = _strongerPreviewPayTokenCounts({\n                currentBeneficiaryTokenCount: effectiveBeneficiaryTokenCount,\n                currentReservedTokenCount: effectiveReservedTokenCount,\n                candidateBeneficiaryTokenCount: candidateBeneficiaryTokenCount,\n                candidateReservedTokenCount: candidateReservedTokenCount\n            });\n\n            // If the hook also surfaced a stronger TWAP-backed live quote, score it too. When the buyback hook reports\n            // `oracleUnseeded`, the raw quote is a cold-start spot diagnostic, so only the executable floor is trusted.\n            bool hasTrustedRawQuote = !oracleUnseeded && rawSwapQuote > minimumSwapAmountOut;\n            if (hasTrustedRawQuote) {\n                (candidateBeneficiaryTokenCount, candidateReservedTokenCount) = _scaledPreviewPayTokenCounts({\n                    tokenCount: rawSwapQuote + directMintTokenCount,\n                    referenceTokenCount: minimumSwapAmountOut,\n                    referenceBeneficiaryTokenCount: minimumBeneficiaryTokenCount,\n                    referenceReservedTokenCount: minimumReservedTokenCount\n                });\n                (effectiveBeneficiaryTokenCount, effectiveReservedTokenCount) = _strongerPreviewPayTokenCounts({\n                    currentBeneficiaryTokenCount: effectiveBeneficiaryTokenCount,\n                    currentReservedTokenCount: effectiveReservedTokenCount,\n                    candidateBeneficiaryTokenCount: candidateBeneficiaryTokenCount,\n                    candidateReservedTokenCount: candidateReservedTokenCount\n                });\n            }\n            unchecked {\n                ++i;\n            }\n        }\n    }"
-          }
-        ],
-        "_getDataFor": [
-          {
-            "name": "_getDataFor",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "bytes",
-              "string"
-            ],
-            "startLine": 372,
-            "endLine": 384,
-            "source": "function _getDataFor(\n        IJBPayRoutePreviewer router,\n        bytes calldata metadata,\n        string memory key\n    )\n        internal\n        pure\n        returns (bool exists, bytes memory data)\n    {\n        return JBMetadataResolver.getDataFor({\n            id: JBMetadataResolver.getId({purpose: key, target: address(router)}), metadata: metadata\n        });\n    }"
-          }
-        ],
-        "_hasSameRoutingAsset": [
-          {
-            "name": "_hasSameRoutingAsset",
-            "paramTypes": [
-              "address",
-              "address",
-              "address"
-            ],
-            "startLine": 391,
-            "endLine": 406,
-            "source": "function _hasSameRoutingAsset(\n        address wrappedNativeToken,\n        address tokenA,\n        address tokenB\n    )\n        internal\n        pure\n        returns (bool hasSameAsset)\n    {\n        // Treat exact-token matches as the same routing asset without extra normalization work.\n        if (tokenA == tokenB) return true;\n\n        // Otherwise compare normalized representations so native and wrapped native tokens share one routing identity.\n        return _normalizedTokenOf({wrappedNativeToken: wrappedNativeToken, token: tokenA})\n            == _normalizedTokenOf({wrappedNativeToken: wrappedNativeToken, token: tokenB});\n    }"
-          }
-        ],
-        "_isCircularTerminal": [
-          {
-            "name": "_isCircularTerminal",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "uint256",
-              "IJBTerminal"
-            ],
-            "startLine": 415,
-            "endLine": 425,
-            "source": "function _isCircularTerminal(\n        IJBPayRoutePreviewer router,\n        uint256 projectId,\n        IJBTerminal terminal\n    )\n        internal\n        view\n        returns (bool isCircular)\n    {\n        return JBForwardingCheck.isCircularTerminal({target: address(router), projectId: projectId, terminal: terminal});\n    }"
-          }
-        ],
-        "_normalizedTokenOf": [
-          {
-            "name": "_normalizedTokenOf",
-            "paramTypes": [
-              "address",
-              "address"
-            ],
-            "startLine": 431,
-            "endLine": 440,
-            "source": "function _normalizedTokenOf(\n        address wrappedNativeToken,\n        address token\n    )\n        internal\n        pure\n        returns (address normalizedToken)\n    {\n        return token == JBConstants.NATIVE_TOKEN ? wrappedNativeToken : token;\n    }"
-          }
-        ],
-        "_previewAmountToToken": [
-          {
-            "name": "_previewAmountToToken",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address",
-              "uint256",
-              "bytes",
-              "address"
-            ],
-            "startLine": 452,
-            "endLine": 488,
-            "source": "function _previewAmountToToken(\n        IJBPayRoutePreviewer router,\n        address wrappedNativeToken,\n        uint256 destProjectId,\n        address tokenIn,\n        uint256 amount,\n        bytes calldata metadata,\n        address tokenOut\n    )\n        internal\n        view\n        returns (address routedTokenIn, uint256 routedAmountIn)\n    {\n        // Preview any source-project cashout first so the remaining routing work starts from the right token and\n        // amount.\n        (, routedTokenIn, routedAmountIn) = _previewRouteInputFromSource({\n            router: router,\n            destProjectId: destProjectId,\n            tokenIn: tokenIn,\n            amount: amount,\n            metadata: metadata,\n            preferredToken: tokenOut\n        });\n\n        // Return early when the routed token already matches the desired destination token.\n        if (_hasSameRoutingAsset({wrappedNativeToken: wrappedNativeToken, tokenA: routedTokenIn, tokenB: tokenOut})) {\n            return (tokenOut, routedAmountIn);\n        }\n\n        // Otherwise preview the final swap into the candidate destination token.\n        routedAmountIn = router.previewSwapAmountOutOf({\n            tokenIn: routedTokenIn, tokenOut: tokenOut, amount: routedAmountIn, metadata: metadata\n        });\n\n        // Surface the post-swap token as the routed token returned to the caller.\n        routedTokenIn = tokenOut;\n    }"
-          }
-        ],
-        "_previewPayRouteForCandidate": [
-          {
-            "name": "_previewPayRouteForCandidate",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address",
-              "uint256",
-              "address",
-              "bytes",
-              "address",
-              "IJBTerminal"
-            ],
-            "startLine": 506,
-            "endLine": 562,
-            "source": "function _previewPayRouteForCandidate(\n        IJBPayRoutePreviewer router,\n        address wrappedNativeToken,\n        uint256 projectId,\n        address tokenIn,\n        uint256 amount,\n        address beneficiary,\n        bytes calldata metadata,\n        address tokenOut,\n        IJBTerminal destTerminal\n    )\n        internal\n        view\n        returns (\n            IJBTerminal routedDestTerminal,\n            address routedTokenOut,\n            uint256 routedAmountOut,\n            JBRuleset memory ruleset,\n            uint256 beneficiaryTokenCount,\n            uint256 reservedTokenCount,\n            JBPayHookSpecification[] memory hookSpecifications\n        )\n    {\n        // First preview the route into the candidate destination token so the terminal is scored on post-route inputs.\n        (address routedTokenIn, uint256 routedAmountIn) = _previewAmountToToken({\n            router: router,\n            wrappedNativeToken: wrappedNativeToken,\n            destProjectId: projectId,\n            tokenIn: tokenIn,\n            amount: amount,\n            metadata: metadata,\n            tokenOut: tokenOut\n        });\n\n        // Ask the destination terminal for the minting preview using the router-owned caller context.\n        (ruleset, beneficiaryTokenCount, reservedTokenCount, hookSpecifications) = router.previewTerminalPayOf({\n            destTerminal: destTerminal,\n            projectId: projectId,\n            token: routedTokenIn,\n            amount: routedAmountIn,\n            beneficiary: beneficiary,\n            metadata: metadata\n        });\n\n        // Normalize the returned token counts so buyback-hook metadata influences route ranking consistently.\n        (beneficiaryTokenCount, reservedTokenCount) = _effectivePreviewPayTokenCounts({\n            buybackHook: router.BUYBACK_HOOK(),\n            beneficiaryTokenCount: beneficiaryTokenCount,\n            reservedTokenCount: reservedTokenCount,\n            hookSpecifications: hookSpecifications\n        });\n\n        // Surface the routed terminal and token data alongside the normalized preview counts.\n        routedDestTerminal = destTerminal;\n        routedTokenOut = routedTokenIn;\n        routedAmountOut = routedAmountIn;\n    }"
-          }
-        ],
-        "_previewRoute": [
-          {
-            "name": "_previewRoute",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address",
-              "uint256",
-              "bytes"
-            ],
-            "startLine": 573,
-            "endLine": 615,
-            "source": "function _previewRoute(\n        IJBPayRoutePreviewer router,\n        address wrappedNativeToken,\n        uint256 destProjectId,\n        address tokenIn,\n        uint256 amount,\n        bytes calldata metadata\n    )\n        internal\n        view\n        returns (IJBTerminal destTerminal, address tokenOut, uint256 amountOut)\n    {\n        // Preview any source-project cashout before attempting direct-acceptance or swap-route resolution.\n        (destTerminal, tokenIn, amount) = _previewRouteInputFromSource({\n            router: router,\n            destProjectId: destProjectId,\n            tokenIn: tokenIn,\n            amount: amount,\n            metadata: metadata,\n            preferredToken: address(0)\n        });\n\n        // Return immediately when the cashout loop already found the final destination terminal.\n        if (address(destTerminal) != address(0)) return (destTerminal, tokenIn, amount);\n\n        // Resolve the destination token and terminal that the project would accept from the remaining input.\n        (tokenOut, destTerminal) = _resolveTokenOut({\n            router: router,\n            wrappedNativeToken: wrappedNativeToken,\n            projectId: destProjectId,\n            tokenIn: tokenIn,\n            metadata: metadata\n        });\n\n        // Return the current amount unchanged when no swap is needed after token resolution.\n        if (_hasSameRoutingAsset({wrappedNativeToken: wrappedNativeToken, tokenA: tokenIn, tokenB: tokenOut})) {\n            return (destTerminal, tokenOut, amount);\n        }\n\n        // Otherwise preview the swap into the resolved destination token.\n        amountOut =\n            router.previewSwapAmountOutOf({tokenIn: tokenIn, tokenOut: tokenOut, amount: amount, metadata: metadata});\n    }"
-          }
-        ],
-        "_previewRouteInputFromSource": [
-          {
-            "name": "_previewRouteInputFromSource",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "uint256",
-              "address",
-              "uint256",
-              "bytes",
-              "address"
-            ],
-            "startLine": 627,
-            "endLine": 652,
-            "source": "function _previewRouteInputFromSource(\n        IJBPayRoutePreviewer router,\n        uint256 destProjectId,\n        address tokenIn,\n        uint256 amount,\n        bytes calldata metadata,\n        address preferredToken\n    )\n        internal\n        view\n        returns (IJBTerminal resolvedTerminal, address routedTokenIn, uint256 routedAmountIn)\n    {\n        // When the input is not a JB project token, the current input already is the routed input.\n        if (tokenIn == JBConstants.NATIVE_TOKEN || router.TOKENS().projectIdOf(IJBToken(tokenIn)) == 0) {\n            return (resolvedTerminal, tokenIn, amount);\n        }\n\n        // Otherwise reuse the router's own preview cashout loop so preview and execution stay aligned.\n        return router.previewCashOutLoopOf({\n            destProjectId: destProjectId,\n            token: tokenIn,\n            amount: amount,\n            metadata: metadata,\n            preferredToken: preferredToken\n        });\n    }"
-          }
-        ],
-        "_resolveTokenOut": [
-          {
-            "name": "_resolveTokenOut",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address",
-              "bytes"
-            ],
-            "startLine": 662,
-            "endLine": 729,
-            "source": "function _resolveTokenOut(\n        IJBPayRoutePreviewer router,\n        address wrappedNativeToken,\n        uint256 projectId,\n        address tokenIn,\n        bytes calldata metadata\n    )\n        internal\n        view\n        returns (address tokenOut, IJBTerminal destTerminal)\n    {\n        // Use the constructor-cached directory since every resolution branch reads from it.\n        IJBDirectory directory = DIRECTORY;\n\n        // Respect explicit token-out overrides before any direct-acceptance or discovery logic runs.\n        (bool exists, bytes memory routeData) = _getDataFor({router: router, metadata: metadata, key: \"routeTokenOut\"});\n        if (exists) {\n            // Decode the caller-specified destination token.\n            tokenOut = abi.decode(routeData, (address));\n\n            // Resolve the primary terminal for the requested destination token.\n            destTerminal = _safePrimaryTerminalOf({directory: directory, projectId: projectId, token: tokenOut});\n\n            // Reject missing or circular terminals so execution cannot preview an impossible route.\n            if (\n                address(destTerminal) == address(0)\n                    || _isCircularTerminal({router: router, projectId: projectId, terminal: destTerminal})\n            ) {\n                revert JBRouterTerminal_NoRouteFound({projectId: projectId, tokenIn: tokenIn});\n            }\n            return (tokenOut, destTerminal);\n        }\n\n        // Next prefer a direct-acceptance route for the input token whenever the project already has a non-circular\n        // terminal.\n        destTerminal = _safePrimaryTerminalOf({directory: directory, projectId: projectId, token: tokenIn});\n        if (\n            address(destTerminal) != address(0)\n                && !_isCircularTerminal({router: router, projectId: projectId, terminal: destTerminal})\n        ) {\n            return (tokenIn, destTerminal);\n        }\n\n        // Then try the native-token and wrapped-native-token equivalent form before falling back to pool discovery.\n        if (tokenIn == JBConstants.NATIVE_TOKEN || tokenIn == wrappedNativeToken) {\n            tokenOut = tokenIn == JBConstants.NATIVE_TOKEN ? wrappedNativeToken : JBConstants.NATIVE_TOKEN;\n            destTerminal = _safePrimaryTerminalOf({directory: directory, projectId: projectId, token: tokenOut});\n            if (\n                address(destTerminal) != address(0)\n                    && !_isCircularTerminal({router: router, projectId: projectId, terminal: destTerminal})\n            ) {\n                return (tokenOut, destTerminal);\n            }\n        }\n\n        // Finally discover the best accepted token using the router's liquidity heuristic.\n        (tokenOut, destTerminal) = _discoverAcceptedToken({\n            router: router, wrappedNativeToken: wrappedNativeToken, projectId: projectId, tokenIn: tokenIn\n        });\n\n        // Revert when discovery failed entirely or only found a circular route.\n        if (\n            address(destTerminal) == address(0)\n                || _isCircularTerminal({router: router, projectId: projectId, terminal: destTerminal})\n        ) {\n            revert JBRouterTerminal_NoRouteFound({projectId: projectId, tokenIn: tokenIn});\n        }\n    }"
-          }
-        ],
-        "_safePrimaryTerminalOf": [
-          {
-            "name": "_safePrimaryTerminalOf",
-            "paramTypes": [
-              "IJBDirectory",
-              "uint256",
-              "address"
-            ],
-            "startLine": 736,
-            "endLine": 752,
-            "source": "function _safePrimaryTerminalOf(\n        IJBDirectory directory,\n        uint256 projectId,\n        address token\n    )\n        internal\n        view\n        returns (IJBTerminal terminal)\n    {\n        // A directory primary lookup can inspect every registered terminal. If one of those probes reverts, treat the\n        // candidate as unavailable instead of letting one broken terminal brick route discovery.\n        try directory.primaryTerminalOf({projectId: projectId, token: token}) returns (IJBTerminal resolvedTerminal) {\n            terminal = resolvedTerminal;\n        } catch {\n            terminal = IJBTerminal(address(0));\n        }\n    }"
-          }
-        ],
-        "_safeTerminalsOf": [
-          {
-            "name": "_safeTerminalsOf",
-            "paramTypes": [
-              "IJBDirectory",
-              "uint256"
-            ],
-            "startLine": 758,
-            "endLine": 775,
-            "source": "function _safeTerminalsOf(\n        IJBDirectory directory,\n        uint256 projectId\n    )\n        internal\n        view\n        returns (IJBTerminal[] memory terminals)\n    {\n        // Read the terminal list through a low-level staticcall so directory failures degrade into \"no terminals.\"\n        (bool success, bytes memory data) =\n            address(directory).staticcall(abi.encodeCall(IJBDirectory.terminalsOf, (projectId)));\n\n        // Surface an empty list when the directory reverted or returned no data.\n        if (!success || data.length == 0) return terminals;\n\n        // Decode the returned terminal array on successful responses.\n        return abi.decode(data, (IJBTerminal[]));\n    }"
-          }
-        ],
-        "_scaledPreviewPayTokenCounts": [
-          {
-            "name": "_scaledPreviewPayTokenCounts",
-            "paramTypes": [
-              "uint256",
-              "uint256",
-              "uint256",
-              "uint256"
-            ],
-            "startLine": 784,
-            "endLine": 814,
-            "source": "function _scaledPreviewPayTokenCounts(\n        uint256 tokenCount,\n        uint256 referenceTokenCount,\n        uint256 referenceBeneficiaryTokenCount,\n        uint256 referenceReservedTokenCount\n    )\n        internal\n        pure\n        returns (uint256 beneficiaryTokenCount, uint256 reservedTokenCount)\n    {\n        // A zero candidate means there is no stronger route output to scale, so preserve the known reference split.\n        if (tokenCount == 0) {\n            return (referenceBeneficiaryTokenCount, referenceReservedTokenCount);\n        }\n\n        // Prefer the already-previewed beneficiary/reserved total because it includes the destination's reserve logic.\n        uint256 referenceTotal = referenceBeneficiaryTokenCount + referenceReservedTokenCount;\n\n        // Fall back to the original token count when previewed counts were unavailable but the hook reported a floor.\n        if (referenceTotal == 0) referenceTotal = referenceTokenCount;\n\n        // If both reference totals are zero, treat the whole candidate as beneficiary tokens so the route stays\n        // comparable instead of disappearing from scoring.\n        if (referenceTotal == 0) return (tokenCount, 0);\n\n        // Scale the beneficiary share proportionally from the reference split to the candidate total being scored.\n        beneficiaryTokenCount = mulDiv({x: tokenCount, y: referenceBeneficiaryTokenCount, denominator: referenceTotal});\n\n        // Assign the residual to reserved tokens so rounding cannot lose supply during route comparison.\n        reservedTokenCount = tokenCount - beneficiaryTokenCount;\n    }"
-          }
-        ],
-        "_strongerPreviewPayTokenCounts": [
-          {
-            "name": "_strongerPreviewPayTokenCounts",
-            "paramTypes": [
-              "uint256",
-              "uint256",
-              "uint256",
-              "uint256"
-            ],
-            "startLine": 823,
-            "endLine": 847,
-            "source": "function _strongerPreviewPayTokenCounts(\n        uint256 currentBeneficiaryTokenCount,\n        uint256 currentReservedTokenCount,\n        uint256 candidateBeneficiaryTokenCount,\n        uint256 candidateReservedTokenCount\n    )\n        internal\n        pure\n        returns (uint256 beneficiaryTokenCount, uint256 reservedTokenCount)\n    {\n        // Prefer the route that gives the beneficiary more tokens, since that is the user's primary output.\n        if (\n            candidateBeneficiaryTokenCount > currentBeneficiaryTokenCount\n                || (\n                    // When beneficiary output ties, keep the route that also mints more reserved tokens.\n                    candidateBeneficiaryTokenCount == currentBeneficiaryTokenCount\n                    && candidateReservedTokenCount > currentReservedTokenCount\n                )\n        ) {\n            return (candidateBeneficiaryTokenCount, candidateReservedTokenCount);\n        }\n\n        // Keep the current winner when the candidate does not improve beneficiary output or the reserved tie-break.\n        return (currentBeneficiaryTokenCount, currentReservedTokenCount);\n    }"
-          }
-        ],
-        "_usablePrimaryTerminalForCandidate": [
-          {
-            "name": "_usablePrimaryTerminalForCandidate",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "IJBDirectory",
-              "uint256",
-              "address"
-            ],
-            "startLine": 855,
-            "endLine": 875,
-            "source": "function _usablePrimaryTerminalForCandidate(\n        IJBPayRoutePreviewer router,\n        IJBDirectory directory,\n        uint256 projectId,\n        address candidateToken\n    )\n        internal\n        view\n        returns (IJBTerminal candidateTerminal)\n    {\n        // Resolve the primary terminal for the candidate token so fallback discovery agrees with preview/execution.\n        candidateTerminal = _safePrimaryTerminalOf({directory: directory, projectId: projectId, token: candidateToken});\n\n        // Drop candidates whose primary terminal disappeared or would route straight back into the router.\n        if (\n            address(candidateTerminal) == address(0)\n                || _isCircularTerminal({router: router, projectId: projectId, terminal: candidateTerminal})\n        ) {\n            return IJBTerminal(address(0));\n        }\n    }"
-          }
-        ],
-        "previewBestPayRoute": [
-          {
-            "name": "previewBestPayRoute",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address",
-              "uint256",
-              "address",
-              "bytes"
-            ],
-            "startLine": 897,
-            "endLine": 1062,
-            "source": "function previewBestPayRoute(\n        IJBPayRoutePreviewer router,\n        address wrappedNativeToken,\n        uint256 projectId,\n        address tokenIn,\n        uint256 amount,\n        address beneficiary,\n        bytes calldata metadata\n    )\n        external\n        view\n        returns (\n            IJBTerminal destTerminal,\n            address tokenOut,\n            uint256 amountOut,\n            JBRuleset memory ruleset,\n            uint256 beneficiaryTokenCount,\n            uint256 reservedTokenCount,\n            JBPayHookSpecification[] memory hookSpecifications\n        )\n    {\n        // Cache a self-interface once because candidate isolation requires an external call that can be caught.\n        IJBPayRouteResolver self = IJBPayRouteResolver(address(this));\n\n        // Use the constructor-cached directory because every route-selection branch uses it.\n        IJBDirectory directory = DIRECTORY;\n\n        // Respect explicit route-token overrides before scanning candidate tokens.\n        (bool routeOverrideExists, bytes memory routeData) =\n            _getDataFor({router: router, metadata: metadata, key: \"routeTokenOut\"});\n        if (routeOverrideExists) {\n            // Decode the requested token-out override.\n            tokenOut = abi.decode(routeData, (address));\n\n            // Resolve the primary terminal for the requested token-out candidate.\n            destTerminal = _safePrimaryTerminalOf({directory: directory, projectId: projectId, token: tokenOut});\n            if (\n                address(destTerminal) == address(0)\n                    || _isCircularTerminal({router: router, projectId: projectId, terminal: destTerminal})\n            ) {\n                revert JBRouterTerminal_NoRouteFound({projectId: projectId, tokenIn: tokenIn});\n            }\n\n            // Score the explicitly requested route directly instead of scanning every accepted token.\n            return _previewPayRouteForCandidate({\n                router: router,\n                wrappedNativeToken: wrappedNativeToken,\n                projectId: projectId,\n                tokenIn: tokenIn,\n                amount: amount,\n                beneficiary: beneficiary,\n                metadata: metadata,\n                tokenOut: tokenOut,\n                destTerminal: destTerminal\n            });\n        }\n\n        // Read the project's terminals without allowing a reverting directory call to brick preview.\n        IJBTerminal[] memory terminals = _safeTerminalsOf({directory: directory, projectId: projectId});\n\n        // Compact the project's accepted tokens down to the unique candidates worth scoring.\n        (address[] memory candidateTokens, uint256 candidateCount) =\n            _candidatePayRouteTokens({directory: directory, projectId: projectId, terminals: terminals});\n\n        // Track whether any candidate produced a usable preview route.\n        bool foundRoute;\n\n        for (uint256 i; i < candidateCount; i++) {\n            // Resolve the current candidate token back into the terminal that would receive it.\n            IJBTerminal candidateTerminal =\n                _safePrimaryTerminalOf({directory: directory, projectId: projectId, token: candidateTokens[i]});\n\n            // Skip candidates whose primary-terminal lookup failed.\n            if (address(candidateTerminal) == address(0)) continue;\n\n            // Skip candidates that would obviously bounce straight back into the router.\n            if (_isCircularTerminal({router: router, projectId: projectId, terminal: candidateTerminal})) continue;\n\n            // Isolate each candidate preview so one broken route does not brick the whole search.\n            try self.previewPayRouteForCandidate({\n                router: router,\n                wrappedNativeToken: wrappedNativeToken,\n                projectId: projectId,\n                tokenIn: tokenIn,\n                amount: amount,\n                beneficiary: beneficiary,\n                metadata: metadata,\n                tokenOut: candidateTokens[i],\n                destTerminal: candidateTerminal\n            }) returns (\n                IJBTerminal candidateDestTerminal,\n                address candidateTokenOut,\n                uint256 candidateAmountOut,\n                JBRuleset memory candidateRuleset,\n                uint256 candidateBeneficiaryTokenCount,\n                uint256 candidateReservedTokenCount,\n                JBPayHookSpecification[] memory candidateHookSpecifications\n            ) {\n                // Replace the current winner whenever the candidate improves beneficiary count or tie-break reserved\n                // count.\n                if (\n                    !foundRoute || candidateBeneficiaryTokenCount > beneficiaryTokenCount\n                        || (candidateBeneficiaryTokenCount == beneficiaryTokenCount\n                            && candidateReservedTokenCount > reservedTokenCount)\n                ) {\n                    // Persist the winning candidate's full preview payload for the eventual return value.\n                    destTerminal = candidateDestTerminal;\n                    tokenOut = candidateTokenOut;\n                    amountOut = candidateAmountOut;\n                    ruleset = candidateRuleset;\n                    beneficiaryTokenCount = candidateBeneficiaryTokenCount;\n                    reservedTokenCount = candidateReservedTokenCount;\n                    hookSpecifications = candidateHookSpecifications;\n                    foundRoute = true;\n                }\n            } catch {\n                // Ignore broken candidates so the search can continue scoring the remaining options.\n                continue;\n            }\n        }\n\n        // Return the winning candidate when at least one candidate preview succeeded.\n        if (foundRoute) {\n            return\n                (\n                    destTerminal,\n                    tokenOut,\n                    amountOut,\n                    ruleset,\n                    beneficiaryTokenCount,\n                    reservedTokenCount,\n                    hookSpecifications\n                );\n        }\n\n        // No candidate token could be scored — fall back to the router's generic route resolution.\n        // Uses an external self-call (`self.previewFallbackRoute`) so Solidity's try/catch can isolate\n        // reverts from broken terminals or price feeds without bricking the entire best-route preview.\n        try self.previewFallbackRoute({\n            routePreviewer: router,\n            wrappedNativeToken: wrappedNativeToken,\n            destProjectId: projectId,\n            tokenIn: tokenIn,\n            amountIn: amount,\n            beneficiary: beneficiary,\n            metadata: metadata\n        }) returns (\n            IJBTerminal fallbackDestTerminal,\n            address fallbackTokenOut,\n            uint256 fallbackAmountOut,\n            JBRuleset memory fallbackRuleset,\n            uint256 fallbackBeneficiaryTokenCount,\n            uint256 fallbackReservedTokenCount,\n            JBPayHookSpecification[] memory fallbackHookSpecifications\n        ) {\n            destTerminal = fallbackDestTerminal;\n            tokenOut = fallbackTokenOut;\n            amountOut = fallbackAmountOut;\n            ruleset = fallbackRuleset;\n            beneficiaryTokenCount = fallbackBeneficiaryTokenCount;\n            reservedTokenCount = fallbackReservedTokenCount;\n            hookSpecifications = fallbackHookSpecifications;\n        } catch {\n            // If the fallback also fails, return default zero values — the caller gets \"no route found\".\n        }\n    }"
-          }
-        ],
-        "previewFallbackRoute": [
-          {
-            "name": "previewFallbackRoute",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address",
-              "uint256",
-              "address",
-              "bytes"
-            ],
-            "startLine": 1082,
-            "endLine": 1130,
-            "source": "function previewFallbackRoute(\n        IJBPayRoutePreviewer routePreviewer,\n        address wrappedNativeToken,\n        uint256 destProjectId,\n        address tokenIn,\n        uint256 amountIn,\n        address beneficiary,\n        bytes calldata metadata\n    )\n        external\n        view\n        returns (\n            IJBTerminal destTerminal,\n            address tokenOut,\n            uint256 amountOut,\n            JBRuleset memory ruleset,\n            uint256 beneficiaryTokenCount,\n            uint256 reservedTokenCount,\n            JBPayHookSpecification[] memory hookSpecifications\n        )\n    {\n        // Resolve which terminal and token the fallback route would use.\n        (destTerminal, tokenOut, amountOut) = _previewRoute({\n            router: routePreviewer,\n            wrappedNativeToken: wrappedNativeToken,\n            destProjectId: destProjectId,\n            tokenIn: tokenIn,\n            amount: amountIn,\n            metadata: metadata\n        });\n\n        // Simulate the terminal pay to get token counts and hook specs.\n        (ruleset, beneficiaryTokenCount, reservedTokenCount, hookSpecifications) = routePreviewer.previewTerminalPayOf({\n            destTerminal: destTerminal,\n            projectId: destProjectId,\n            token: tokenOut,\n            amount: amountOut,\n            beneficiary: beneficiary,\n            metadata: metadata\n        });\n\n        // Normalize counts to account for buyback-hook overrides.\n        (beneficiaryTokenCount, reservedTokenCount) = _effectivePreviewPayTokenCounts({\n            buybackHook: routePreviewer.BUYBACK_HOOK(),\n            beneficiaryTokenCount: beneficiaryTokenCount,\n            reservedTokenCount: reservedTokenCount,\n            hookSpecifications: hookSpecifications\n        });\n    }"
-          }
-        ],
-        "previewPayRouteForCandidate": [
-          {
-            "name": "previewPayRouteForCandidate",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address",
-              "uint256",
-              "address",
-              "bytes",
-              "address",
-              "IJBTerminal"
-            ],
-            "startLine": 1148,
-            "endLine": 1182,
-            "source": "function previewPayRouteForCandidate(\n        IJBPayRoutePreviewer router,\n        address wrappedNativeToken,\n        uint256 projectId,\n        address tokenIn,\n        uint256 amount,\n        address beneficiary,\n        bytes calldata metadata,\n        address tokenOut,\n        IJBTerminal destTerminal\n    )\n        external\n        view\n        returns (\n            IJBTerminal routedDestTerminal,\n            address routedTokenOut,\n            uint256 routedAmountOut,\n            JBRuleset memory ruleset,\n            uint256 beneficiaryTokenCount,\n            uint256 reservedTokenCount,\n            JBPayHookSpecification[] memory hookSpecifications\n        )\n    {\n        return _previewPayRouteForCandidate({\n            router: router,\n            wrappedNativeToken: wrappedNativeToken,\n            projectId: projectId,\n            tokenIn: tokenIn,\n            amount: amount,\n            beneficiary: beneficiary,\n            metadata: metadata,\n            tokenOut: tokenOut,\n            destTerminal: destTerminal\n        });\n    }"
-          }
-        ],
-        "resolveTokenOut": [
-          {
-            "name": "resolveTokenOut",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "address",
-              "uint256",
-              "address",
-              "bytes"
-            ],
-            "startLine": 1192,
-            "endLine": 1210,
-            "source": "function resolveTokenOut(\n        IJBPayRoutePreviewer router,\n        address wrappedNativeToken,\n        uint256 projectId,\n        address tokenIn,\n        bytes calldata metadata\n    )\n        external\n        view\n        returns (address tokenOut, IJBTerminal destTerminal)\n    {\n        return _resolveTokenOut({\n            router: router,\n            wrappedNativeToken: wrappedNativeToken,\n            projectId: projectId,\n            tokenIn: tokenIn,\n            metadata: metadata\n        });\n    }"
-          }
-        ],
-        "usablePrimaryTerminalOf": [
-          {
-            "name": "usablePrimaryTerminalOf",
-            "paramTypes": [
-              "IJBPayRoutePreviewer",
-              "uint256",
-              "address"
-            ],
-            "startLine": 1217,
-            "endLine": 1229,
-            "source": "function usablePrimaryTerminalOf(\n        IJBPayRoutePreviewer router,\n        uint256 projectId,\n        address token\n    )\n        external\n        view\n        returns (IJBTerminal terminal)\n    {\n        return _usablePrimaryTerminalForCandidate({\n            router: router, directory: DIRECTORY, projectId: projectId, candidateToken: token\n        });\n    }"
-          }
-        ]
-      }
-    },
     "JBProjectHandles": {
       "repo": "nana-project-handles-v6",
       "githubUrl": "https://github.com/Bananapus/nana-project-handles-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/project-handles-v6@1.0.0",
+      "ref": "02610dfa6b3917058760c094ea0edc0f9988fd3f",
       "path": "src/JBProjectHandles.sol",
       "startLine": 18,
       "endLine": 353,
@@ -125980,7 +125145,8 @@ export const registry = {
     "JBAddressRegistry": {
       "repo": "nana-address-registry-v6",
       "githubUrl": "https://github.com/Bananapus/nana-address-registry-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bananapus/address-registry-v6@1.0.0",
+      "ref": "77110dd89f1ffc4103877a950581b584e237cf44",
       "path": "src/JBAddressRegistry.sol",
       "startLine": 12,
       "endLine": 150,
@@ -126034,109 +125200,11 @@ export const registry = {
         ]
       }
     },
-    "FeeProjectConfigBuilder": {
-      "repo": "nana-fee-project-deployer-v6",
-      "githubUrl": "https://github.com/Bananapus/nana-fee-project-deployer-v6",
-      "branch": "main",
-      "path": "test/TestFeeProjectDeployer.sol",
-      "startLine": 74,
-      "endLine": 203,
-      "functionsByName": {
-        "buildTerminalConfigurations": [
-          {
-            "name": "buildTerminalConfigurations",
-            "paramTypes": [
-              "IJBTerminal",
-              "IJBTerminal"
-            ],
-            "startLine": 90,
-            "endLine": 104,
-            "source": "function buildTerminalConfigurations(\n        IJBTerminal multiTerminal,\n        IJBTerminal routerTerminalRegistry\n    )\n        public\n        pure\n        returns (JBAccountingContext[] memory accountingContextsToAccept)\n    {\n        multiTerminal;\n        routerTerminalRegistry;\n\n        accountingContextsToAccept = new JBAccountingContext[](1);\n        accountingContextsToAccept[0] =\n            JBAccountingContext({token: JBConstants.NATIVE_TOKEN, decimals: 18, currency: NATIVE_CURRENCY});\n    }"
-          }
-        ],
-        "buildSplits": [
-          {
-            "name": "buildSplits",
-            "paramTypes": [
-              "address"
-            ],
-            "startLine": 106,
-            "endLine": 116,
-            "source": "function buildSplits(address operator_) public pure returns (JBSplit[] memory splits) {\n        splits = new JBSplit[](1);\n        splits[0] = JBSplit({\n            percent: JBConstants.SPLITS_TOTAL_PERCENT,\n            projectId: 0,\n            beneficiary: payable(operator_),\n            preferAddToBalance: false,\n            lockedUntil: 0,\n            hook: IJBSplitHook(address(0))\n        });\n    }"
-          }
-        ],
-        "buildAutoIssuances": [
-          {
-            "name": "buildAutoIssuances",
-            "paramTypes": [
-              "address"
-            ],
-            "startLine": 118,
-            "endLine": 124,
-            "source": "function buildAutoIssuances(address operator_) public pure returns (REVAutoIssuance[] memory issuanceConfs) {\n        issuanceConfs = new REVAutoIssuance[](4);\n        issuanceConfs[0] = REVAutoIssuance({chainId: 1, count: NANA_MAINNET_AUTO_ISSUANCE, beneficiary: operator_});\n        issuanceConfs[1] = REVAutoIssuance({chainId: 8453, count: NANA_BASE_AUTO_ISSUANCE, beneficiary: operator_});\n        issuanceConfs[2] = REVAutoIssuance({chainId: 10, count: NANA_OP_AUTO_ISSUANCE, beneficiary: operator_});\n        issuanceConfs[3] = REVAutoIssuance({chainId: 42_161, count: NANA_ARB_AUTO_ISSUANCE, beneficiary: operator_});\n    }"
-          }
-        ],
-        "buildStageConfigurations": [
-          {
-            "name": "buildStageConfigurations",
-            "paramTypes": [
-              "address"
-            ],
-            "startLine": 126,
-            "endLine": 147,
-            "source": "function buildStageConfigurations(address operator_)\n        public\n        pure\n        returns (REVStageConfig[] memory stageConfigurations)\n    {\n        REVAutoIssuance[] memory issuanceConfs = buildAutoIssuances(operator_);\n        JBSplit[] memory splits = buildSplits(operator_);\n\n        stageConfigurations = new REVStageConfig[](1);\n        stageConfigurations[0] = REVStageConfig({\n            startsAtOrAfter: NANA_START_TIME,\n            autoIssuances: issuanceConfs,\n            splitPercent: 6200,\n            splits: splits,\n            // forge-lint: disable-next-line(unsafe-typecast)\n            initialIssuance: uint112(10_000 * DECIMAL_MULTIPLIER),\n            issuanceCutFrequency: 360 days,\n            issuanceCutPercent: 380_000_000,\n            cashOutTaxRate: 1000,\n            extraMetadata: 4\n        });\n    }"
-          }
-        ],
-        "buildRevnetConfiguration": [
-          {
-            "name": "buildRevnetConfiguration",
-            "paramTypes": [
-              "address"
-            ],
-            "startLine": 149,
-            "endLine": 157,
-            "source": "function buildRevnetConfiguration(address operator_) public pure returns (REVConfig memory) {\n        return REVConfig({\n            description: REVDescription({name: NAME, ticker: SYMBOL, uri: PROJECT_URI, salt: ERC20_SALT}),\n            baseCurrency: ETH_CURRENCY,\n            operator: operator_,\n            scopeCashOutsToLocalBalances: false,\n            stageConfigurations: buildStageConfigurations(operator_)\n        });\n    }"
-          }
-        ],
-        "buildTokenMappings": [
-          {
-            "name": "buildTokenMappings",
-            "paramTypes": [],
-            "startLine": 159,
-            "endLine": 166,
-            "source": "function buildTokenMappings() public pure returns (JBTokenMapping[] memory tokenMappings) {\n        tokenMappings = new JBTokenMapping[](1);\n        tokenMappings[0] = JBTokenMapping({\n            localToken: JBConstants.NATIVE_TOKEN,\n            minGas: 200_000,\n            remoteToken: bytes32(uint256(uint160(JBConstants.NATIVE_TOKEN)))\n        });\n    }"
-          }
-        ],
-        "buildSuckerDeploymentConfigMainnet": [
-          {
-            "name": "buildSuckerDeploymentConfigMainnet",
-            "paramTypes": [
-              "IJBSuckerDeployer",
-              "IJBSuckerDeployer",
-              "IJBSuckerDeployer"
-            ],
-            "startLine": 168,
-            "endLine": 188,
-            "source": "function buildSuckerDeploymentConfigMainnet(\n        IJBSuckerDeployer opDeployer,\n        IJBSuckerDeployer baseDeployer,\n        IJBSuckerDeployer arbDeployer\n    )\n        public\n        pure\n        returns (REVSuckerDeploymentConfig memory)\n    {\n        JBTokenMapping[] memory tokenMappings = buildTokenMappings();\n\n        JBSuckerDeployerConfig[] memory suckerDeployerConfigurations = new JBSuckerDeployerConfig[](3);\n        suckerDeployerConfigurations[0] =\n            JBSuckerDeployerConfig({deployer: opDeployer, peer: bytes32(0), mappings: tokenMappings});\n        suckerDeployerConfigurations[1] =\n            JBSuckerDeployerConfig({deployer: baseDeployer, peer: bytes32(0), mappings: tokenMappings});\n        suckerDeployerConfigurations[2] =\n            JBSuckerDeployerConfig({deployer: arbDeployer, peer: bytes32(0), mappings: tokenMappings});\n\n        return REVSuckerDeploymentConfig({deployerConfigurations: suckerDeployerConfigurations, salt: SUCKER_SALT});\n    }"
-          }
-        ],
-        "buildSuckerDeploymentConfigL2": [
-          {
-            "name": "buildSuckerDeploymentConfigL2",
-            "paramTypes": [
-              "IJBSuckerDeployer"
-            ],
-            "startLine": 190,
-            "endLine": 202,
-            "source": "function buildSuckerDeploymentConfigL2(IJBSuckerDeployer l2Deployer)\n        public\n        pure\n        returns (REVSuckerDeploymentConfig memory)\n    {\n        JBTokenMapping[] memory tokenMappings = buildTokenMappings();\n\n        JBSuckerDeployerConfig[] memory suckerDeployerConfigurations = new JBSuckerDeployerConfig[](1);\n        suckerDeployerConfigurations[0] =\n            JBSuckerDeployerConfig({deployer: l2Deployer, peer: bytes32(0), mappings: tokenMappings});\n\n        return REVSuckerDeploymentConfig({deployerConfigurations: suckerDeployerConfigurations, salt: SUCKER_SALT});\n    }"
-          }
-        ]
-      }
-    },
     "REVDeployer": {
       "repo": "revnet-core-v6",
       "githubUrl": "https://github.com/rev-net/revnet-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@rev-net/core-v6@1.0.1",
+      "ref": "2db322b40071e43aab465246a81f179513f1b9b8",
       "path": "src/REVDeployer.sol",
       "startLine": 60,
       "endLine": 1125,
@@ -126357,7 +125425,8 @@ export const registry = {
     "REVLoans": {
       "repo": "revnet-core-v6",
       "githubUrl": "https://github.com/rev-net/revnet-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@rev-net/core-v6@1.0.1",
+      "ref": "7c82249520f6bf6b44444e97b38340f8cd3d6cb7",
       "path": "src/REVLoans.sol",
       "startLine": 48,
       "endLine": 1761,
@@ -126849,7 +125918,8 @@ export const registry = {
     "CTDeployer": {
       "repo": "croptop-core-v6",
       "githubUrl": "https://github.com/mejango/croptop-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@croptop/core-v6@1.0.1",
+      "ref": "a431696d3aca8571059fc1397ad9a57f97e6645d",
       "path": "src/CTDeployer.sol",
       "startLine": 46,
       "endLine": 583,
@@ -127008,7 +126078,8 @@ export const registry = {
     "CTPublisher": {
       "repo": "croptop-core-v6",
       "githubUrl": "https://github.com/mejango/croptop-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@croptop/core-v6@1.0.1",
+      "ref": "41133185e50ed7c8a01f3e550a1a680e2829188b",
       "path": "src/CTPublisher.sol",
       "startLine": 38,
       "endLine": 1136,
@@ -127292,7 +126363,8 @@ export const registry = {
     "CTProjectOwner": {
       "repo": "croptop-core-v6",
       "githubUrl": "https://github.com/mejango/croptop-core-v6",
-      "branch": "main",
+      "sourceRef": "npm:@croptop/core-v6@1.0.1",
+      "ref": "41133185e50ed7c8a01f3e550a1a680e2829188b",
       "path": "src/CTProjectOwner.sol",
       "startLine": 19,
       "endLine": 91,
@@ -127316,7 +126388,8 @@ export const registry = {
     "DefifaDeployer": {
       "repo": "defifa",
       "githubUrl": "https://github.com/BallKidz/defifa",
-      "branch": "main",
+      "sourceRef": "npm:@ballkidz/defifa@1.0.2",
+      "ref": "73ba3459ce719efef1cedb03ffccbfcb367f7810",
       "path": "src/DefifaDeployer.sol",
       "startLine": 56,
       "endLine": 1062,
@@ -127490,7 +126563,8 @@ export const registry = {
     "DefifaHook": {
       "repo": "defifa",
       "githubUrl": "https://github.com/BallKidz/defifa",
-      "branch": "main",
+      "sourceRef": "npm:@ballkidz/defifa@1.0.2",
+      "ref": "331f5532598e859b4c2ce1515b67ca60117f862f",
       "path": "src/DefifaHook.sol",
       "startLine": 43,
       "endLine": 1238,
@@ -127941,7 +127015,8 @@ export const registry = {
     "DefifaGovernor": {
       "repo": "defifa",
       "githubUrl": "https://github.com/BallKidz/defifa",
-      "branch": "main",
+      "sourceRef": "npm:@ballkidz/defifa@1.0.2",
+      "ref": "26f419400e75201d3b82be602cd8b36f554b0e1b",
       "path": "src/DefifaGovernor.sol",
       "startLine": 27,
       "endLine": 896,
@@ -128156,7 +127231,8 @@ export const registry = {
     "Banny721TokenUriResolver": {
       "repo": "banny-retail-v6",
       "githubUrl": "https://github.com/mejango/banny-retail-v6",
-      "branch": "main",
+      "sourceRef": "npm:@bannynet/core-v6@1.0.0",
+      "ref": "8be16d037b8e998412a3e770e8c3dcba43a0fec2",
       "path": "src/Banny721TokenUriResolver.sol",
       "startLine": 24,
       "endLine": 1798,
@@ -128623,9 +127699,10 @@ export const registry = {
       }
     },
     "JBUniswapV4LPSplitHook": {
-      "repo": "univ4-lp-split-hook-v6",
+      "repo": "nana-univ4-lp-split-hook-v6",
       "githubUrl": "https://github.com/Bananapus/nana-univ4-lp-split-hook-v6",
-      "branch": "chore/lp-split-hook-instance-artifacts",
+      "sourceRef": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+      "ref": "b7f4d823b16d1294c27a59f54855e9db075f3047",
       "path": "src/JBUniswapV4LPSplitHook.sol",
       "startLine": 68,
       "endLine": 2141,
@@ -129270,9 +128347,10 @@ export const registry = {
       }
     },
     "JBUniswapV4LPSplitHookDeployer": {
-      "repo": "univ4-lp-split-hook-v6",
+      "repo": "nana-univ4-lp-split-hook-v6",
       "githubUrl": "https://github.com/Bananapus/nana-univ4-lp-split-hook-v6",
-      "branch": "chore/lp-split-hook-instance-artifacts",
+      "sourceRef": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+      "ref": "3b12112c38a71efaaab782e248cd109b9ca6fa84",
       "path": "src/JBUniswapV4LPSplitHookDeployer.sol",
       "startLine": 19,
       "endLine": 178,
@@ -129316,9 +128394,10 @@ export const registry = {
       }
     },
     "JBUniswapV4Hook": {
-      "repo": "univ4-router-v6",
+      "repo": "nana-univ4-router-v6",
       "githubUrl": "https://github.com/Bananapus/nana-univ4-router-v6",
-      "branch": "chore/consolidate-deployment-tree",
+      "sourceRef": "npm:@bananapus/univ4-router-v6@1.1.2",
+      "ref": "190a319ff74c194776874fffa29e02d08bfe4998",
       "path": "src/JBUniswapV4Hook.sol",
       "startLine": 60,
       "endLine": 1506,
@@ -129757,7 +128836,7 @@ export const sources = registry.sources;
 /**
  * Get the GitHub source info for a contract.
  * @param {string} name - Contract name
- * @returns {object|null} { repo, githubUrl, branch, path, startLine, endLine } or null
+ * @returns {object|null} { repo, githubUrl, sourceRef, ref, path, startLine, endLine } or null
  */
 export function getContractSource(name) {
   if (!registry.sources) return null;
@@ -129769,6 +128848,11 @@ export function getContractSource(name) {
 /**
  * Get the source body for a function. Resolves overloads by matching
  * ABI parameter types against parsed Solidity parameter types.
+ *
+ * Arity is a hard gate, including when the contract declares exactly one
+ * function with that name: a body whose parameter count differs from the
+ * deployed ABI entry is a different function, and rendering it under the
+ * deployed signature would misdescribe what the contract does.
  * @param {string} contractName
  * @param {object} abiEntry - The ABI function entry
  * @returns {object|null} { source, startLine, endLine, paramTypes } or null
@@ -129781,15 +128865,13 @@ export function getFunctionSource(contractName, abiEntry) {
   if (!c || !c.functionsByName) return null;
   const matches = c.functionsByName[abiEntry.name];
   if (!matches || matches.length === 0) return null;
-  if (matches.length === 1) return matches[0];
-  // Overloaded: pick the one whose arity matches and whose param types best match.
   const abiTypes = (abiEntry.inputs || []).map(function(p) { return p.type; });
   const abiInternal = (abiEntry.inputs || []).map(function(p) {
     var t = p.internalType || p.type;
     return t.replace(/^struct\s+/, '').replace(/^contract\s+/, '').replace(/^enum\s+/, '');
   });
   function score(srcParamTypes) {
-    if (srcParamTypes.length !== abiTypes.length) return -1;
+    if (!srcParamTypes || srcParamTypes.length !== abiTypes.length) return -1;
     var s = 0;
     for (var i = 0; i < srcParamTypes.length; i++) {
       var srcTok = srcParamTypes[i].replace(/\s+/g, ' ').trim();
@@ -129801,13 +128883,13 @@ export function getFunctionSource(contractName, abiEntry) {
     }
     return s;
   }
-  var best = matches[0];
-  var bestScore = score(best.paramTypes);
-  for (var i = 1; i < matches.length; i++) {
+  var best = null;
+  var bestScore = -1;
+  for (var i = 0; i < matches.length; i++) {
     var s = score(matches[i].paramTypes);
     if (s > bestScore) { best = matches[i]; bestScore = s; }
   }
-  return best;
+  return bestScore < 0 ? null : best;
 }
 
 /**
@@ -129819,7 +128901,7 @@ export function getFunctionSource(contractName, abiEntry) {
 export function getGithubUrl(contractName, abiEntry) {
   const c = getContractSource(contractName);
   if (!c || !c.githubUrl) return null;
-  const base = c.githubUrl + '/blob/' + (c.branch || 'main') + '/' + c.path;
+  const base = c.githubUrl + '/blob/' + (c.ref || c.branch || 'main') + '/' + c.path;
   if (!abiEntry) {
     return base + '#L' + c.startLine + '-L' + c.endLine;
   }

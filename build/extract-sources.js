@@ -4,125 +4,311 @@
  * bodies + line numbers, keyed by contract.functionName(signature). Output
  * goes to data/contract-sources.json and is consumed by generate-registry.js.
  *
+ * Sources are read at the ref the DEPLOYMENT was built from, never from a
+ * checked-out working tree. Each contract's ref comes from the deployment
+ * artifact (`data/deployments.json` → deployments[*].chains[*].gitCommit,
+ * e.g. "npm:@bananapus/core-v6@1.0.2") together with the artifact's
+ * `sourceName` (e.g. "node_modules/@bananapus/core-v6/src/JBController.sol").
+ * A contract whose deployed ref cannot be resolved is NOT emitted and the run
+ * fails: a wrong body under a deployed signature is worse than no body.
+ *
  * Usage:
- *   node build/extract-sources.js
+ *   node build/extract-sources.js            # write data/contract-sources.json
+ *   node build/extract-sources.js --verify   # assert the committed file is pinned
+ *   node build/extract-sources.js --offline  # never reach the npm registry
  *
  * Output: data/contract-sources.json
  * {
  *   "<ContractName>": {
  *     "repo": "nana-core-v6",
  *     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
- *     "branch": "main",
+ *     "sourceRef": "npm:@bananapus/core-v6@1.0.2",
+ *     "ref": "<git sha the deployed file content resolves to, or null>",
  *     "path": "src/JBController.sol",
  *     "startLine": 23,
  *     "endLine": 1186,
- *     "functions": {
- *       "launchProjectFor(address,string,(...)[],(...)[],string)": {
+ *     "functionsByName": {
+ *       "launchProjectFor": [{
  *         "name": "launchProjectFor",
+ *         "paramTypes": ["address", "string"],
  *         "startLine": 145,
  *         "endLine": 192,
  *         "source": "function launchProjectFor(...) external returns (...) {\n  ...\n}"
- *       }
+ *       }]
  *     }
  *   }
  * }
  */
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const REPOS_DIR = path.resolve(ROOT, "..", "..");
+const DEPLOY_ALL_DIR = path.join(REPOS_DIR, "deploy-all-v6");
 const DATA_DIR = path.join(ROOT, "data");
 const OUT_FILE = path.join(DATA_DIR, "contract-sources.json");
+const DEPLOYMENTS_FILE = path.join(DATA_DIR, "deployments.json");
+const CACHE_DIR = path.join(__dirname, ".source-cache");
 
-// repo → [contract names] (mirrors build/extract-abis.sh manifest)
-const MANIFEST = {
-  "nana-core-v6": [
-    "JBMultiTerminal", "JBController", "JBDirectory", "JBTerminalStore",
-    "JBTokens", "JBRulesets", "JBSplits", "JBPermissions", "JBPrices",
-    "JBProjects", "JBFundAccessLimits", "JBERC20", "JBFeelessAddresses",
-    "JBDeadline1Day", "JBDeadline3Days", "JBDeadline3Hours", "JBDeadline7Days",
-  ],
-  "nana-721-hook-v6": [
-    "JB721TiersHook", "JB721TiersHookStore", "JB721TiersHookDeployer",
-    "JB721TiersHookProjectDeployer",
-  ],
-  "nana-buyback-hook-v6": ["JBBuybackHookRegistry"],
-  "nana-suckers-v6": [
-    "JBSuckerRegistry", "JBOptimismSucker", "JBArbitrumSucker",
-    "JBCCIPSucker", "JBBaseSucker",
-  ],
-  "nana-omnichain-deployers-v6": ["JBOmnichainDeployer"],
-  "nana-distributor-v6": ["JBTokenDistributor", "JB721Distributor"],
-  "nana-project-payer-v6": ["JBProjectPayer", "JBProjectPayerDeployer"],
-  "nana-router-terminal-v6": [
-    "JBRouterTerminal", "JBRouterTerminalRegistry", "JBPayRouteResolver",
-  ],
-  "nana-project-handles-v6": ["JBProjectHandles"],
-  "nana-address-registry-v6": ["JBAddressRegistry"],
-  "nana-fee-project-deployer-v6": ["FeeProjectConfigBuilder"],
-  "revnet-core-v6": ["REVDeployer", "REVLoans"],
-  "croptop-core-v6": ["CTDeployer", "CTPublisher", "CTProjectOwner"],
-  "defifa": ["DefifaDeployer", "DefifaHook", "DefifaGovernor"],
-  "banny-retail-v6": ["Banny721TokenUriResolver"],
-  "univ4-lp-split-hook-v6": [
-    "JBUniswapV4LPSplitHook", "JBUniswapV4LPSplitHookDeployer",
-  ],
-  "univ4-router-v6": ["JBUniswapV4Hook"],
-};
+const VERIFY = process.argv.includes("--verify");
+const OFFLINE = process.argv.includes("--offline") || process.env.JUICESCAN_SOURCES_OFFLINE === "1";
 
-function getRepoGithubUrl(repo) {
-  try {
-    const url = execSync(
-      `git -C "${path.join(REPOS_DIR, repo)}" config --get remote.origin.url`,
-      { encoding: "utf8" }
-    ).trim();
-    return url.replace(/^git@github\.com:/, "https://github.com/").replace(/\.git$/, "");
-  } catch (e) {
-    return null;
+// Contracts whose Solidity bodies are surfaced in the UI. Every name here must
+// have a deployment artifact; the artifact — not this list — decides which repo,
+// which file and which version the body is read from.
+const MANIFEST = [
+  "JBMultiTerminal", "JBController", "JBDirectory", "JBTerminalStore",
+  "JBTokens", "JBRulesets", "JBSplits", "JBPermissions", "JBPrices",
+  "JBProjects", "JBFundAccessLimits", "JBERC20", "JBFeelessAddresses",
+  "JBDeadline1Day", "JBDeadline3Days", "JBDeadline3Hours", "JBDeadline7Days",
+  "JB721TiersHook", "JB721TiersHookStore", "JB721TiersHookDeployer",
+  "JB721TiersHookProjectDeployer",
+  "JBBuybackHookRegistry",
+  "JBSuckerRegistry", "JBOptimismSucker", "JBArbitrumSucker", "JBCCIPSucker",
+  "JBBaseSucker",
+  "JBOmnichainDeployer",
+  "JBProjectPayer", "JBProjectPayerDeployer",
+  "JBRouterTerminal", "JBRouterTerminalRegistry",
+  "JBProjectHandles",
+  "JBAddressRegistry",
+  "REVDeployer", "REVLoans",
+  "CTDeployer", "CTPublisher", "CTProjectOwner",
+  "DefifaDeployer", "DefifaHook", "DefifaGovernor",
+  "Banny721TokenUriResolver",
+  "JBUniswapV4LPSplitHook", "JBUniswapV4LPSplitHookDeployer",
+  "JBUniswapV4Hook",
+];
+
+// ---------------------------------------------------------------------------
+// Deployed-ref resolution
+// ---------------------------------------------------------------------------
+
+function loadDeployments() {
+  if (!fs.existsSync(DEPLOYMENTS_FILE)) {
+    throw new Error(
+      `${DEPLOYMENTS_FILE} not found — run \`npm run sync-deployments\` first.`
+    );
   }
+  const parsed = JSON.parse(fs.readFileSync(DEPLOYMENTS_FILE, "utf8"));
+  return parsed.deployments || {};
 }
 
-function getRepoBranch(repo) {
-  try {
-    return execSync(
-      `git -C "${path.join(REPOS_DIR, repo)}" symbolic-ref --short HEAD`,
-      { encoding: "utf8" }
-    ).trim();
-  } catch (e) {
-    return "main";
-  }
-}
-
-// Walk repo's source dirs to find a .sol file defining the given contract.
-function findContractFile(repo, contractName) {
-  const candidates = ["src", "contracts", "test"];
-
-  function walk(dir) {
-    if (!fs.existsSync(dir)) return null;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        const found = walk(p);
-        if (found) return found;
-      } else if (e.isFile() && e.name.endsWith(".sol")) {
-        const content = fs.readFileSync(p, "utf8");
-        const re = new RegExp(`(?:^|\\s)(?:abstract\\s+)?contract\\s+${contractName}\\b`);
-        if (re.test(content)) return p;
-      }
+// Every deployment record that carries this contract's bytecode: the record
+// keyed by the contract name plus any instance record (JBP6FeeLPSplitHook,
+// JBCCIPSucker__ARB, …) whose `contractName` points back at it.
+function deploymentRecordsFor(deployments, contractName) {
+  const records = [];
+  for (const [deploymentName, record] of Object.entries(deployments)) {
+    if (deploymentName === contractName || record.contractName === contractName) {
+      records.push([deploymentName, record]);
     }
+  }
+  return records;
+}
+
+// { sourceRef, sourceName } for a contract, or { error } when the deployment
+// artifacts disagree or are absent.
+function deployedRefFor(deployments, contractName) {
+  const records = deploymentRecordsFor(deployments, contractName);
+  if (records.length === 0) return { error: "no deployment artifact" };
+
+  const refs = new Set();
+  const sourceNames = new Set();
+  for (const [, record] of records) {
+    if (record.sourceName) sourceNames.add(record.sourceName);
+    for (const chain of Object.values(record.chains || {})) {
+      if (chain.gitCommit) refs.add(chain.gitCommit);
+    }
+  }
+  if (refs.size === 0) return { error: "deployment artifact carries no gitCommit" };
+  if (refs.size > 1) {
+    return { error: `chains disagree on the source ref (${[...refs].sort().join(", ")})` };
+  }
+  if (sourceNames.size !== 1) {
+    return { error: `chains disagree on sourceName (${[...sourceNames].sort().join(", ")})` };
+  }
+  return { sourceRef: [...refs][0], sourceName: [...sourceNames][0] };
+}
+
+// "npm:@bananapus/core-v6@1.0.2" → { pkg, version }
+function parseNpmRef(sourceRef) {
+  const m = /^npm:(@?[^@]+(?:\/[^@]+)?)@([^@]+)$/.exec(sourceRef);
+  return m ? { pkg: m[1], version: m[2] } : null;
+}
+
+// "node_modules/@bananapus/core-v6/src/JBController.sol" → "src/JBController.sol"
+function pathWithinPackage(sourceName, pkg) {
+  const prefix = `node_modules/${pkg}/`;
+  return sourceName.startsWith(prefix) ? sourceName.slice(prefix.length) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Package-tree resolution (deployed version only — never the working tree)
+// ---------------------------------------------------------------------------
+
+function installedVersion(dir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version;
+  } catch (e) {
     return null;
   }
+}
 
-  for (const sub of candidates) {
-    const found = walk(path.join(REPOS_DIR, repo, sub));
-    if (found) return found;
+const packageRootCache = new Map();
+
+function cacheDirFor(pkg, version) {
+  return path.join(CACHE_DIR, pkg.replace(/[/@]/g, "_") + "@" + version, "package");
+}
+
+// Fetch the published tarball for pkg@version into CACHE_DIR. Returns the
+// extracted package root, or null when the fetch fails / is disallowed.
+function fetchPackage(pkg, version) {
+  if (OFFLINE) return null;
+  const dest = cacheDirFor(pkg, version);
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "juicescan-src-"));
+  try {
+    const out = execFileSync("npm", ["pack", `${pkg}@${version}`, "--silent", "--pack-destination", stage], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const tgz = out.trim().split("\n").pop().trim();
+    const tarball = path.isAbsolute(tgz) ? tgz : path.join(stage, tgz);
+    execFileSync("tar", ["xzf", tarball, "-C", stage]);
+    const extracted = path.join(stage, "package");
+    if (!fs.existsSync(extracted)) return null;
+    if (installedVersion(extracted) !== version) return null;
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.cpSync(extracted, dest, { recursive: true });
+    return dest;
+  } catch (e) {
+    return null;
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+// The source tree pkg@version was published from. Prefers deploy-all-v6's own
+// node_modules when its installed version still matches the deployed pin (that
+// directory IS what the artifact's `sourceName` points at), then a previously
+// fetched tarball, then a fresh fetch. Never falls back to a submodule checkout.
+function resolvePackageRoot(pkg, version) {
+  const key = `${pkg}@${version}`;
+  if (packageRootCache.has(key)) return packageRootCache.get(key);
+
+  let root = null;
+  const installed = path.join(DEPLOY_ALL_DIR, "node_modules", pkg);
+  if (installedVersion(installed) === version) {
+    root = { dir: installed, origin: "deploy-all node_modules" };
+  }
+  if (!root) {
+    const cached = cacheDirFor(pkg, version);
+    if (installedVersion(cached) === version) root = { dir: cached, origin: "cache" };
+  }
+  if (!root) {
+    const fetched = fetchPackage(pkg, version);
+    if (fetched) root = { dir: fetched, origin: "npm registry" };
+  }
+
+  packageRootCache.set(key, root);
+  return root;
+}
+
+function githubUrlFromPackage(packageRoot) {
+  let repository;
+  try {
+    repository = JSON.parse(
+      fs.readFileSync(path.join(packageRoot, "package.json"), "utf8")
+    ).repository;
+  } catch (e) {
+    return null;
+  }
+  const url = typeof repository === "string" ? repository : repository && repository.url;
+  if (!url) return null;
+  return url
+    .replace(/^git\+/, "")
+    .replace(/^git@github\.com:/, "https://github.com/")
+    .replace(/^ssh:\/\/git@github\.com\//, "https://github.com/")
+    .replace(/\.git$/, "");
+}
+
+// ---------------------------------------------------------------------------
+// Permalink ref: the git commit whose blob for `relPath` is byte-identical to
+// the deployed file. Best-effort — a null ref just means the GitHub link falls
+// back to the repo's default branch.
+// ---------------------------------------------------------------------------
+
+const localRepoCache = new Map();
+
+function localRepoFor(githubUrl) {
+  if (!githubUrl) return null;
+  if (localRepoCache.has(githubUrl)) return localRepoCache.get(githubUrl);
+  let found = null;
+  for (const entry of fs.readdirSync(REPOS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(REPOS_DIR, entry.name);
+    if (!fs.existsSync(path.join(dir, ".git"))) continue;
+    let remote;
+    try {
+      remote = execSync(`git -C "${dir}" config --get remote.origin.url`, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch (e) {
+      continue;
+    }
+    const normalized = remote
+      .replace(/^git\+/, "")
+      .replace(/^git@github\.com:/, "https://github.com/")
+      .replace(/\.git$/, "");
+    if (normalized.toLowerCase() === githubUrl.toLowerCase()) {
+      found = dir;
+      break;
+    }
+  }
+  localRepoCache.set(githubUrl, found);
+  return found;
+}
+
+function resolveCommitForFile(githubUrl, relPath, absFile) {
+  const repoDir = localRepoFor(githubUrl);
+  if (!repoDir) return null;
+  try {
+    const blob = execSync(`git -C "${repoDir}" hash-object "${absFile}"`, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const commits = execSync(
+      `git -C "${repoDir}" log --all --format=%H -- "${relPath}"`,
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 * 1024 * 1024 }
+    )
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const commit of commits) {
+      let candidate;
+      try {
+        candidate = execSync(`git -C "${repoDir}" rev-parse "${commit}:${relPath}"`, {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      } catch (e) {
+        continue;
+      }
+      if (candidate === blob) return commit;
+    }
+  } catch (e) {
+    return null;
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Solidity parsing (unchanged)
+// ---------------------------------------------------------------------------
 
 // Strip /* … */ block comments and // line comments, preserving line breaks.
 // Preserves string literals so we don't accidentally remove tokens inside them.
@@ -313,71 +499,183 @@ function offsetToLine(src, offset) {
   return line;
 }
 
-function extractRepo(repo, contracts) {
-  const githubUrl = getRepoGithubUrl(repo);
-  const branch = getRepoBranch(repo);
-  const result = {};
+function parseContract(raw, contractName) {
+  const stripped = stripComments(raw);
+  const block = findContractBlock(stripped, contractName);
+  if (!block) return null;
 
-  for (const contractName of contracts) {
-    const filepath = findContractFile(repo, contractName);
-    if (!filepath) {
-      console.warn(`  ✗ ${contractName} — source not found in ${repo}`);
-      continue;
-    }
-    const relPath = path.relative(path.join(REPOS_DIR, repo), filepath);
-    const raw = fs.readFileSync(filepath, "utf8");
-    const stripped = stripComments(raw);
-
-    const block = findContractBlock(stripped, contractName);
-    if (!block) {
-      console.warn(`  ✗ ${contractName} — could not find contract block in ${relPath}`);
-      continue;
-    }
-
-    const fns = findFunctions(stripped, block.bodyOpen, block.bodyClose);
-    const fnsByName = {};
-
-    for (const fn of fns) {
-      if (fn.isAbstract) continue; // skip declarations without bodies
-      const startLine = offsetToLine(raw, fn.headerOffset);
-      const endLine = offsetToLine(raw, fn.endOffset);
-      const source = raw.slice(fn.headerOffset, fn.endOffset + 1);
-      const entry = {
-        name: fn.name,
-        paramTypes: fn.signatureTypes,
-        startLine,
-        endLine,
-        source,
-      };
-      // Bucket by name to handle overloads
-      if (!fnsByName[fn.name]) fnsByName[fn.name] = [];
-      fnsByName[fn.name].push(entry);
-    }
-
-    result[contractName] = {
-      repo,
-      githubUrl,
-      branch,
-      path: relPath,
-      startLine: offsetToLine(raw, block.startOffset),
-      endLine: offsetToLine(raw, block.bodyClose),
-      functionsByName: fnsByName,
+  const fns = findFunctions(stripped, block.bodyOpen, block.bodyClose);
+  const fnsByName = {};
+  for (const fn of fns) {
+    if (fn.isAbstract) continue; // skip declarations without bodies
+    const entry = {
+      name: fn.name,
+      paramTypes: fn.signatureTypes,
+      startLine: offsetToLine(raw, fn.headerOffset),
+      endLine: offsetToLine(raw, fn.endOffset),
+      source: raw.slice(fn.headerOffset, fn.endOffset + 1),
     };
+    // Bucket by name to handle overloads
+    if (!fnsByName[fn.name]) fnsByName[fn.name] = [];
+    fnsByName[fn.name].push(entry);
+  }
+  return {
+    startLine: offsetToLine(raw, block.startOffset),
+    endLine: offsetToLine(raw, block.bodyClose),
+    functionsByName: fnsByName,
+  };
+}
 
-    const fnCount = Object.values(fnsByName).reduce((a, b) => a + b.length, 0);
-    console.log(`  ✓ ${contractName} — ${relPath} (${fnCount} fns)`);
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+function loadPrevious() {
+  try {
+    return JSON.parse(fs.readFileSync(OUT_FILE, "utf8"));
+  } catch (e) {
+    return {};
+  }
+}
+
+function extractContract(contractName, ref, previous) {
+  const npm = parseNpmRef(ref.sourceRef);
+  if (!npm) {
+    return { error: `source ref "${ref.sourceRef}" is not an npm pin` };
+  }
+  const relPath = pathWithinPackage(ref.sourceName, npm.pkg);
+  if (!relPath) {
+    return { error: `sourceName "${ref.sourceName}" is not inside ${npm.pkg}` };
   }
 
-  return result;
+  const root = resolvePackageRoot(npm.pkg, npm.version);
+  if (!root) {
+    // The deployed tree is unavailable. Reuse the committed entry only when it
+    // was itself extracted at this exact ref; otherwise emit nothing.
+    const prior = previous[contractName];
+    if (prior && prior.sourceRef === ref.sourceRef && prior.functionsByName) {
+      return { entry: prior, origin: "committed (ref matches)" };
+    }
+    return {
+      error: `cannot resolve ${npm.pkg}@${npm.version}` +
+        (OFFLINE ? " (offline)" : " — `npm pack` failed"),
+    };
+  }
+
+  const absFile = path.join(root.dir, relPath);
+  if (!fs.existsSync(absFile)) {
+    return { error: `${relPath} missing from ${npm.pkg}@${npm.version}` };
+  }
+  const raw = fs.readFileSync(absFile, "utf8");
+  const parsed = parseContract(raw, contractName);
+  if (!parsed) {
+    return { error: `contract block not found in ${relPath} @ ${npm.pkg}@${npm.version}` };
+  }
+
+  const githubUrl = githubUrlFromPackage(root.dir) ||
+    (previous[contractName] && previous[contractName].githubUrl) || null;
+
+  return {
+    origin: root.origin,
+    entry: {
+      repo: githubUrl ? githubUrl.split("/").pop() : npm.pkg,
+      githubUrl,
+      sourceRef: ref.sourceRef,
+      ref: resolveCommitForFile(githubUrl, relPath, absFile),
+      path: relPath,
+      startLine: parsed.startLine,
+      endLine: parsed.endLine,
+      functionsByName: parsed.functionsByName,
+    },
+  };
+}
+
+function verify(deployments, current) {
+  const problems = [];
+  for (const contractName of MANIFEST) {
+    const ref = deployedRefFor(deployments, contractName);
+    const entry = current[contractName];
+    if (ref.error) {
+      if (entry) problems.push(`${contractName}: emitted but ${ref.error}`);
+      continue;
+    }
+    if (!entry) {
+      problems.push(`${contractName}: missing from ${path.basename(OUT_FILE)} (deployed at ${ref.sourceRef})`);
+      continue;
+    }
+    if (entry.sourceRef !== ref.sourceRef) {
+      problems.push(
+        `${contractName}: pinned to "${entry.sourceRef}" but deployed at "${ref.sourceRef}"`
+      );
+    }
+  }
+  for (const contractName of Object.keys(current)) {
+    if (!MANIFEST.includes(contractName)) {
+      problems.push(`${contractName}: present in ${path.basename(OUT_FILE)} but not in the manifest`);
+    }
+  }
+  return problems;
 }
 
 function main() {
+  const deployments = loadDeployments();
+
+  if (VERIFY) {
+    console.log("extract-sources.js --verify");
+    console.log("───────────────────────────");
+    const current = loadPrevious();
+    const problems = verify(deployments, current);
+    if (problems.length) {
+      console.error("");
+      console.error("SOURCE PIN DRIFT — data/contract-sources.json no longer matches the deployments:");
+      for (const p of problems) console.error(`  ✗ ${p}`);
+      console.error("");
+      console.error("Run `node build/extract-sources.js` (network access required for");
+      console.error("newly pinned package versions) and commit the result.");
+      process.exit(1);
+    }
+    console.log(`  ✓ ${MANIFEST.length} contracts pinned to their deployed source refs`);
+    return;
+  }
+
   console.log("extract-sources.js");
   console.log("──────────────────");
+  const previous = loadPrevious();
   const all = {};
-  for (const [repo, contracts] of Object.entries(MANIFEST)) {
-    console.log(`── ${repo} ──`);
-    Object.assign(all, extractRepo(repo, contracts));
+  const failures = [];
+  const skipped = [];
+
+  for (const contractName of MANIFEST) {
+    const ref = deployedRefFor(deployments, contractName);
+    if (ref.error) {
+      // Nothing is deployed under this name, so nothing in the registry can
+      // reference its source. Dropping it is not a source-integrity failure.
+      skipped.push(`${contractName} — ${ref.error}`);
+      continue;
+    }
+    const result = extractContract(contractName, ref, previous);
+    if (result.error) {
+      failures.push(`${contractName} @ ${ref.sourceRef} — ${result.error}`);
+      continue;
+    }
+    all[contractName] = result.entry;
+    const fnCount = Object.values(result.entry.functionsByName).reduce((a, b) => a + b.length, 0);
+    console.log(
+      `  ✓ ${contractName} — ${ref.sourceRef} (${fnCount} fns, via ${result.origin})`
+    );
+  }
+
+  for (const s of skipped) console.log(`  · ${s} — skipped`);
+
+  if (failures.length) {
+    console.error("");
+    console.error("REFUSING TO EMIT — these contracts could not be read at their deployed ref:");
+    for (const f of failures) console.error(`  ✗ ${f}`);
+    console.error("");
+    console.error(`${OUT_FILE} was left unchanged. A wrong function body under a`);
+    console.error("deployed signature is worse than no body, so nothing is written until every");
+    console.error("contract resolves. Re-run with network access, or fix the deployment artifact.");
+    process.exit(1);
   }
 
   fs.writeFileSync(OUT_FILE, JSON.stringify(all, null, 2));
@@ -385,10 +683,14 @@ function main() {
     (sum, c) => sum + Object.values(c.functionsByName).reduce((a, b) => a + b.length, 0),
     0
   );
+  const unresolvedRefs = Object.values(all).filter((c) => !c.ref).length;
   console.log("");
   console.log(`Wrote ${OUT_FILE}`);
   console.log(`Contracts: ${Object.keys(all).length}`);
   console.log(`Functions: ${fnTotal}`);
+  if (unresolvedRefs) {
+    console.log(`Permalink commits unresolved: ${unresolvedRefs} (links fall back to the default branch)`);
+  }
   console.log(`Size:      ${(fs.statSync(OUT_FILE).size / 1024).toFixed(1)} KB`);
 }
 

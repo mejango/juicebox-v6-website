@@ -6,9 +6,45 @@ import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, discoverChains, selectChain, firstChainForNetwork,
   executeTransaction, renderError, getAddress, parseHashDefaults,
+  createPublicClientForChain, getChainTokens,
 } from './component-base.js';
 import { createDefaultRuleset, buildRulesetConfigs } from './ruleset-config.js';
 import { renderRulesetFieldset } from './ruleset-ui.js';
+import { requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel } from './create-flow.js';
+
+var accountingContextsAbi = [{
+  type: 'function', name: 'accountingContextsOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }],
+  outputs: [{ type: 'tuple[]', components: [
+    { name: 'token', type: 'address' }, { name: 'decimals', type: 'uint8' }, { name: 'currency', type: 'uint32' },
+  ] }],
+}];
+
+// A queued ruleset can repoint baseCurrency while the project's accounting contexts stay immutable —
+// block a base whose (context ↔ base) JBPrices pair is unreachable, since payments in that context
+// would revert under the new rules. Cross-context pairs are not probed: the queue can't change them,
+// and blocking on them would also block a rescue queue (allowAddPriceFeed) on an affected project.
+function verifyQueueFeedCoverage(chainId, projectId, rulesetConfigs) {
+  var terminal = getAddress('JBMultiTerminal', chainId);
+  if (!terminal) return Promise.resolve(); // no canonical terminal → no contexts to convert
+  var bases = [];
+  rulesetConfigs.forEach(function (cfg) {
+    var cur = Number(cfg.metadata && cfg.metadata.baseCurrency) || 1;
+    if (bases.indexOf(cur) === -1) bases.push(cur);
+  });
+  return createPublicClientForChain(chainId)
+    .readContract({ address: terminal, abi: accountingContextsAbi, functionName: 'accountingContextsOf', args: [BigInt(projectId)] })
+    .catch(function () { throw new Error('Couldn’t verify price feed coverage right now — nothing was sent. Try again.'); })
+    .then(function (ctxs) {
+      var known = getChainTokens(chainId);
+      var labeled = (ctxs || []).map(function (ctx) {
+        var match = known.find(function (t) { return t.address.toLowerCase() === String(ctx.token).toLowerCase(); });
+        return { token: ctx.token, currency: ctx.currency, symbol: match ? match.symbol.replace(' (native)', '') : null };
+      });
+      var pairs = requiredFeedPairs(labeled, bases, true);
+      return verifyFeedCoverage(chainId, pairs, function (cur) { return feedCurrencyLabel(cur, labeled); }, { projectId: BigInt(projectId) });
+    });
+}
 
 export var queueRulesetsAbi = [{
   type: 'function', name: 'queueRulesetsOf', stateMutability: 'nonpayable',
@@ -201,13 +237,26 @@ export function renderQueueRulesetComponent() {
     var controllerAddr = getAddress('JBController', state.selectedChain);
     if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
 
-    var rulesetConfigs = buildRulesetConfigs(state.rulesets);
+    var rulesetConfigs;
+    try {
+      rulesetConfigs = buildRulesetConfigs(state.rulesets);
+    } catch (err) {
+      state.error = (err && err.message) || String(err); updateUI(); return;
+    }
 
-    executeTransaction({
-      ...buildQueueRulesetsArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, rulesetConfigs: rulesetConfigs, memo: state.memo || '' }),
-      onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
-      onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
-      onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
+    state.txStatus = { message: 'Verifying price feed coverage…', success: false };
+    updateUI();
+    verifyQueueFeedCoverage(state.selectedChain, state.projectId, rulesetConfigs).then(function() {
+      executeTransaction({
+        ...buildQueueRulesetsArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, rulesetConfigs: rulesetConfigs, memo: state.memo || '' }),
+        onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
+        onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
+        onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
+      });
+    }, function(err) {
+      state.error = (err && err.message) || String(err);
+      state.txStatus = null;
+      updateUI();
     });
   }
 

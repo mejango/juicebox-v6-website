@@ -11,6 +11,7 @@ import {
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
 } from './component-base.js';
 import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
+import { quotedOutputFloor } from './slippage.js';
 
 export var payAbi = [{
   type: 'function', name: 'pay', stateMutability: 'payable',
@@ -44,8 +45,7 @@ export function buildPayArgs(o) {
   if (!pv || pv.unavailable || pv.received == null) throw new Error('A live pay preview is required.');
   var quoted = BigInt(pv.received);
   if (quoted < 0n) throw new Error('The pay preview returned an invalid project-token count.');
-  var minReturned = quoted * 99n / 100n;
-  if (quoted > 0n && minReturned === 0n) minReturned = 1n;
+  var minReturned = quotedOutputFloor(quoted, 9900);
   return {
     chainId: o.chainId,
     address: o.route.address,

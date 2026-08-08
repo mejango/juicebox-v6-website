@@ -27,8 +27,10 @@ import {
   safeHomeLink,
   safeOnChainContext,
   safeQueueLink,
+  safeServiceChainIds,
   safeTxLink,
 } from '../src/safe.js';
+import { isTestnetChain } from '../src/chain.js';
 
 const SAFE = '0x1111111111111111111111111111111111111111';
 const OWNER = '0x2222222222222222222222222222222222222222';
@@ -57,6 +59,25 @@ describe('Safe runtime fail-closed boundaries', () => {
     safeState.wallet = null;
     safeState.switchChain.mockReset();
     vi.stubGlobal('fetch', vi.fn());
+  });
+
+  it('probes every serviced chain for a Safe creation record, testnets first', () => {
+    const ids = safeServiceChainIds();
+    // The hand-written literal this replaced omitted Base Sepolia, so a testnet-only Safe could never be
+    // redeployed same-address. Chains without a hosted service must still stay out.
+    expect(ids).toContain(84532);
+    expect(ids).toContain(11155111);
+    expect(ids).toEqual(expect.arrayContaining([1, 10, 8453, 42161]));
+    expect(ids).not.toContain(421614);
+    expect(ids).not.toContain(11155420);
+    const firstMainnet = ids.findIndex(id => !isTestnetChain(id));
+    expect(ids.slice(0, firstMainnet).every(isTestnetChain)).toBe(true);
+    expect(ids.slice(firstMainnet).some(isTestnetChain)).toBe(false);
+  });
+
+  it('picks up a localStorage tx-service override as a probe candidate', () => {
+    localStorage.setItem('jb-safe-tx-base', JSON.stringify({ 421614: 'https://example.invalid/tx' }));
+    expect(safeServiceChainIds()).toContain(421614);
   });
 
   it('uses explicit supported links and returns terminal nulls for unknown service chains', () => {

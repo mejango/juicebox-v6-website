@@ -80,9 +80,13 @@ export function renderRoutingTag(routing) {
 export function renderAmmSub(amm) {
   if (!amm) return null;
   var div = el('div', 'pay-amm-sub');
+  // When the pool has no seeded TWAP, the hook replaces minimumSwapAmountOut with the plain-issuance count
+  // (JBBuybackHook.beforePayRecordedWith) and derives the quote from spot. Labelling that "TWAP quote" names an
+  // oracle that produced nothing, in exactly the case where the reader most needs to know the oracle was cold.
+  var unseeded = amm.oracleUnseeded === true && !amm.hasUserSpecifiedQuote;
   var bits = ['via Uniswap pool ' + shortHex(amm.poolId)];
-  if (amm.minOut) bits.push('~' + formatTokenCount(amm.minOut) + ' out (min)');
-  bits.push(amm.hasUserSpecifiedQuote ? 'client quote' : 'TWAP quote');
+  if (amm.minOut) bits.push('~' + formatTokenCount(amm.minOut) + (unseeded ? ' out (min, issuance floor)' : ' out (min)'));
+  bits.push(amm.hasUserSpecifiedQuote ? 'client quote' : (unseeded ? 'spot quote, no TWAP yet' : 'TWAP quote'));
   div.textContent = bits.join(' | ');
   return div;
 }
@@ -127,7 +131,10 @@ var previewPayForAbi = [{
 
 // Exact abi.encode order/types from JBBuybackHook.sol (the noop spec metadata). A non-buyback spec
 // (e.g. a 721 hook) won't decode against this, which is how we identify the buyback spec.
-var BUYBACK_META = [
+// The deployed generation (buyback-hook-v6 1.1.1, 0x77bee1ad… on every chain) encodes a 15th field,
+// `oracleUnseeded`. Older generations stop one word short, so that spec is kept as a fallback: a strict
+// 15-field decode would drop those previews to the issuance route and misreport the amounts.
+var BUYBACK_META_LEGACY = [
   { name: 'projectTokenIs0', type: 'bool' },
   { name: 'amountToMintWith', type: 'uint256' },
   { name: 'minimumSwapAmountOut', type: 'uint256' },
@@ -143,6 +150,14 @@ var BUYBACK_META = [
   { name: 'minimumReservedTokenCount', type: 'uint256' },
   { name: 'rawSwapQuote', type: 'uint256' },
 ];
+var BUYBACK_META = BUYBACK_META_LEGACY.concat([{ name: 'oracleUnseeded', type: 'bool' }]);
+
+// Decode a hook spec's metadata as the buyback tuple, newest generation first. Throws when it is not a
+// buyback spec at all, which is how the caller keeps scanning.
+function decodeBuybackMeta(metadata) {
+  try { return decodeAbiParameters(BUYBACK_META, metadata); }
+  catch (_) { return decodeAbiParameters(BUYBACK_META_LEGACY, metadata); }
+}
 
 var PREVIEW_BENEFICIARY = '0x000000000000000000000000000000000000dEaD';
 
@@ -189,7 +204,7 @@ export async function computePayPreview(opts) {
       var m = specs[i].metadata;
       if (!m || m === '0x') continue;
       try {
-        decoded = decodeAbiParameters(BUYBACK_META, m);
+        decoded = decodeBuybackMeta(m);
         buyback = specs[i];
         break;
       } catch (_) {
@@ -212,6 +227,7 @@ export async function computePayPreview(opts) {
         hasUserSpecifiedQuote: decoded[3],
         wouldMintByIssuance: decoded[5], // tokenCountWithoutHook
         quotedAmountToSwapWith: decoded[7],
+        oracleUnseeded: decoded[14],     // undefined on pre-1.1.1 hooks (field absent, not false)
       };
     } else {
       // Issuance route (noop, or no buyback pool configured).

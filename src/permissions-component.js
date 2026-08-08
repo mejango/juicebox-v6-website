@@ -6,6 +6,7 @@ import {
   el, createComponentWrapper, createWalletButton, executeTransaction,
   renderError, getAddress, getAccount, parseHashDefaults, isAddr, truncAddr,
 } from './component-base.js';
+import { chainList } from './chain.js';
 
 export var setPermissionsAbi = [{
   type: 'function', name: 'setPermissionsFor', stateMutability: 'nonpayable',
@@ -20,12 +21,23 @@ export var setPermissionsAbi = [{
   outputs: [],
 }];
 
+// Whole-number project id, or null for anything else. Empty means the default: 0, the wildcard
+// (JBPermissions.WILDCARD_PROJECT_ID) that applies across ALL of the account's projects on the chain.
+export function parseProjectId(value) {
+  var s = String(value == null ? '' : value).trim();
+  if (s === '') return 0;
+  if (!/^\d+$/.test(s)) return null;
+  return Number(s);
+}
+
 // Pure builder for JBPermissions.setPermissionsFor. `o`: { chainId, permissionsAddr, account, operator,
 // projectId, permissionIds (uint8[]) }. The permissionIds map to nana-permission-ids-v6 (see PERMISSIONS).
 export function buildSetPermissionsArgs(o) {
+  var projectId = parseProjectId(o.projectId);
+  if (projectId === null) throw new Error('Invalid project ID: must be a whole number.');
   return {
     chainId: o.chainId, address: o.permissionsAddr, abi: setPermissionsAbi, functionName: 'setPermissionsFor',
-    args: [o.account, { operator: o.operator, projectId: Number(o.projectId) || 0, permissionIds: o.permissionIds }],
+    args: [o.account, { operator: o.operator, projectId: projectId, permissionIds: o.permissionIds }],
   };
 }
 
@@ -85,10 +97,12 @@ var PERMISSION_GROUPS = [
 
 export function renderPermissionsComponent() {
   var defaults = parseHashDefaults('permissions');
+  var defaultProjectId = (defaults.projectId || '').trim();
+  if (parseProjectId(defaultProjectId) === null) defaultProjectId = '';
 
   var state = {
     operator: defaults.operator || '',
-    projectId: defaults.projectId || '',
+    projectId: defaultProjectId,
     selectedIds: {},
     chainId: 1,
     error: null,
@@ -113,12 +127,9 @@ export function renderPermissionsComponent() {
     // Project ID + chain — paired as a single field since a project ID only
     // refers to a specific project on a specific chain. Chain summary sits
     // above the project ID input; click "on <chain>" to reveal the picker.
-    var chainOptions = [
-      { id: 1, name: 'Ethereum' }, { id: 10, name: 'Optimism' },
-      { id: 42161, name: 'Arbitrum' }, { id: 8453, name: 'Base' },
-      { id: 11155111, name: 'Sepolia' }, { id: 11155420, name: 'OP Sepolia' },
-      { id: 84532, name: 'Base Sepolia' }, { id: 421614, name: 'Arb Sepolia' },
-    ];
+    // From the deployment manifest, never an inline copy: a chain missing from a hand-maintained list is a chain
+    // the operator simply cannot set permissions on, with nothing on screen to say why.
+    var chainOptions = chainList();
     var currentChainName = (chainOptions.find(function(c) { return c.id === state.chainId; }) || {}).name || 'Ethereum';
 
     var pidSection = el('div', 'component-section project-chain-section');
@@ -268,7 +279,10 @@ export function renderPermissionsComponent() {
     var permissionsAddr = getAddress('JBPermissions', state.chainId);
     if (!permissionsAddr) { state.error = 'No JBPermissions address for this chain'; updateUI(); return; }
 
-    var projectId = state.projectId ? Number(state.projectId) : 0;
+    var projectId = parseProjectId(state.projectId);
+    if (projectId === null) {
+      state.error = 'Enter a valid project ID (a whole number)'; updateUI(); return;
+    }
 
     // Flag the two highest-stakes grants explicitly in the confirm (the decoded `permissionIds: [1]` alone
     // doesn't convey "full control"): ROOT (id 1) = every permission; projectId 0 = ALL of your projects.

@@ -10,7 +10,7 @@ import { buildMintArgs, mintTokensAbi } from '../src/mint-component.js';
 import { buildBurnArgs, burnTokensAbi } from '../src/burn-component.js';
 import { buildDeployErc20Args, deployERC20Abi } from '../src/deploy-erc20-component.js';
 import { buildSendReservedArgs, sendReservedAbi } from '../src/reserved-component.js';
-import { buildSetPermissionsArgs, setPermissionsAbi } from '../src/permissions-component.js';
+import { buildSetPermissionsArgs, parseProjectId, setPermissionsAbi } from '../src/permissions-component.js';
 import { availablePayoutAmount, buildSendPayoutsArgs, isExactPayoutCurrency, normalizePayoutContext, payoutBalanceInLimitCurrency, payoutCurrencyIdForSelection, payoutAmountDecimals, payoutOutputFloor, sendPayoutsAbi, tokenCurrencyId } from '../src/payouts-component.js';
 import { safeExecArgs, safeExecSignatures, safeUsableConfirmationCount, SAFE_EXEC_ABI } from '../src/safe.js';
 
@@ -133,6 +133,19 @@ describe('permissions — JBPermissions.setPermissionsFor', () => {
     expect(tx.args[1].projectId).toBe(7);
     expect(tx.args[1].permissionIds).toEqual([1, 34, 35]);
     expect(roundTrips(setPermissionsAbi, 'setPermissionsFor', tx.args)).toBe(true);
+  });
+  it('rejects non-numeric project ids instead of collapsing NaN to wildcard 0; keeps 0 explicit', () => {
+    expect(parseProjectId('12,')).toBeNull();
+    expect(parseProjectId('12a')).toBeNull();
+    expect(parseProjectId('#12')).toBeNull();
+    expect(parseProjectId('1 000')).toBeNull();
+    expect(parseProjectId(' 7 ')).toBe(7);
+    expect(parseProjectId('')).toBe(0);
+    expect(parseProjectId('0')).toBe(0);
+    expect(() => buildSetPermissionsArgs({ chainId: 1, permissionsAddr: PERM, account: BOB, operator: BOB, projectId: '12,', permissionIds: [1] })).toThrow(/project id/i);
+    expect(() => buildSetPermissionsArgs({ chainId: 1, permissionsAddr: PERM, account: BOB, operator: BOB, projectId: '12a', permissionIds: [1] })).toThrow(/project id/i);
+    const tx = buildSetPermissionsArgs({ chainId: 1, permissionsAddr: PERM, account: BOB, operator: BOB, projectId: '0', permissionIds: [1] });
+    expect(tx.args[1].projectId).toBe(0);
   });
 });
 

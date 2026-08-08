@@ -280,6 +280,40 @@ describe('DEFECT 4 — splits loader reads the selected chain', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Split routing precedence — the hook comes FIRST, mirroring the contracts.
+// JBController.sendReservedTokensToSplitsOf and JBMultiTerminal.executePayout
+// both route 100% of a split to its hook when one is set, regardless of any
+// projectId/beneficiary also on the split.
+// ---------------------------------------------------------------------------
+describe('split routing precedence — a hook split renders as a hook even with projectId/beneficiary set', () => {
+  const HOOK = '0xD00d000000000000000000000000000000000004';
+  function hookSplit(over) {
+    return Object.assign({ percent: 1000000000, projectId: 0, beneficiary: ZERO, preferAddToBalance: false, lockedUntil: 0, hook: HOOK }, over || {});
+  }
+
+  it('reserved: hook + projectId renders the hook, never "Pay project #N"', () => {
+    const b = box();
+    renderSplitsInto(b, [hookSplit({ projectId: 7 })], { project, chainId: 1, kind: 'reserved', limitPct: 10 });
+    expect(b.textContent).toMatch(/Split hook/);
+    expect(b.querySelector('.split-project-link')).toBeNull();
+    expect(b.textContent).not.toMatch(/Project #7/);
+  });
+
+  it('payout: hook + beneficiary renders the hook, not a bare recipient address', () => {
+    const b = box();
+    renderSplitsInto(b, [hookSplit({ beneficiary: BOB })], { project, chainId: 1, kind: 'payout', limitPct: 100 });
+    expect(b.textContent).toMatch(/Split hook/);
+    expect(b.textContent).not.toMatch(/Pay project/);
+  });
+
+  it('a hook-only split still renders the hook, not the owner fallback', () => {
+    const b = box();
+    renderSplitsInto(b, [hookSplit()], { project, chainId: 1, kind: 'reserved', limitPct: 10 });
+    expect(rowsOf(b)[0].textContent).toMatch(/Split hook/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // DEFECT 5 — the editor names the ruleset it verified.
 // ---------------------------------------------------------------------------
 describe('DEFECT 5 — the editor is honest about which ruleset it edits', () => {

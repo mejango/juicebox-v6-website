@@ -4112,6 +4112,9 @@ input[type="checkbox"].field {
 .claim-row-status.pending { color: var(--c-teal); }
 
 .detail-address { position: relative; }
+/* An authority that could not be READ, styled like the other "we could not verify this" copy so it never
+   reads as a confirmed absence. */
+.authority-unavailable { color: var(--c-pink); }
 .addr-tip {
   position: absolute; left: 0; top: 100%; margin-top: 4px; z-index: 60; white-space: nowrap;
   background: var(--c-black); color: var(--bg); padding: 4px 8px; font-size: 12px;
