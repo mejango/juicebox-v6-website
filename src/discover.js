@@ -12036,6 +12036,7 @@ function renderPastRulesetsCard(project) {
       var thead = document.createElement('thead');
       var headRow = document.createElement('tr');
       ['ID', 'Start', 'Issuance (' + sym + '/' + baseUnitLabel(project) + ')', 'Duration', 'Cash out tax'].forEach(function (label) {
+        if (label === 'Cash out tax') { headRow.appendChild(conceptHeader(label, PROTOCOL_CONCEPTS.cashOutTax)); return; }
         var th = document.createElement('th'); th.textContent = label; headRow.appendChild(th);
       });
       thead.appendChild(headRow); table.appendChild(thead);
@@ -16443,6 +16444,7 @@ function renderTermsTable(project, stages) {
   var thead = document.createElement('thead');
   var hr = document.createElement('tr');
   ['Stage', 'Period', 'Issuance (' + sym + '/' + baseUnitLabel(project) + ')', 'Split limit', 'Auto issuance (' + sym + ')', 'Cash out tax'].forEach(function (h) {
+    if (h === 'Cash out tax') { hr.appendChild(conceptHeader(h, PROTOCOL_CONCEPTS.cashOutTax)); return; }
     var th = document.createElement('th'); th.textContent = h; hr.appendChild(th);
   });
   thead.appendChild(hr); table.appendChild(thead);
@@ -16640,6 +16642,29 @@ export function formatPrice(n) {
 
 // The floor chip quotes the contract's raw reclaim: netting the 2.5% protocol fee into a plotted history
 // would need per-point fee-free-surplus state, so the label carries an explicit qualifier instead.
+// Plain-language definitions of protocol terms this app uses as bare labels. Shared verbatim
+// with juicebox-money (src/lib/protocol-concepts.ts) and revnet-money — these are protocol
+// concepts, not per-app copy, and every clause is checked against the contracts in the
+// monorepo. A confident wrong explanation of a fee is worse than no explanation.
+export var PROTOCOL_CONCEPTS = {
+  // JBCashOuts.cashOutFrom — 0 returns the exact proportional share; higher returns less.
+  cashOutTax: 'How much of the treasury stays behind when someone cashes out. At 0% you get your exact proportional share of the surplus. Higher rates return less than proportional, leaving the difference for the holders who stay.',
+  // JBBuybackHook._requireValidTwapWindow — 5 minutes to 2 days.
+  twapWindow: 'How far back the buyback hook averages the pool price when deciding the least a swap may return. Longer windows are harder to manipulate but slower to reflect a real price move; shorter windows are the reverse. Allowed range is 300 to 172800 seconds.',
+};
+
+// A label plus a (?) whose parent carries the definition. Mirrors the affordance on the price
+// chips: the element owns the tooltip, the icon only says one is there.
+function conceptHeader(text, note) {
+  var th = document.createElement('th');
+  var wrap = el('span', 'concept-label');
+  wrap.textContent = text;
+  wrap.appendChild(questionMarkIcon());
+  th.setAttribute('data-tip', note);
+  th.appendChild(wrap);
+  return th;
+}
+
 // Heroicons outline question-mark-circle, with `currentColor` so it follows the label (the
 // source pins #1A1A1A). Marks an explanation of a CONCEPT — what a term means — as distinct
 // from the information circle, which qualifies data already on screen.

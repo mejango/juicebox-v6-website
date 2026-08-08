@@ -5113,6 +5113,17 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .chart-tip-row { display: flex; align-items: center; gap: 5px; }
 .chart-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
+/* A header cell whose own tooltip defines the term it names. */
+.concept-label { display: inline-flex; align-items: center; }
+th[data-tip] { position: relative; }
+th[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); left: 0; width: 300px; max-width: 74vw;
+  background: var(--c-black); color: var(--card-bg); padding: 8px 10px;
+  font-size: 11px; line-height: 1.55; font-weight: normal; white-space: normal;
+  text-align: left; pointer-events: none; z-index: 6;
+}
+
 /* The (?) beside a label whose element carries an explanation of what the term MEANS. Dimmed
    so it reads as an affordance rather than as content. */
 .concept-hint { display: inline-flex; align-items: center; margin-left: 4px; vertical-align: -2px; opacity: 0.45; }
