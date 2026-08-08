@@ -16686,7 +16686,10 @@ function conceptHeader(text, note) {
 
 
 export function cashOutFloorTip(price, pairSym, sym) {
-  return '~' + formatPrice(price) + ' ' + pairSym + ' / ' + sym + ' (current cash out floor, before the 2.5% cash out fee)';
+  // "before fees", not "before the 2.5% fee": that rate applies when the project has a nonzero
+  // cash out tax. A zero-tax project's cash outs are fee-free up to its fee-free surplus, so
+  // naming one percentage is wrong for it.
+  return '~' + formatPrice(price) + ' ' + pairSym + ' / ' + sym + ' (what cashing out returns right now, before fees)';
 }
 
 // Convert Uniswap V4's raw currency1/currency0 sqrt price into terminal-token
@@ -16937,8 +16940,9 @@ function renderPriceChart(project, stages) {
           + 'The issuance ceiling is natively denominated in ' + baseLabel + ' and is exact.');
         chartReady = true;
         if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—';
-        issChip.setAttribute('data-tip', 'What paying the project costs per ' + sym + ' right now: 1 ÷ the ruleset’s issuance weight, in '
-          + baseLabel + ' — the currency this project denominates issuance in, and this chart’s axis.');
+        issChip.setAttribute('data-tip', 'What it costs, in ' + baseLabel + ', to get one ' + sym
+          + ' by paying the project directly right now. The project sets this in its own rules rather than the market, '
+          + 'so it only changes when the project’s schedule says it should.');
         draw();
       } else {
         // No feed bridges the units. Issuance is exact in base units and still plots; the pool
@@ -16969,7 +16973,10 @@ function renderPriceChart(project, stages) {
         ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
           + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + pairSym + ' volume | '
         : '';
-      ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now — set by trading, and kept between the issuance price (mint instead) and the cash out floor (cash out instead) by arbitrage. ' + volNote + '~' + formatPrice(p) + ' ' + pairSym + ' / ' + sym + '.');
+      ammChip.setAttribute('data-tip', 'What one ' + sym + ' costs to buy from the trading pool right now. '
+        + 'Traders keep it between the other two prices: if it climbs above what paying the project costs, people pay the project instead; '
+        + 'if it drops below what cashing out returns, people cash out instead. '
+        + volNote + '~' + formatPrice(p) + ' ' + pairSym + ' / ' + sym + '.');
     } else if (swaps.count) {
       ammChip.classList.remove('muted'); ammChip.classList.add('active');
       ammChip.setAttribute('data-tip', swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
@@ -16980,7 +16987,9 @@ function renderPriceChart(project, stages) {
       var last = history[history.length - 1];
       cashout = last && last.value > 0 ? last.value : f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
-      cashChip.setAttribute('data-tip', 'Historical cash out floor from Bendystraw (before fees)');
+      cashChip.setAttribute('data-tip', 'What you would get back for one ' + sym
+        + ' by cashing it in to the project’s treasury, before fees. It moves with how much is in the treasury, '
+        + 'how many tokens exist, and the project’s cash out tax.');
     }
     if (f && f > 0) {
       cashout = cashout || f;
