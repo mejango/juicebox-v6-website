@@ -5113,8 +5113,11 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .chart-tip-row { display: flex; align-items: center; gap: 5px; }
 .chart-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
-/* A header cell whose own tooltip defines the term it names. */
-.concept-label { display: inline-flex; align-items: center; }
+/* A term whose definition appears on hover. The dotted underline rather than an icon, for
+   anything rendered AS TEXT: it attaches to the word being defined and adds no visual mass,
+   which is what breaks down when several defined terms sit in a row. */
+.concept-term { border-bottom: 1px dotted var(--muted-3); cursor: help; }
+.concept-term:hover { border-bottom-color: var(--muted-2); }
 th[data-tip] { position: relative; }
 th[data-tip]:hover::after {
   content: attr(data-tip);
@@ -5123,11 +5126,6 @@ th[data-tip]:hover::after {
   font-size: 11px; line-height: 1.55; font-weight: normal; white-space: normal;
   text-align: left; pointer-events: none; z-index: 6;
 }
-
-/* The (?) beside a label whose element carries an explanation of what the term MEANS. Dimmed
-   so it reads as an affordance rather than as content. */
-.concept-hint { display: inline-flex; align-items: center; margin-left: 4px; vertical-align: -2px; opacity: 0.45; }
-.price-chip:hover .concept-hint { opacity: 0.8; }
 
 /* A small (!) carrying an always-true caveat about how to read a chart, so it does not spend a
    banner line. Anything saying data is MISSING stays inline instead. Reuses the chip tooltip. */
