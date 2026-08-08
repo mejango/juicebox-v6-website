@@ -5113,6 +5113,25 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .chart-tip-row { display: flex; align-items: center; gap: 5px; }
 .chart-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
+/* A small (!) carrying an always-true caveat about how to read a chart, so it does not spend a
+   banner line. Anything saying data is MISSING stays inline instead. Reuses the chip tooltip. */
+.chart-note-tip {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; margin-left: auto; flex-shrink: 0;
+  border: 1px solid var(--muted-4); border-radius: 50%;
+  font-size: 11px; font-weight: bold; line-height: 1; color: var(--muted-2);
+  cursor: help; background: none;
+}
+.chart-note-tip:hover, .chart-note-tip:focus-visible { border-color: var(--muted-2); color: var(--text); outline: none; }
+.chart-note-tip[data-tip]:hover::after,
+.chart-note-tip[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); right: 0; width: 320px; max-width: 74vw;
+  background: var(--c-black); color: var(--card-bg); padding: 8px 10px;
+  border-radius: 0; font-size: 11px; line-height: 1.55; white-space: normal;
+  pointer-events: none; z-index: 6; text-align: left; font-weight: normal;
+}
+
 /* Popovers and hover callouts use the app's square geometry. */
 .usd-balance-pop,
 .owners-pie-tip,

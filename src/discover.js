@@ -16800,8 +16800,19 @@ function renderPriceChart(project, stages) {
   var chartWrap = el('div', 'issuance-chart price-chart');
   var chartReady = !unitMismatch; // a mismatched chart waits for the rate before drawing — the axis stays single-unit
   // Accounting-denominated series (pool price, cash-out floor) relative to the base-currency axis.
-  var acctSeriesConverted = false; // pool + cash-out values converted onto the axis at the live rate
-  var acctSeriesDropped = false;   // no feed bridges the units, so they are not plotted at all
+  // These were previously SET and never read, so a converted chart disclosed nothing at all.
+  // `converted` is an always-true caveat about how to read the chart and lives behind the (!);
+  // `dropped` means series are MISSING, which is stated inline where it cannot be missed.
+  var noteTip = el('button', 'chart-note-tip');
+  noteTip.type = 'button';
+  noteTip.textContent = '!';
+  noteTip.style.display = 'none';
+  function setChartNote(text) {
+    noteTip.setAttribute('data-tip', text);
+    noteTip.setAttribute('aria-label', text);
+    noteTip.title = text;
+    noteTip.style.display = '';
+  }
   function draw() { if (!chartReady) return; mountChart(chartWrap, sorted, now, curYears, sym, amm, cashout, true, cashoutHistory, ammHistory); }
   function selectRange(years, btn) {
     var btns = rangeRow.querySelectorAll('.issuance-range-btn');
@@ -16816,6 +16827,7 @@ function renderPriceChart(project, stages) {
     b.addEventListener('click', function () { selectRange(rg[1], b); });
     rangeRow.appendChild(b);
   });
+  rangeRow.appendChild(noteTip);
   top.appendChild(rangeRow);
   card.appendChild(top);
   card.appendChild(chartWrap);
@@ -16866,7 +16878,9 @@ function renderPriceChart(project, stages) {
             return { timestamp: point.timestamp, value: toBaseAxis(point.value, rateFor(point)) };
           }),
         });
-        acctSeriesConverted = true;
+        setChartNote('Pool and cash out prices are converted from ' + acctLabel + ' into ' + baseLabel
+          + ', this project\u2019s issuance currency, at the current exchange rate \u2014 so earlier points are approximate. '
+          + 'The issuance ceiling is natively denominated in ' + baseLabel + ' and is exact.');
         chartReady = true;
         if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—';
         issChip.setAttribute('data-tip', 'What paying the project costs per ' + sym + ' right now: 1 ÷ the ruleset’s issuance weight, in '
@@ -16875,7 +16889,8 @@ function renderPriceChart(project, stages) {
       } else {
         // No feed bridges the units. Issuance is exact in base units and still plots; the pool
         // and cash-out series cannot be moved onto the axis, so they are dropped.
-        acctSeriesDropped = true;
+        setChartNote('No price feed converts ' + acctLabel + ' into ' + baseLabel
+          + ', this project\u2019s issuance currency, so the pool and cash out series are not shown. Only the issuance ceiling is plotted.');
         chartReady = true;
         p = null; f = null; history = []; swaps = Object.assign({}, swaps, { series: [] });
         draw();
