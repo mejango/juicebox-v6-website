@@ -16902,32 +16902,24 @@ function renderPriceChart(project, stages) {
     rangeRow.appendChild(b);
   });
   var detailToggle = el('div', 'price-detail-toggle');
-  [
-    { label: 'Smooth', trades: false, title: 'Show time-weighted averages of the pool price' },
-    { label: 'Every trade', trades: true, title: 'Show every exact post-trade pool price' },
-  ].forEach(function (option) {
-    var button = el('button', 'price-detail-btn');
-    button.type = 'button';
-    button.textContent = option.label;
-    button.title = option.title;
-    button.addEventListener('click', function () {
-      showEveryTrade = option.trades;
-      syncPriceDetail();
-      draw();
-    });
-    button._trades = option.trades;
-    detailToggle.appendChild(button);
+  var detailSelect = el('select', 'price-detail-select');
+  detailSelect.setAttribute('aria-label', 'Pool price detail');
+  [['smooth', 'Smooth'], ['trades', 'Every trade']].forEach(function (option) {
+    var item = document.createElement('option');
+    item.value = option[0];
+    item.textContent = option[1];
+    detailSelect.appendChild(item);
   });
-  function syncPriceDetail() {
-    [].slice.call(detailToggle.children).forEach(function (button) {
-      var active = button._trades === showEveryTrade;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', active ? 'true' : 'false');
-    });
-  }
-  detailToggle.setAttribute('role', 'group');
-  detailToggle.setAttribute('aria-label', 'Pool price detail');
-  syncPriceDetail();
+  detailSelect.value = 'smooth';
+  detailSelect.title = 'Show time-weighted averages of the pool price';
+  detailSelect.addEventListener('change', function () {
+    showEveryTrade = detailSelect.value === 'trades';
+    detailSelect.title = showEveryTrade
+      ? 'Show every exact post-trade pool price'
+      : 'Show time-weighted averages of the pool price';
+    draw();
+  });
+  detailToggle.appendChild(detailSelect);
   rangeRow.appendChild(noteTip);
   top.appendChild(rangeRow);
   var detailRow = el('div', 'price-detail-row');
@@ -19225,8 +19217,17 @@ function renderMarketPriceChart(project) {
   head.appendChild(headline);
   var controls = el('div', 'market-chart-controls');
   var detailToggle = el('div', 'price-detail-toggle');
-  detailToggle.setAttribute('role', 'group');
-  detailToggle.setAttribute('aria-label', 'Pool price detail');
+  var detailSelect = el('select', 'price-detail-select');
+  detailSelect.setAttribute('aria-label', 'Pool price detail');
+  [['smooth', 'Smooth'], ['trades', 'Every trade']].forEach(function (option) {
+    var item = document.createElement('option');
+    item.value = option[0];
+    item.textContent = option[1];
+    detailSelect.appendChild(item);
+  });
+  detailSelect.value = 'smooth';
+  detailSelect.title = 'Show time-weighted averages of the pool price';
+  detailToggle.appendChild(detailSelect);
   var pills = el('div', 'issuance-ranges market-chart-ranges'); controls.appendChild(pills);
   head.appendChild(controls);
   host.appendChild(head);
@@ -19242,30 +19243,13 @@ function renderMarketPriceChart(project) {
   var ready = false;
   var showEveryTrade = false;
 
-  [
-    { label: 'Smooth', trades: false, title: 'Show time-weighted averages of the pool price' },
-    { label: 'Every trade', trades: true, title: 'Show every exact post-trade pool price' },
-  ].forEach(function (option) {
-    var button = el('button', 'price-detail-btn');
-    button.type = 'button';
-    button.textContent = option.label;
-    button.title = option.title;
-    button._trades = option.trades;
-    button.addEventListener('click', function () {
-      showEveryTrade = option.trades;
-      syncDetail();
-      draw();
-    });
-    detailToggle.appendChild(button);
+  detailSelect.addEventListener('change', function () {
+    showEveryTrade = detailSelect.value === 'trades';
+    detailSelect.title = showEveryTrade
+      ? 'Show every exact post-trade pool price'
+      : 'Show time-weighted averages of the pool price';
+    draw();
   });
-  function syncDetail() {
-    [].slice.call(detailToggle.children).forEach(function (button) {
-      var active = button._trades === showEveryTrade;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', active ? 'true' : 'false');
-    });
-  }
-  syncDetail();
 
   MARKET_CHART_RANGES.forEach(function (spec) {
     var button = el('button', 'issuance-range-btn');

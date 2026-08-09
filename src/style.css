@@ -4952,16 +4952,21 @@ input[type="checkbox"].field {
 .price-ranges { margin: 0; flex-wrap: wrap; align-items: center; }
 .price-detail-row { display: flex; justify-content: flex-end; margin-top: 5px; }
 .price-detail-toggle {
-  display: inline-flex; align-items: center; gap: 10px;
+  position: relative; display: inline-flex; align-items: center;
+  color: var(--c-teal); border-bottom: 1px solid currentColor;
 }
-.price-detail-btn {
-  padding: 2px 0; border: 0; border-bottom: 1px solid transparent; border-radius: 0;
-  background: transparent; color: var(--muted-2); cursor: pointer;
+.price-detail-toggle::after {
+  content: ''; position: absolute; right: 1px; width: 6px; height: 6px;
+  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor;
+  transform: translateY(-2px) rotate(45deg); pointer-events: none;
+}
+.price-detail-select {
+  appearance: none; padding: 2px 14px 2px 0; border: 0; border-radius: 0;
+  background: transparent; color: inherit; cursor: pointer;
   font: inherit; font-size: 10px; font-weight: normal; white-space: nowrap;
 }
-.price-detail-btn:hover { color: var(--text); }
-.price-detail-btn.active { color: var(--c-teal); border-bottom-color: currentColor; }
-.price-detail-btn:focus-visible { outline: 1px solid var(--c-teal); outline-offset: 1px; }
+.price-detail-select:hover { color: var(--text); }
+.price-detail-select:focus-visible { outline: 1px solid var(--c-teal); outline-offset: 2px; }
 .price-chart { width: 100%; }
 /* Shop: 721 NFT tiers */
 /* Shop tab: items grouped under category headings (juicy-vision), 3 per row, larger cards */
