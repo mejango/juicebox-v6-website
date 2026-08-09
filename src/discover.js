@@ -24,6 +24,7 @@ import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaT
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
+import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
@@ -7830,7 +7831,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     var currentOverflow = overflowTabNames.indexOf(_activeDetail && _activeDetail.current) !== -1;
     overflowButton.classList.toggle('active', currentOverflow && !expanded);
   });
-  tabBar.appendChild(overflow);
+  tabRow.appendChild(overflow);
   // Resolve the 721 hook: fill the optimistic Shop tab with real content, or remove it if the project
   // has no hook and can't get one (revnets always keep it — operators can add tiers even before any exist).
   fetchProjectTiers(project).then(function (shop) {
@@ -20264,8 +20265,14 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     var lockTxt = el('span', ''); lockTxt.textContent = 'Locked'; lockLbl.appendChild(lockTxt);
     lockWrap.appendChild(lockLbl);
     lockDate = document.createElement('input'); lockDate.type = 'date'; lockDate.className = 'field splits-edit-lockdate'; lockDate.style.display = 'none';
-    lockDate.min = new Date().toISOString().slice(0, 10); // a lock in the past is meaningless
     lockWrap.appendChild(lockDate);
+    var lockTimeZone = timeZoneControl(lockDate, {
+      precision: 'date',
+      label: 'Split lock date',
+      getTimestamp: function () { return rec._lockTs; },
+      getMinTimestamp: function () { return Math.floor(Date.now() / 1000); },
+    });
+    lockTimeZone.style.display = 'none'; lockWrap.appendChild(lockTimeZone);
     lockNote = el('div', 'splits-edit-hint splits-edit-hint--prose'); lockNote.style.display = 'none';
     lockNote.textContent = 'Locked until this date — the split can’t be edited or removed for the rest of this ruleset.';
     lockWrap.appendChild(lockNote);
@@ -20273,13 +20280,13 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
       if (lockCb.checked) {
         var span = Math.min(Number(opts.lockSpanSeconds) || 2592000, 315360000); // default to this ruleset's end, capped ~10y
         rec._lockTs = rec._lockTs || (Math.floor(Date.now() / 1000) + span);
-        lockDate.value = new Date(rec._lockTs * 1000).toISOString().slice(0, 10);
-        lockDate.style.display = ''; lockNote.style.display = '';
-      } else { rec._lockTs = 0; lockDate.style.display = 'none'; lockNote.style.display = 'none'; }
+        lockDate.value = timestampToZonedInput(rec._lockTs, 'date');
+        lockDate.style.display = ''; lockTimeZone.style.display = ''; lockNote.style.display = '';
+      } else { rec._lockTs = 0; lockDate.style.display = 'none'; lockTimeZone.style.display = 'none'; lockNote.style.display = 'none'; }
       if (opts.onChange) opts.onChange();
     });
     lockDate.addEventListener('change', function () {
-      rec._lockTs = lockDate.value ? Math.max(0, Math.floor(Date.parse(lockDate.value + 'T00:00:00Z') / 1000)) : 0;
+      rec._lockTs = lockDate.value ? Math.max(0, zonedInputToTimestamp(lockDate.value, 'date')) : 0;
     });
     wrap.appendChild(lockWrap);
   }
@@ -20480,7 +20487,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
     queueSituation: null,
     queueFingerprintByChain: {},
     queueMustStartAtByChain: {},
-    queueCustomStart: '',
+    queueCustomStart: 0,
     queueStartSummary: '',
     queueTimingExplanation: '',
     accepts: ['eth'],               // set from the accounting token below (eth | usdc)
@@ -20594,9 +20601,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
 
   function queueStartFor(option) {
     if (!option.requiresStartDate) return Number(option.mustStartAtOrAfter || 0);
-    if (!state.queueCustomStart) return 0;
-    var parsed = new Date(state.queueCustomStart).getTime();
-    return isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
+    return Number(state.queueCustomStart || 0);
   }
 
   function queueFingerprint(controller, option) {
@@ -20903,16 +20908,19 @@ function openQueueRulesetModal(project, preferredQueueAction) {
     if (selected.requiresStartDate) {
       var dateField = el('div', 'create-field'); dateField.style.marginTop = '12px';
       var dateLabel = el('label', 'create-label'); dateLabel.textContent = 'Start following rules'; dateField.appendChild(dateLabel);
-      var inp = el('input', 'field create-input'); inp.type = 'datetime-local'; inp.value = state.queueCustomStart || '';
+      var inp = el('input', 'field create-input'); inp.type = 'datetime-local'; inp.value = timestampToZonedInput(state.queueCustomStart, 'datetime');
       var minTs = Math.max(Math.floor(Date.now() / 1000) + 60, Number(selected.source.start) + 1);
-      var minDate = new Date(minTs * 1000); var minLocal = new Date(minDate.getTime() - minDate.getTimezoneOffset() * 60000);
-      inp.min = minLocal.toISOString().slice(0, 16);
       inp.addEventListener('change', function () {
-        state.queueCustomStart = inp.value;
+        state.queueCustomStart = zonedInputToTimestamp(inp.value, 'datetime');
         applyQueueActionCopy(state.queueSituation, selected);
         renderEditor();
       });
       dateField.appendChild(inp);
+      dateField.appendChild(timeZoneControl(inp, {
+        label: 'Following rules start date and time',
+        getTimestamp: function () { return state.queueCustomStart; },
+        getMinTimestamp: function () { return minTs; },
+      }));
       var hint = el('div', 'create-hint'); hint.textContent = 'A flexible queued ruleset has no natural end. Choose the earliest time these following rules may replace it.'; dateField.appendChild(hint);
       wrap.appendChild(dateField);
     }
@@ -21306,8 +21314,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   if (!activeQueueOption) throw new Error('The queue position could not be verified.');
   var customQueueStart = 0;
   if (activeQueueOption.requiresStartDate && state.queueCustomStart) {
-    var parsedQueueStart = new Date(state.queueCustomStart).getTime();
-    customQueueStart = isFinite(parsedQueueStart) ? Math.floor(parsedQueueStart / 1000) : 0;
+    customQueueStart = Number(state.queueCustomStart);
   }
   if (activeQueueOption.requiresStartDate) {
     var minimumStart = Math.max(Math.floor(Date.now() / 1000) + 60, Number(activeQueueOption.source.start) + 1);

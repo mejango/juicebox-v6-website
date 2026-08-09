@@ -103,7 +103,9 @@ describe('store redemptions — rs.useDataHookForCashOut (was hardcoded false fo
 
 describe('tsToDateInput — unix seconds → YYYY-MM-DD for the date picker', () => {
   it('round-trips a known date', () => {
+    localStorage.setItem('jb-time-zone', 'UTC');
     expect(tsToDateInput(1893456000)).toBe('2030-01-01');
+    localStorage.removeItem('jb-time-zone');
   });
 });
 

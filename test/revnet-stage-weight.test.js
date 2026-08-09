@@ -60,13 +60,14 @@ describe('buildRevnetArgs — stage initialIssuance encoding', () => {
     expect(back.args[1].stageConfigurations[1].initialIssuance).toBe(1n);
   });
 
-  it('encodes the shop transfer pause in each precommitted stage without erasing other metadata bits', () => {
+  it('keeps the shop transfer gate closed in every precommitted stage', () => {
     const state = revState('');
     state.stages[0].metadataExtra = 1 << 2;
     state.stages[0].pause721Transfers = true;
     const { stages } = stagesOf(state);
-    // Bit 2 (allow sucker deployment) is always on; stage 1 adds the transfer pause (bit 0).
+    // Bit 2 (allow sucker deployment) and bit 0 (the immutable per-item
+    // transfer policy gate) are always on in every revnet stage.
     expect(stages[0].extraMetadata).toBe(5);
-    expect(stages[1].extraMetadata).toBe(1 << 2);
+    expect(stages[1].extraMetadata).toBe(5);
   });
 });

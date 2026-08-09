@@ -32,6 +32,7 @@ import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
+import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -435,6 +436,8 @@ function suckerConfigFor(localId, otherChainIds, salt, suckerType, accepts) {
 // State
 // ---------------------------------------------------------------------------
 
+var PERMANENTLY_DISABLED_AUTHORITY = '0xdead000000000000000000000000000000000000';
+
 function initState() {
   // Match the Discover network toggle, and default to deploying on ALL of that network's chains.
   var network = 'mainnet';
@@ -446,10 +449,10 @@ function initState() {
     details: {
       name: '', ticker: '', tagline: '', description: '', logoUri: '', logoUploading: false,
       website: '', twitter: '', discord: '', telegram: '', tags: [],
-      coverImageUri: '', payDisclosure: '', owner: '', immutable: false,
+      coverImageUri: '', payDisclosure: '', owner: PERMANENTLY_DISABLED_AUTHORITY, immutable: false,
       linksOpen: false, ownerOpen: false, tagsOpen: false, customOpen: false,
     },
-    revOperator: '',                 // revnet operator (receives splits, can reassign) — blank => owner/wallet
+    revOperator: PERMANENTLY_DISABLED_AUTHORITY, // no operator by default; checked controls can assign one
     revBaseCurrency: 1,              // revnet issuance-pricing currency: 1=ETH (native, 61166) | 2=USD
     accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth', 'usdc', or ['custom']
     customToken: { address: '', name: '', symbol: '', decimals: null, status: 'idle', error: '' }, // 'custom' accounting token (one ERC-20, same address on all chains; its own currency id, no price feed)
@@ -1091,14 +1094,33 @@ function customTokenBlock(state, render) {
 function ownerSection(state, render) {
   var d = state.details;
   var box = el('div', '');
-  if (!perChainOpen(state, 'owner')) {
-    var ownerInput = textInput(d.owner, '0x… or name.eth', function (v) { d.owner = v.trim(); });
-    var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
-    box.appendChild(recipBoxWith(ownerInput, ownerHint));
+  var changesAllowed = String(d.owner || '').toLowerCase() !== PERMANENTLY_DISABLED_AUTHORITY;
+  box.appendChild(toggleRow(
+    'Allow changes',
+    dz(
+      'A project owner receives full project-level authority.',
+      'Ownership is sent to 0xdead, so no owner address retains project-level control.',
+    ),
+    changesAllowed,
+    function (enabled) {
+      d.owner = enabled ? '' : PERMANENTLY_DISABLED_AUTHORITY;
+      d.ownerResolved = null; d.ownerResolvedFor = null;
+      clearPerChainAddress(state, 'owner');
+      render();
+    },
+  ));
+  if (changesAllowed) {
+    if (!perChainOpen(state, 'owner')) {
+      var ownerInput = textInput(d.owner, '0x… or name.eth', function (v) { d.owner = v.trim(); });
+      var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
+      box.appendChild(recipBoxWith(ownerInput, ownerHint));
+    }
+    box.appendChild(perChainAddrControl(state, render, 'owner', d.ownerResolved || d.owner || ''));
+    box.appendChild(infoNote('Leave empty to use your connected wallet.'));
+    box.appendChild(infoNote('Currently set to ' + (perChainOpen(state, 'owner') ? 'the per-chain addresses above' : (d.owner || 'the wallet connected at launch')) + '.'));
+  } else {
+    box.appendChild(infoNote('No owner address will retain project-level control.'));
   }
-  box.appendChild(perChainAddrControl(state, render, 'owner', d.ownerResolved || d.owner || ''));
-  box.appendChild(infoNote('The address that can make changes around the configured rulesets.'));
-  box.appendChild(infoNote('Currently set to ' + (perChainOpen(state, 'owner') ? 'the per-chain addresses above' : (d.owner || 'no project owner yet')) + '.'));
   var wrap = el('div', '');
   wrap.appendChild(fieldBlock('Project owner', false, box));
   return wrap;
@@ -1108,14 +1130,33 @@ function ownerSection(state, render) {
 function operatorSection(state, render) {
   var wrap = el('div', '');
   var box = el('div', '');
-  if (!perChainOpen(state, 'op')) {
-    var opInput = textInput(state.revOperator, '0x… or name.eth', function (v) { state.revOperator = v.trim(); });
-    var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
-    box.appendChild(recipBoxWith(opInput, opHint));
+  var controlsEnabled = String(state.revOperator || '').toLowerCase() !== PERMANENTLY_DISABLED_AUTHORITY;
+  box.appendChild(toggleRow(
+    'Enable limited operator controls',
+    dz(
+      'An operator can update the name, logo, and description; redirect only the precommitted split share; manage shop items only where separately enabled; and add matching chains when the original deployer is the operator. It cannot rewrite staged issuance or cash-out rules.',
+      'The revnet keeps running its precommitted rules without an operator.',
+    ),
+    controlsEnabled,
+    function (enabled) {
+      state.revOperator = enabled ? '' : PERMANENTLY_DISABLED_AUTHORITY;
+      state.revOperatorResolved = null; state.revOperatorResolvedFor = null;
+      clearPerChainAddress(state, 'op');
+      render();
+    },
+  ));
+  if (controlsEnabled) {
+    if (!perChainOpen(state, 'op')) {
+      var opInput = textInput(state.revOperator, '0x… or name.eth', function (v) { state.revOperator = v.trim(); });
+      var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
+      box.appendChild(recipBoxWith(opInput, opHint));
+    }
+    box.appendChild(perChainAddrControl(state, render, 'op', state.revOperatorResolved || state.revOperator || ''));
+    box.appendChild(infoNote('Leave empty to use your connected wallet.'));
+    box.appendChild(infoNote('Currently set to ' + (perChainOpen(state, 'op') ? 'the per-chain addresses above' : (state.revOperator || 'the wallet connected at launch')) + '.'));
+  } else {
+    box.appendChild(infoNote('No operator address will retain these limited controls.'));
   }
-  box.appendChild(perChainAddrControl(state, render, 'op', state.revOperatorResolved || state.revOperator || ''));
-  box.appendChild(infoNote('The address that operates the few controls available in revnets.'));
-  box.appendChild(infoNote('Currently set to ' + (perChainOpen(state, 'op') ? 'the per-chain addresses above' : (state.revOperator || 'no revnet operator yet')) + '.'));
   wrap.appendChild(fieldBlock('Revnet operator', false, box));
   return wrap;
 }
@@ -1748,13 +1789,16 @@ function revStageTiming(state, stage, idx, render) {
     }));
     if (stage.scheduleOn) {
       var i = el('input', 'field create-input'); i.type = 'datetime-local'; i.style.marginTop = '6px';
-      if (stage.schedule) i.value = tsToLocal(stage.schedule);
+      if (stage.schedule) i.value = timestampToZonedInput(stage.schedule, 'datetime');
       i.addEventListener('input', function () {
         if (!i.value) { stage.schedule = ''; return; }
-        var dt = new Date(i.value); stage.schedule = isNaN(dt.getTime()) ? '' : Math.floor(dt.getTime() / 1000);
+        stage.schedule = zonedInputToTimestamp(i.value, 'datetime') || '';
       });
       w.appendChild(i);
-      var tz = el('div', 'create-hint'); tz.textContent = localTimezoneLabel(); w.appendChild(tz);
+      w.appendChild(timeZoneControl(i, {
+        label: 'Revnet start date and time',
+        getTimestamp: function () { return stage.schedule; },
+      }));
     }
   } else {
     // If the previous stage has autocuts, its ruleset cycles every `freq` days, so this stage can only begin
@@ -1974,13 +2018,16 @@ function stageTiming(stage, idx, isLast, render, state) {
       var ww = el('div', '');
       var sub = el('div', 'create-hint'); sub.textContent = 'Your project will start at this date.'; ww.appendChild(sub);
       var i = el('input', 'field create-input'); i.type = 'datetime-local'; i.style.marginTop = '4px';
-      if (stage.schedule) i.value = tsToLocal(stage.schedule);
+      if (stage.schedule) i.value = timestampToZonedInput(stage.schedule, 'datetime');
       i.addEventListener('input', function () {
         if (!i.value) { stage.schedule = ''; return; }
-        var dt = new Date(i.value); stage.schedule = isNaN(dt.getTime()) ? '' : Math.floor(dt.getTime() / 1000);
+        stage.schedule = zonedInputToTimestamp(i.value, 'datetime') || '';
       });
       ww.appendChild(i);
-      var tz = el('div', 'create-hint'); tz.textContent = localTimezoneLabel(); ww.appendChild(tz);
+      ww.appendChild(timeZoneControl(i, {
+        label: 'Project start date and time',
+        getTimestamp: function () { return stage.schedule; },
+      }));
       w.appendChild(fieldBlock(null, false, ww));
     }
   } else {
@@ -2023,7 +2070,7 @@ function currencySelect(current, onChange, cls, lockedSym) {
 // be edited or removed by the owner until that date. Only offered when the ruleset has a fixed duration —
 // a "Flexible" (no-duration) ruleset has no bounded window for the lock to govern, so the control is hidden.
 function splitLockAllowed(stage) { return !!stage && (Number(stage.durationSeconds) || 0) > 0; }
-function tsToDateInput(ts) { try { return new Date(Number(ts) * 1000).toISOString().slice(0, 10); } catch (_) { return ''; } }
+function tsToDateInput(ts) { return timestampToZonedInput(ts, 'date'); }
 function splitLockRow(stage, rec, render) {
   if (!splitLockAllowed(stage)) { if (rec.lockedUntil) rec.lockedUntil = 0; return null; } // flexible → no lock; clear any stale value
   var wrap = el('div', 'create-split-lock');
@@ -2041,8 +2088,14 @@ function splitLockRow(stage, rec, render) {
     var d = el('input', 'field create-split-lockdate'); d.type = 'date'; d.value = tsToDateInput(rec.lockedUntil);
     d.min = tsToDateInput(Math.floor(Date.now() / 1000)); // no past dates (a lock in the past is meaningless)
     // Clamp ≥ 0 — a negative timestamp would overflow JBSplit.lockedUntil (uint48) and abort the whole deploy build.
-    d.addEventListener('change', function () { rec.lockedUntil = d.value ? Math.max(0, Math.floor(Date.parse(d.value + 'T00:00:00Z') / 1000)) : 0; render(); });
+    d.addEventListener('change', function () { rec.lockedUntil = d.value ? Math.max(0, zonedInputToTimestamp(d.value, 'date')) : 0; render(); });
     wrap.appendChild(d);
+    wrap.appendChild(timeZoneControl(d, {
+      precision: 'date',
+      label: 'Split lock date',
+      getTimestamp: function () { return rec.lockedUntil; },
+      getMinTimestamp: function () { return Math.floor(Date.now() / 1000); },
+    }));
     wrap.appendChild(infoNote("Locked until this date — the split can’t be edited or removed for the rest of this ruleset."));
   }
   return wrap;
@@ -2892,7 +2945,19 @@ function itemEditor(state, nft, idx, render) {
     }
     var minter = state.projectType === 'revnet' ? 'revnet operator' : 'project owner';
     a.appendChild(toggleRow(minter.charAt(0).toUpperCase() + minter.slice(1) + ' can mint for free', dz('The ' + minter + ' can mint this item from inventory without paying.', 'The ' + minter + ' pays like everyone else.'), nft.flags.allowOwnerMint, function (v) { nft.flags.allowOwnerMint = v; }));
-    a.appendChild(toggleRow('Transfers pausable per ruleset', dz('This item’s transfers can be paused during a ruleset.', 'This item’s transfers can’t be paused.'), nft.flags.transfersPausable, function (v) { nft.flags.transfersPausable = v; }));
+    if (state.projectType === 'revnet') {
+      a.appendChild(toggleRow(
+        'Non-transferable',
+        dz(
+          'This item can be minted and burned, but never moved between wallets.',
+          'This item stays transferable between wallets.',
+        ),
+        nft.flags.transfersPausable,
+        function (v) { nft.flags.transfersPausable = v; },
+      ));
+    } else {
+      a.appendChild(toggleRow('Transfers pausable per ruleset', dz('This item’s transfers can be paused during a ruleset.', 'This item’s transfers can’t be paused.'), nft.flags.transfersPausable, function (v) { nft.flags.transfersPausable = v; }));
+    }
     a.appendChild(toggleRow('Permanent', dz('This item can never be removed from the store.', 'This item can be removed later.'), nft.flags.cantBeRemoved, function (v) { nft.flags.cantBeRemoved = v; }));
     a.appendChild(toggleRow('Allow credit purchases', dz('Payments that don’t buy an item become credit usable on items that allow it.', 'Payments that don’t buy this item don’t earn credit toward it.'), nft.flags.allowCredits, function (v) { nft.flags.allowCredits = v; }));
     a.appendChild(toggleRow(minter.charAt(0).toUpperCase() + minter.slice(1) + ' can edit discounts', dz('The ' + minter + ' can change this item’s discount later.', 'This item’s discount is locked.'), nft.flags.ownerCanEditDiscount, function (v) { nft.flags.ownerCanEditDiscount = v; }));
@@ -3373,6 +3438,13 @@ function perChainOf(state, chainId) {
   if (!pc.payouts) pc.payouts = {}; if (!pc.items) pc.items = {}; if (!pc.addr) pc.addr = {};
   return pc;
 }
+function clearPerChainAddress(state, key) {
+  (state.chainIds || []).forEach(function (chainId) {
+    var pc = perChainPeek(state, chainId);
+    if (pc && pc.addr) delete pc.addr[key];
+  });
+  if (state._pcOpen) delete state._pcOpen[key];
+}
 function perChainPeek(state, chainId) { return state.perChain[canonChainId(chainId)]; }
 // Per-chain address override store, keyed by a stable field key (e.g. 'p:0:1' = payout stage0 recipient1).
 function pcAddrGet(state, chainId, key, def) {
@@ -3564,7 +3636,12 @@ function reviewSummary(state) {
     c.appendChild(row('Token', '$' + tickerLabel(state)));
     c.appendChild(row('Accounting token', surplusTokenLabel(state)));
     var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-    c.appendChild(row('Revnet operator', /^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || '—')));
+    c.appendChild(row(
+      'Revnet operator',
+      String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
+        ? 'No retained authority'
+        : (/^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || '—')),
+    ));
     c.appendChild(row('Stages', String(state.stages.length)));
     state.stages.forEach(function (s, i) { c.appendChild(row('Stage #' + (i + 1), revStageSummary(s, i, state))); });
     c.appendChild(row('Chains', state.chainIds.map(chainName).join(', ')));
@@ -4302,7 +4379,10 @@ function buildRevStage(state, stage, idx, chainId, start) {
     cashOutTaxRate: taxRate,
     extraMetadata: build721RulesetMetadata({
       metadata: Number(stage.metadataExtra) || 0,
-      pauseTransfers: !!stage.pause721Transfers,
+      // Revnet stages are immutable. Permanently close the collection-level
+      // gate, then use each tier's immutable transfersPausable flag as its
+      // final policy: false = transferable, true = non-transferable.
+      pauseTransfers: true,
     }) | REV_METADATA_ALLOW_SUCKER_DEPLOYMENT,
   };
 }
@@ -5037,17 +5117,6 @@ function ipfsHttp(uri) {
   if (uri.indexOf('ipfs://') === 0) return ipfsHttpUrl(uri);
   return uri;
 }
-function tsToLocal(ts) {
-  var d = new Date(Number(ts) * 1000); if (isNaN(d.getTime())) return '';
-  var p = function (x) { return x < 10 ? '0' + x : '' + x; };
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
-}
-
-// e.g. "America/New_York" — the browser's local zone, for the scheduled-launch helper text.
-function localTimezoneLabel() {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time'; } catch (e) { return 'local time'; }
-}
-
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
   suckerConfigFor, tokenMappingFor,

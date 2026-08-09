@@ -41,14 +41,14 @@ describe('buildRevnetArgs — allow-sucker-deployment metadata bit', () => {
     }
   });
 
-  it('keeps the 721 transfer-pause bit alongside it', () => {
-    const [stage] = stagesOf(revState({ pause721Transfers: true }));
+  it('keeps the 721 transfer gate closed regardless of stale stage state', () => {
+    const [stage] = stagesOf(revState({ pause721Transfers: false }));
     expect(stage.extraMetadata).toBe(1 | ALLOW_SUCKER_DEPLOYMENT);
   });
 
   it('does not double-set when the stage already carries the bit', () => {
     const [stage] = stagesOf(revState({ metadataExtra: ALLOW_SUCKER_DEPLOYMENT }));
-    expect(stage.extraMetadata).toBe(ALLOW_SUCKER_DEPLOYMENT);
+    expect(stage.extraMetadata).toBe(1 | ALLOW_SUCKER_DEPLOYMENT);
   });
 
   it('survives a round-trip through the REVDeployer.deployFor ABI', () => {

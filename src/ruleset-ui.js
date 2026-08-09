@@ -7,6 +7,7 @@ import {
   createDefaultSurplusAllowance,
   createDefaultFundAccessLimitGroup,
 } from './ruleset-config.js';
+import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 
 export function renderRulesetFieldset(rs, index, state, updateUI, opts) {
   opts = opts || {};
@@ -284,19 +285,20 @@ function durationRow(rs, updateUI) {
 function lockedUntilRow(split) {
   var row = el('div', 'config-row');
   var lbl = el('label', 'input-label');
-  var tz;
-  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'; } catch (_) { tz = 'local'; }
-  lbl.innerHTML = 'locked until <span class="type-hint">' + tz + '</span>';
+  lbl.textContent = 'locked until';
   row.appendChild(lbl);
   var input = el('input', 'field datetime-field');
   input.type = 'datetime-local';
-  input.value = tsToLocalInput(split.lockedUntil);
+  input.value = timestampToZonedInput(split.lockedUntil, 'datetime');
   input.addEventListener('input', function() {
     if (!input.value) { split.lockedUntil = 0; return; }
-    var d = new Date(input.value);
-    split.lockedUntil = isNaN(d.getTime()) ? 0 : Math.floor(d.getTime() / 1000);
+    split.lockedUntil = zonedInputToTimestamp(input.value, 'datetime');
   });
   row.appendChild(input);
+  row.appendChild(timeZoneControl(input, {
+    label: 'Split lock date and time',
+    getTimestamp: function () { return split.lockedUntil; },
+  }));
   var clearLink = document.createElement('button');
   clearLink.type = 'button';
   clearLink.className = 'datetime-clear';
@@ -308,16 +310,6 @@ function lockedUntilRow(split) {
   });
   row.appendChild(clearLink);
   return row;
-}
-
-function tsToLocalInput(ts) {
-  var n = Number(ts || 0);
-  if (!n) return '';
-  var d = new Date(n * 1000);
-  if (isNaN(d.getTime())) return '';
-  var pad = function(x) { return x < 10 ? '0' + x : '' + x; };
-  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-    + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
 function splitPercentRow(split) {
