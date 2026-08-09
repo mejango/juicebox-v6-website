@@ -37,11 +37,11 @@
   },
   "dependencies": {
     "pdfjs-dist": "^6.2.108",
-    "viem": "^2.55.8"
+    "viem": "^2.55.10"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
-    "@playwright/test": "^1.61.1",
+    "@playwright/test": "^1.62.0",
     "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.28.1",
     "graphql": "17.0.2",
