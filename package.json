@@ -36,7 +36,7 @@
     "test:ci": "npm run check:source && npm run check:deployments && npm run check:generated && npm run schema:check && npm run transaction:check && npm run bundle && npm run test:coverage && npm run check:bundle && npm run test:browser"
   },
   "dependencies": {
-    "pdfjs-dist": "^6.1.200",
+    "pdfjs-dist": "^6.2.108",
     "viem": "^2.55.8"
   },
   "devDependencies": {
