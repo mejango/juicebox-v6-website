@@ -5,7 +5,7 @@
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
-import { downsampleTimeSeries } from './time-series.js';
+import { downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { quotedOutputFloor } from './slippage.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
@@ -16834,6 +16834,7 @@ function renderPriceChart(project, stages) {
   var ammPairSym = 'terminal tokens';
   var ammChipTail = '';
   var curYears = 1;
+  var showEveryTrade = false;
   // Order: Issuance, Cash out, then AMM price.
   var issChip = chip('Issuance price', 'pc-issuance', true,
     'What paying the project costs per ' + sym + ' right now: 1 ÷ the ruleset’s issuance weight. Payments go into the project’s balance and mint ' + sym + ' at this rate.');
@@ -16870,7 +16871,22 @@ function renderPriceChart(project, stages) {
     noteTip.title = text;
     noteTip.style.display = '';
   }
-  function draw() { if (!chartReady) return; mountChart(chartWrap, sorted, now, curYears, sym, amm, cashout, true, cashoutHistory, ammHistory); }
+  function draw() {
+    if (!chartReady) return;
+    mountChart(
+      chartWrap,
+      sorted,
+      now,
+      curYears,
+      sym,
+      amm,
+      cashout,
+      true,
+      cashoutHistory,
+      ammHistory,
+      showEveryTrade
+    );
+  }
   function selectRange(years, btn) {
     var btns = rangeRow.querySelectorAll('.issuance-range-btn');
     for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
@@ -16884,6 +16900,34 @@ function renderPriceChart(project, stages) {
     b.addEventListener('click', function () { selectRange(rg[1], b); });
     rangeRow.appendChild(b);
   });
+  var detailToggle = el('div', 'price-detail-toggle');
+  [
+    { label: 'Smooth', trades: false, title: 'Show time-weighted averages of the pool price' },
+    { label: 'Every trade', trades: true, title: 'Show every exact post-trade pool price' },
+  ].forEach(function (option) {
+    var button = el('button', 'price-detail-btn');
+    button.type = 'button';
+    button.textContent = option.label;
+    button.title = option.title;
+    button.addEventListener('click', function () {
+      showEveryTrade = option.trades;
+      syncPriceDetail();
+      draw();
+    });
+    button._trades = option.trades;
+    detailToggle.appendChild(button);
+  });
+  function syncPriceDetail() {
+    [].slice.call(detailToggle.children).forEach(function (button) {
+      var active = button._trades === showEveryTrade;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+  detailToggle.setAttribute('role', 'group');
+  detailToggle.setAttribute('aria-label', 'Pool price detail');
+  syncPriceDetail();
+  rangeRow.insertBefore(detailToggle, rangeRow.firstChild);
   rangeRow.appendChild(noteTip);
   top.appendChild(rangeRow);
   card.appendChild(top);
@@ -17191,7 +17235,7 @@ export function shouldShowCashOutAsymptote(cashOutPrice, asymptote) {
 
 // Plots PRICE (base token per project token = 1/issuance), rising as issuance is cut. The card
 // header still shows issuance (tokens/ETH). Zero-issuance regions clamp to the top of the finite range.
-function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past, cashoutHistory, ammHistory) {
+function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past, cashoutHistory, ammHistory, showEveryTrade) {
   var firstStart = Number(sorted[0].start);
   var bounds = priceChartTimeBounds(firstStart, now, years, past);
   if (!past && years <= 0) {
@@ -17209,7 +17253,8 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     return Number.isFinite(value) && value > 0;
   });
   var minV = finitePrices.length ? Math.min.apply(Math, finitePrices) : 0;
-  var ammSeries = visibleSeries(ammHistory || [], t0, t1);
+  var exactAmmSeries = visibleSeries(ammHistory || [], t0, t1);
+  var ammSeries = showEveryTrade ? exactAmmSeries : smoothPriceSeries(exactAmmSeries);
   var cashSeries = visibleSeries(cashoutHistory || [], t0, t1);
   var minimumSeries = pts.map(function (point) {
     var tax = seriesTaxAt(cashoutHistory || [], point[0]);
@@ -17266,8 +17311,10 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
       ammLine += ' L' + X(ammSeries[ai].timestamp).toFixed(1) + ' ' + Y(ammSeries[ai].value).toFixed(1);
     }
     ammLine = '<path d="' + ammLine + '" fill="none" stroke="#b8602e" stroke-width="1.7"/>';
-    for (var ad = 0; ad < ammSeries.length; ad++) {
-      ammLine += '<circle cx="' + X(ammSeries[ad].timestamp).toFixed(1) + '" cy="' + Y(ammSeries[ad].value).toFixed(1) + '" r="1.8" fill="#b8602e"/>';
+    if (showEveryTrade) {
+      for (var ad = 0; ad < ammSeries.length; ad++) {
+        ammLine += '<circle cx="' + X(ammSeries[ad].timestamp).toFixed(1) + '" cy="' + Y(ammSeries[ad].value).toFixed(1) + '" r="1.8" fill="#b8602e"/>';
+      }
     }
   } else if (ammPrice && ammPrice > 0) {
     ammLine = '<line x1="' + padL + '" y1="' + Y(ammPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(ammPrice).toFixed(1) + '" stroke="#b8602e" stroke-width="1.5" stroke-dasharray="5 4"/>';
@@ -17305,14 +17352,15 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
   // Axis endpoints + "Today" go to mountChart as HTML overlays (regular font, not viewBox-shrunk).
   return {
     svg: svg,
+    ammSeries: ammSeries,
     minimumSeries: minimumSeries,
     geo: { t0: t0, t1: t1, W: W, padL: padL, padR: padR, nowX: nowX, nowShow: nowShow, nearRight: nearRight, y0: y0, y1: y1 },
   };
 }
 
 // Render the chart into a wrap + attach a hover tooltip/guide showing each series' value at that time.
-function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory) {
-  var c = issuanceChartSvg(sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory);
+function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade) {
+  var c = issuanceChartSvg(sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade);
   var holder = wrap.querySelector('.chart-holder');
   if (!holder) {
     wrap.classList.add('chart-wrap');
@@ -17362,7 +17410,7 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
   holder.insertAdjacentHTML('beforeend', lbl);
   wrap._chart = {
     geo: c.geo, sorted: sorted, sym: sym, amm: amm, cashout: cashout,
-    cashoutHistory: cashoutHistory || [], ammHistory: ammHistory || [],
+    cashoutHistory: cashoutHistory || [], ammHistory: c.ammSeries || [],
     minHistory: c.minimumSeries || [],
   };
 }
@@ -19172,7 +19220,13 @@ function renderMarketPriceChart(project) {
   var priceLine = el('div', 'market-chart-price'); headline.appendChild(priceLine);
   var changeLine = el('div', 'market-chart-change'); headline.appendChild(changeLine);
   head.appendChild(headline);
-  var pills = el('div', 'issuance-ranges market-chart-ranges'); head.appendChild(pills);
+  var controls = el('div', 'market-chart-controls');
+  var detailToggle = el('div', 'price-detail-toggle');
+  detailToggle.setAttribute('role', 'group');
+  detailToggle.setAttribute('aria-label', 'Pool price detail');
+  controls.appendChild(detailToggle);
+  var pills = el('div', 'issuance-ranges market-chart-ranges'); controls.appendChild(pills);
+  head.appendChild(controls);
   host.appendChild(head);
   var body = el('div', 'market-chart-body'); body.appendChild(marketChartGhost()); host.appendChild(body);
 
@@ -19181,6 +19235,32 @@ function renderMarketPriceChart(project) {
   var live = 0;
   var pairSym = '';
   var ready = false;
+  var showEveryTrade = false;
+
+  [
+    { label: 'Smooth', trades: false, title: 'Show time-weighted averages of the pool price' },
+    { label: 'Every trade', trades: true, title: 'Show every exact post-trade pool price' },
+  ].forEach(function (option) {
+    var button = el('button', 'price-detail-btn');
+    button.type = 'button';
+    button.textContent = option.label;
+    button.title = option.title;
+    button._trades = option.trades;
+    button.addEventListener('click', function () {
+      showEveryTrade = option.trades;
+      syncDetail();
+      draw();
+    });
+    detailToggle.appendChild(button);
+  });
+  function syncDetail() {
+    [].slice.call(detailToggle.children).forEach(function (button) {
+      var active = button._trades === showEveryTrade;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+  syncDetail();
 
   MARKET_CHART_RANGES.forEach(function (spec) {
     var button = el('button', 'issuance-range-btn');
@@ -19205,26 +19285,27 @@ function renderMarketPriceChart(project) {
     var first = series.length ? series[0].timestamp : now;
     var t0 = Math.min(now - 1, range === 0 ? first : Math.max(first, now - range));
     // The last observation before the window opens carries the line in at its true level.
-    var before = null, pts = [];
+    var before = null, exactPts = [];
     series.forEach(function (point) {
       if (point.timestamp < t0) { before = point; return; }
-      if (point.timestamp <= now) pts.push({ timestamp: point.timestamp, value: point.value });
+      if (point.timestamp <= now) exactPts.push({ timestamp: point.timestamp, value: point.value });
     });
-    if (before) pts.unshift({ timestamp: t0, value: before.value });
-    if (live > 0) pts.push({ timestamp: now, value: live });
+    if (before) exactPts.unshift({ timestamp: t0, value: before.value });
+    if (live > 0) exactPts.push({ timestamp: now, value: live });
+    var pts = showEveryTrade ? exactPts : smoothPriceSeries(exactPts);
 
     priceLine.textContent = live > 0 ? formatPrice(live) + ' ' + pairSym + '/' + sym : '—';
-    var opening = pts.length ? pts[0].value : live;
+    var opening = exactPts.length ? exactPts[0].value : live;
     var change = opening > 0 && live > 0 ? (live - opening) / opening : 0;
-    changeLine.textContent = pts.length > 1
+    changeLine.textContent = exactPts.length > 1
       ? (change >= 0 ? '+' : '−') + Math.abs(change * 100).toFixed(Math.abs(change) < 0.1 ? 2 : 1) + '%'
         + ' over ' + (range === 0 ? 'all time' : 'this range')
       : '';
     changeLine.className = 'market-chart-change'
-      + (pts.length > 1 && change > 0 ? ' is-up' : pts.length > 1 && change < 0 ? ' is-down' : '');
+      + (exactPts.length > 1 && change > 0 ? ' is-up' : exactPts.length > 1 && change < 0 ? ' is-down' : '');
 
     body.textContent = '';
-    if (pts.length < 2) {
+    if (exactPts.length < 2) {
       var note = el('div', 'detail-card-body owners-intro');
       note.textContent = 'No trades in this range yet — the price above is the live pool price.';
       body.appendChild(note);
@@ -19256,7 +19337,10 @@ function renderMarketPriceChart(project) {
     var holder = el('div', 'market-chart-holder');
     holder.innerHTML = svg;
     // setAttribute, not string interpolation — sym/pairSym are project-controlled ERC-20 symbols.
-    holder.querySelector('svg').setAttribute('aria-label', sym + ' market price in ' + pairSym);
+    holder.querySelector('svg').setAttribute(
+      'aria-label',
+      sym + (showEveryTrade ? ' post-trade pool price in ' : ' smoothed market price in ') + pairSym
+    );
     var tip = el('div', 'market-chart-tip'); tip.style.display = 'none'; holder.appendChild(tip);
     var cursor = holder.querySelector('.market-chart-cursor');
     var dot = holder.querySelector('.market-chart-dot');
@@ -19290,6 +19374,11 @@ function renderMarketPriceChart(project) {
       dot.setAttribute('cy', yOf(pts[pts.length - 1].value).toFixed(1));
     });
     body.appendChild(holder);
+    var method = el('div', 'market-chart-note');
+    method.textContent = showEveryTrade
+      ? 'Every trade shows each exact post-trade pool price.'
+      : 'Smooth uses time-weighted averages, so brief spikes carry only the weight of how long they lasted.';
+    body.appendChild(method);
   }
 
   Promise.all([

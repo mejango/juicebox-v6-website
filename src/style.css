@@ -1014,6 +1014,9 @@ footer {
 }
 .footer-meta a { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; }
 .footer-meta a:hover { color: var(--c-teal); }
+.footer-open-source { margin: 0; font-size: 10px; color: var(--muted-2); }
+.footer-open-source a { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; }
+.footer-open-source a:hover { color: var(--c-teal); }
 /* Safe-queue DELEGATECALL warning badge */
 .backoffice-warn { color: var(--warning); font-weight: 600; }
 
@@ -4935,7 +4938,19 @@ input[type="checkbox"].field {
 .pc-issuance .price-dot { background: var(--c-teal-light); }
 .pc-amm .price-dot { background: var(--c-orange); }
 .pc-cashout .price-dot { background: var(--c-pink); }
-.price-ranges { margin: 0; }
+.price-ranges { margin: 0; flex-wrap: wrap; align-items: center; }
+.price-detail-toggle {
+  display: inline-flex; gap: 2px; padding: 2px;
+  background: var(--pill-bg); border: 1px solid var(--pill-border, rgba(44,32,24,0.15));
+}
+.price-detail-btn {
+  min-height: 28px; padding: 3px 8px; border: 0; border-radius: 0;
+  background: transparent; color: var(--muted-2); cursor: pointer;
+  font: inherit; font-size: 10px; font-weight: bold; white-space: nowrap;
+}
+.price-detail-btn:hover { color: var(--text); }
+.price-detail-btn.active { background: var(--card-bg); color: var(--c-teal); }
+.price-detail-btn:focus-visible { outline: 1px solid var(--c-teal); outline-offset: 1px; }
 .price-chart { width: 100%; }
 /* Shop: 721 NFT tiers */
 /* Shop tab: items grouped under category headings (juicy-vision), 3 per row, larger cards */
@@ -5189,6 +5204,7 @@ th[data-tip]:hover::after {
 .market-chart-change { font-size: 12px; font-weight: bold; color: var(--muted-2); min-height: 16px; }
 .market-chart-change.is-up { color: var(--c-teal); }
 .market-chart-change.is-down { color: var(--c-orange); }
+.market-chart-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .market-chart-ranges { margin: 0; }
 .market-chart-body { margin-top: 10px; }
 .market-chart-holder { width: 100%; position: relative; }
@@ -5200,6 +5216,10 @@ th[data-tip]:hover::after {
 }
 .market-chart-tip-price { font-weight: bold; }
 .market-chart-tip-when { opacity: 0.85; }
+.market-chart-note {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--c-orange-light);
+  color: var(--muted-2); font-size: 11px; line-height: 1.5;
+}
 
 /* Ghost cards for the price/pool cards — the same shape their resolved form takes. */
 .chart-ghost { display: flex; flex-direction: column; gap: 8px; }

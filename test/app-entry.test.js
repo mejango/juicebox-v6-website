@@ -144,9 +144,9 @@ function shell() {
   return `
     <header id="header"><button id="connect-btn"></button></header>
     <nav id="tabs">${tabs.map(([label, tab]) => `<button class="tab" data-tab="${tab}">${label}</button>`).join('')}</nav>
-    <a id="audit-prompt-link" href="#">audit</a>
+    <a id="audit-prompt-link" data-audit-prompt-link href="#">audit</a>
     <main>${tabs.map(([, tab]) => `<section id="tab-${tab}" class="tab-content"></section>`).join('')}<section id="tab-account" class="tab-content"></section></main>
-    <footer><span id="ipfs-cid-meta"></span></footer>`;
+    <footer><a id="footer-audit-prompt-link" data-audit-prompt-link href="#">audit again</a><span id="ipfs-cid-meta"></span></footer>`;
 }
 
 describe('production app entry point', () => {
@@ -227,6 +227,11 @@ describe('production app entry point', () => {
     document.getElementById('audit-prompt-link').click();
     await vi.waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('audit the canonical V6 call'));
     expect(document.getElementById('audit-prompt-link').textContent).toBe('COPIED TO CLIPBOARD');
+
+    document.getElementById('footer-audit-prompt-link').click();
+    await vi.waitFor(() => expect(document.getElementById('footer-audit-prompt-link').textContent)
+      .toBe('COPIED TO CLIPBOARD'));
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith('audit the canonical V6 call');
 
     document.getElementById('connect-btn').click();
     await vi.waitFor(() => expect(document.querySelector('.wallet-menu-error')?.textContent).toMatch(/No wallet detected/));

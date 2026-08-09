@@ -442,14 +442,16 @@ function onHashChange() {
 }
 
 function initAuditPrompt() {
-  var link = document.getElementById('audit-prompt-link');
-  if (!link) return;
-  link.addEventListener('click', function(e) {
-    e.preventDefault();
-    var prompt = getAuditPrompt();
-    navigator.clipboard.writeText(prompt).then(function() {
-      link.textContent = 'COPIED TO CLIPBOARD';
-      setTimeout(function() { link.textContent = '[copy system audit prompt]'; }, 2000);
+  var links = document.querySelectorAll('[data-audit-prompt-link], #audit-prompt-link');
+  links.forEach(function(link) {
+    var defaultLabel = link.textContent;
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      var prompt = getAuditPrompt();
+      navigator.clipboard.writeText(prompt).then(function() {
+        link.textContent = 'COPIED TO CLIPBOARD';
+        setTimeout(function() { link.textContent = defaultLabel; }, 2000);
+      });
     });
   });
 }

@@ -37,3 +37,71 @@ export function downsampleTimeSeries(rows, maxPoints, xOf, yOf) {
   sampled.push(rows[rows.length - 1]);
   return sampled;
 }
+
+// Time-weighted display smoothing for exact post-trade pool spots. A price
+// contributes only for the time it was actually in force, while the exact
+// opening and latest values stay pinned to the line's endpoints.
+export function smoothPriceSeries(points, maxBuckets) {
+  maxBuckets = maxBuckets == null ? 96 : Number(maxBuckets);
+  var sorted = (points || []).filter(function (point) {
+    return point
+      && Number.isFinite(Number(point.timestamp))
+      && Number.isFinite(Number(point.value))
+      && Number(point.value) > 0;
+  }).map(function (point) {
+    return { timestamp: Number(point.timestamp), value: Number(point.value) };
+  }).sort(function (a, b) { return a.timestamp - b.timestamp; });
+
+  var deduped = [];
+  sorted.forEach(function (point) {
+    if (deduped.length && deduped[deduped.length - 1].timestamp === point.timestamp) {
+      deduped[deduped.length - 1] = point;
+    } else {
+      deduped.push(point);
+    }
+  });
+  if (deduped.length < 4 || maxBuckets < 1) return deduped;
+
+  var start = deduped[0].timestamp;
+  var end = deduped[deduped.length - 1].timestamp;
+  var duration = end - start;
+  if (!(duration > 0)) return deduped;
+
+  var bucketCount = Math.min(maxBuckets, Math.max(2, (deduped.length - 1) * 2));
+  var bucketWidth = duration / bucketCount;
+  var smoothed = [{ timestamp: start, value: deduped[0].value }];
+  var eventIndex = 1;
+  var currentValue = deduped[0].value;
+
+  for (var bucket = 0; bucket < bucketCount; bucket++) {
+    var bucketStart = start + bucket * bucketWidth;
+    var bucketEnd = bucket === bucketCount - 1
+      ? end
+      : start + (bucket + 1) * bucketWidth;
+    while (eventIndex < deduped.length && deduped[eventIndex].timestamp <= bucketStart) {
+      currentValue = deduped[eventIndex].value;
+      eventIndex++;
+    }
+
+    var cursor = bucketStart;
+    var weightedTotal = 0;
+    var nextIndex = eventIndex;
+    var bucketValue = currentValue;
+    while (nextIndex < deduped.length && deduped[nextIndex].timestamp < bucketEnd) {
+      var event = deduped[nextIndex];
+      weightedTotal += bucketValue * (event.timestamp - cursor);
+      cursor = event.timestamp;
+      bucketValue = event.value;
+      nextIndex++;
+    }
+    weightedTotal += bucketValue * (bucketEnd - cursor);
+    currentValue = bucketValue;
+    eventIndex = nextIndex;
+    smoothed.push({
+      timestamp: bucketStart + (bucketEnd - bucketStart) / 2,
+      value: weightedTotal / (bucketEnd - bucketStart),
+    });
+  }
+  smoothed.push({ timestamp: end, value: deduped[deduped.length - 1].value });
+  return smoothed;
+}
