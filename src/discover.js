@@ -16928,9 +16928,11 @@ function renderPriceChart(project, stages) {
   detailToggle.setAttribute('role', 'group');
   detailToggle.setAttribute('aria-label', 'Pool price detail');
   syncPriceDetail();
-  rangeRow.insertBefore(detailToggle, rangeRow.firstChild);
   rangeRow.appendChild(noteTip);
   top.appendChild(rangeRow);
+  var detailRow = el('div', 'price-detail-row');
+  detailRow.appendChild(detailToggle);
+  top.appendChild(detailRow);
   card.appendChild(top);
   card.appendChild(chartWrap);
   draw();
@@ -19225,10 +19227,12 @@ function renderMarketPriceChart(project) {
   var detailToggle = el('div', 'price-detail-toggle');
   detailToggle.setAttribute('role', 'group');
   detailToggle.setAttribute('aria-label', 'Pool price detail');
-  controls.appendChild(detailToggle);
   var pills = el('div', 'issuance-ranges market-chart-ranges'); controls.appendChild(pills);
   head.appendChild(controls);
   host.appendChild(head);
+  var detailRow = el('div', 'price-detail-row');
+  detailRow.appendChild(detailToggle);
+  host.appendChild(detailRow);
   var body = el('div', 'market-chart-body'); body.appendChild(marketChartGhost()); host.appendChild(body);
 
   var range = 30 * 86400;

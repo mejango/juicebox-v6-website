@@ -4950,17 +4950,17 @@ input[type="checkbox"].field {
 .pc-amm .price-dot { background: var(--c-orange); }
 .pc-cashout .price-dot { background: var(--c-pink); }
 .price-ranges { margin: 0; flex-wrap: wrap; align-items: center; }
+.price-detail-row { display: flex; justify-content: flex-end; margin-top: 5px; }
 .price-detail-toggle {
-  display: inline-flex; gap: 2px; padding: 2px;
-  background: var(--pill-bg); border: 1px solid var(--pill-border, rgba(44,32,24,0.15));
+  display: inline-flex; align-items: center; gap: 10px;
 }
 .price-detail-btn {
-  min-height: 28px; padding: 3px 8px; border: 0; border-radius: 0;
+  padding: 2px 0; border: 0; border-bottom: 1px solid transparent; border-radius: 0;
   background: transparent; color: var(--muted-2); cursor: pointer;
-  font: inherit; font-size: 10px; font-weight: bold; white-space: nowrap;
+  font: inherit; font-size: 10px; font-weight: normal; white-space: nowrap;
 }
 .price-detail-btn:hover { color: var(--text); }
-.price-detail-btn.active { background: var(--card-bg); color: var(--c-teal); }
+.price-detail-btn.active { color: var(--c-teal); border-bottom-color: currentColor; }
 .price-detail-btn:focus-visible { outline: 1px solid var(--c-teal); outline-offset: 1px; }
 .price-chart { width: 100%; }
 /* Shop: 721 NFT tiers */
