@@ -457,6 +457,47 @@ export function renderBuildTab() {
   var wrap = document.createElement('div');
   wrap.className = 'guide-wrap';
 
+  var agentPrompt = document.createElement('p');
+  agentPrompt.className = 'guide-agent-prompt';
+  agentPrompt.appendChild(document.createTextNode('Building with an agent? '));
+  var agentPromptButton = document.createElement('button');
+  agentPromptButton.type = 'button';
+  agentPromptButton.textContent = 'Copy the Juicebox build prompt';
+  agentPromptButton.addEventListener('click', function () {
+    var prompt = [
+      'I want to build a product or platform on Juicebox V6.',
+      '',
+      'My product: [describe the users, the value they exchange, and the experience I want].',
+      '',
+      'Act as my protocol engineer and product architect. Start by reading the Learn and Build sections in this Juicescan bundle, then inspect https://github.com/Bananapus/version-6 and https://github.com/mejango/juicescan. Use only current V6 repositories; do not substitute older Juicebox versions.',
+      '',
+      'Design the smallest safe architecture that gives my users a native product experience while Juicebox handles the money layer. Decide whether I need a flexible Juicebox project, an immutable revnet, or both. Map every user action to exact V6 reads and transactions, including payments, token issuance, cash outs, payouts, shops, hooks, permissions, and multichain settlement where relevant.',
+      '',
+      'For each transaction, identify the contract, function, arguments, units, permissions, fees, approvals, slippage or minimum-output protection, and the state that must be re-read immediately before signing. Use pure transaction builders which round-trip through the ABI. Show and decode every transaction before asking for a signature.',
+      '',
+      'Deliver: (1) a plain-language product flow, (2) the onchain architecture, (3) a threat model and trust assumptions, (4) an incremental implementation plan, (5) test cases and invariants, and (6) the first working vertical slice. Keep the interface branded as my product; treat Juicebox as open infrastructure, not a hosted dependency.'
+    ].join('\n');
+    var copied = function () {
+      agentPromptButton.textContent = 'Build prompt copied';
+      setTimeout(function () { agentPromptButton.textContent = 'Copy the Juicebox build prompt'; }, 1600);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(prompt).then(copied, copied);
+    else {
+      try {
+        var textarea = document.createElement('textarea');
+        textarea.value = prompt;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      } catch (_) {}
+      copied();
+    }
+  });
+  agentPrompt.appendChild(agentPromptButton);
+  agentPrompt.appendChild(document.createTextNode('.'));
+  wrap.appendChild(agentPrompt);
+
   // --- Table of Contents ---
   var toc = document.createElement('nav');
   toc.className = 'guide-toc';
