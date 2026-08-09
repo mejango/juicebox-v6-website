@@ -1018,8 +1018,6 @@ footer {
 .footer-open-source a { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; }
 .footer-open-source a:hover { color: var(--c-teal); }
 .footer-terms { margin: 0; max-width: 680px; font-size: 10px; line-height: 1.5; color: var(--muted-2); }
-.footer-terms a { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; }
-.footer-terms a:hover { color: var(--c-teal); }
 .time-zone-note {
   display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
   margin-top: 5px; color: var(--muted-2); font-size: 10px; line-height: 1.4;
