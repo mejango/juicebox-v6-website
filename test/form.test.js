@@ -165,6 +165,7 @@ describe('generic ABI function form', () => {
     };
     state.client = {
       simulateContract: vi.fn().mockResolvedValue({ request }),
+      estimateContractGas: vi.fn().mockResolvedValue(50_000n),
       waitForTransactionReceipt: vi.fn().mockResolvedValue({
         status: 'success',
         blockNumber: 123n,
@@ -189,6 +190,9 @@ describe('generic ABI function form', () => {
       args: [7n],
       value: 250000000000000000n,
     }));
+    expect(state.wallet.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: 100_000n }),
+    );
     await vi.waitFor(() => expect(form.querySelector('.fn-output').textContent).toMatch(/Confirmed in block 123/));
 
     state.client.waitForTransactionReceipt.mockResolvedValue({

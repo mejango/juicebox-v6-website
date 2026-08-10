@@ -150,6 +150,7 @@ describe('Safe runtime fail-closed boundaries', () => {
         return { result: true, request: { address: SAFE } };
       }),
       getBlock: vi.fn().mockResolvedValue({ baseFeePerGas: 1n }),
+      estimateContractGas: vi.fn().mockResolvedValue(100000n),
       waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success' }),
     };
     await expect(executeSafeTx(1, SAFE, queuedTx())).rejects.toThrow(/account changed/i);
@@ -168,6 +169,7 @@ describe('Safe runtime fail-closed boundaries', () => {
     await expect(executeSafeTx(1, SAFE, queuedTx())).resolves.toBe(HASH);
     expect(writeContract).toHaveBeenLastCalledWith(expect.objectContaining({
       account: OWNER,
+      gas: 200000n,
       maxFeePerGas: 1000000000n,
       maxPriorityFeePerGas: 50000000n,
     }));

@@ -13,6 +13,7 @@
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData } from 'viem';
 import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR } from './component-base.js';
 import { CHAINS, chainList, isTestnetChain } from './chain.js';
+import { contractGasWithHeadroom } from './gas.js';
 
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
 function cs(a) { try { return checksumAddress(a); } catch (_) { return a; } }
@@ -339,7 +340,8 @@ async function sendAndConfirm(wallet, chainId, params, label) {
   if (label === 'execTransaction' && simulation.result !== true) throw new Error('Safe simulation reported that the queued transaction would fail. Nothing was sent.');
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var fees = await feeOverrides(chainId);
-  var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[chainId] }, fees));
+  var gas = await contractGasWithHeadroom(pub, simulation.request);
+  var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[chainId], gas: gas }, fees));
   try {
     var rcpt = await pub.waitForTransactionReceipt({ hash: hash });
     if (rcpt && rcpt.status && rcpt.status !== 'success') throw new Error((label || 'Transaction') + ' reverted onchain (tx ' + hash + ').');

@@ -15,6 +15,7 @@
 import { encodeFunctionData, isAddress } from 'viem';
 import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR } from './component-base.js';
 import { CHAINS } from './chain.js';
+import { gasWithHeadroom, transactionGasWithHeadroom } from './gas.js';
 
 var RELAYR_API = 'https://api.relayr.ba5ed.com';
 var RELAYR_PENDING_PREFIX = 'jb-relayr-pending-v1:';
@@ -94,15 +95,15 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
   // Measure the destination call rather than signing a flat guess. The forwarder caps the
   // inner call at `gas` and reverts `execute` if it runs out, so an undersized constant
   // burns a bundle the user has already paid for; an oversized one inflates every quote.
-  // The caller's hint wins when given, and the constant remains the fallback.
+  // A caller hint is only a floor. Always try a live estimate and raise the
+  // signed limit to the larger value so stale constants cannot cap execution.
   var gas = gasHint;
-  if (!gas) {
-    try {
-      var estimated = await pub.estimateGas({ account: forwarder, to: to, data: data, value: val });
-      gas = (estimated * 3n) / 2n;
-    } catch (_) {
-      gas = 500000n; // estimation unavailable — Relayr still simulates server-side and refuses a bad quote
-    }
+  try {
+    var estimated = await pub.estimateGas({ account: forwarder, to: to, data: data, value: val });
+    var buffered = gasWithHeadroom(estimated);
+    if (!gas || BigInt(gas) < buffered) gas = buffered;
+  } catch (_) {
+    if (!gas) gas = 500000n; // estimation unavailable — Relayr still simulates server-side and refuses a bad quote
   }
 
   var signature = await wallet.signTypedData({
@@ -178,7 +179,7 @@ export async function relayrPay(payment, expectedAccount) {
   if (active !== chainId) { await switchChain(chainId); wallet = getWalletClient(); }
   if (!wallet || !getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   var pub = createPublicClientForChain(chainId);
-  await pub.estimateGas({ account: account, to: payment.target, value: amount, data: calldata });
+  var gas = await transactionGasWithHeadroom(pub, { account: account, to: payment.target, value: amount, data: calldata });
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   var hash = await wallet.sendTransaction({
     account: account,
@@ -186,6 +187,7 @@ export async function relayrPay(payment, expectedAccount) {
     to: payment.target,
     value: amount,
     data: calldata,
+    gas: gas,
   });
   var receipt = await pub.waitForTransactionReceipt({ hash: hash });
   if (receipt && receipt.status && receipt.status !== 'success') throw new Error('Relayr payment reverted onchain.');

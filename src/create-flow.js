@@ -32,6 +32,7 @@ import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
+import { gasWithHeadroom } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 
 // ---------------------------------------------------------------------------
@@ -4097,7 +4098,7 @@ async function runDeploy(state, owner) {
 function estimateLaunchGas(plan, account) {
   var pub = createPublicClientForChain(plan.chainId);
   return pub.estimateContractGas({ account: account, address: plan.address, abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value || 0n })
-    .then(function (g) { return (g * 13n) / 10n + 300000n; })
+    .then(gasWithHeadroom)
     .catch(function () { return 8000000n; });
 }
 

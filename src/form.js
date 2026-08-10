@@ -10,6 +10,7 @@ import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, 
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
 import { renderError } from './errors.js';
+import { contractGasWithHeadroom } from './gas.js';
 
 export function renderFunctionForm(fn, contractName, getContractAddr, abi, fnNatspec) {
   var container = document.createElement('div');
@@ -358,10 +359,11 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
           args: args,
           value: value,
         });
-      }).then(function(simulation) {
+      }).then(async function(simulation) {
         if (!getAccount() || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
         setOutputMessage(outputArea, 'tx-pending', 'Awaiting wallet confirmation…');
-        return wallet.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId] }));
+        var gas = await contractGasWithHeadroom(pub, simulation.request);
+        return wallet.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas }));
       }).then(function(hash) {
         setOutputMessage(outputArea, 'tx-success', 'TX submitted: ' + hash);
         return pub.waitForTransactionReceipt({ hash: hash });

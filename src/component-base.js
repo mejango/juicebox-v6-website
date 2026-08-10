@@ -8,6 +8,7 @@ import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
 import { decodeFunctionData, encodeFunctionData, isAddress } from 'viem';
 import { getAddress, meta, getABI } from './abi-registry.js';
+import { contractGasWithHeadroom } from './gas.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
 // address is. Suckers and other per-project deployments aren’t in the registry — callers pass contractName.
@@ -1335,9 +1336,10 @@ export function executeTransaction(opts) {
     var callerBlock = opts.simulationBlockNumber == null ? null : BigInt(opts.simulationBlockNumber);
     if (callerBlock != null && (approvalBlock == null || callerBlock > approvalBlock)) approvalBlock = callerBlock;
     if (approvalBlock != null) simulationRequest.blockNumber = approvalBlock;
-    return pub.simulateContract(simulationRequest).then(function(simulation) {
+    return pub.simulateContract(simulationRequest).then(async function(simulation) {
       cbs.onStatus('Awaiting wallet confirmation…', 'pending');
-      return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId] }));
+      var gas = await contractGasWithHeadroom(pub, simulation.request);
+      return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
     });
   }).then(function(hash) {
     submittedHash = hash;
@@ -1515,9 +1517,10 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
       abi: erc20ApproveAbi,
       functionName: 'approve',
       args: [spender, amount],
-    }).then(function(simulation) {
+    }).then(async function(simulation) {
       if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-      return wallet.writeContract(Object.assign({}, simulation.request, { account: owner, chain: CHAINS[chainId] }));
+      var gas = await contractGasWithHeadroom(pub, simulation.request);
+      return wallet.writeContract(Object.assign({}, simulation.request, { account: owner, chain: CHAINS[chainId], gas: gas }));
     }).then(function(hash) {
       return waitForErc20Approval(pub, hash, tokenAddr, owner, spender, amount);
     });

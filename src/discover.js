@@ -24,6 +24,7 @@ import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaT
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
+import { contractGasWithHeadroom, transactionGasWithHeadroom } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
@@ -585,7 +586,8 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     var maxU = (1n << 256n) - 1n;
     var approval = await client.simulateContract({ account: owner, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, maxU] });
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
-    var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId] }));
+    var approvalGas = await contractGasWithHeadroom(client, approval.request);
+    var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId], gas: approvalGas }));
     if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, owner, PERMIT2_ADDRESS, amount);
     if (onStatus) onStatus('Token access approved. Next: authorize the payment.', 'pending');
@@ -4788,7 +4790,8 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     if (onStatus) await onStatus('Approving for Permit2 (one-time)…', 'pending', { reviewPayload: directSwapTokenApprovalPayload(chainId, token, amountIn) });
     var approval = await client.simulateContract({ account: recipient, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, (1n << 256n) - 1n] });
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
-    var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
+    var approvalGas = await contractGasWithHeadroom(client, approval.request);
+    var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas }));
     if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, recipient, PERMIT2_ADDRESS, amountIn);
     if (onStatus) onStatus('Token access approved. Next: authorize the swap.', 'pending');
@@ -4836,7 +4839,8 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
       args: [token, ur, amountIn, onchainExpiration],
     });
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
-    var approvalHash = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
+    var approvalGas = await contractGasWithHeadroom(client, approval.request);
+    var approvalHash = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas }));
     if (onStatus) onStatus('Swap-router authorization submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: approvalHash, chainId: chainId });
     var approvalReceipt;
     try {
@@ -10321,12 +10325,14 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     setStatus('Simulating the confirmed transaction…', 'pending');
     await directClient.call({ account: account, to: direct.to, data: direct.data });
     setStatus('Awaiting wallet confirmation…', 'pending');
+    var directGas = await transactionGasWithHeadroom(directClient, { account: account, to: direct.to, data: direct.data, value: 0n });
     var directHash = await directWallet.sendTransaction({
       account: account,
       chain: CHAINS[direct.cid],
       to: direct.to,
       data: direct.data,
       value: 0n,
+      gas: directGas,
     });
     setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
     var directReceipt = await directClient.waitForTransactionReceipt({ hash: directHash });
@@ -25930,7 +25936,8 @@ async function lpSendTx(chainId, p) {
   var client = clientFor(chainId);
   var simulation = await client.simulateContract({ account: acct, address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value || 0n });
   if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-  var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId] }));
+  var gas = await contractGasWithHeadroom(client, simulation.request);
+  var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId], gas: gas }));
   try {
     var receipt = await client.waitForTransactionReceipt({ hash: hash, timeout: p.smartWallet ? 180000 : undefined });
     if (!receipt || receipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
