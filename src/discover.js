@@ -7793,8 +7793,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   builders.Extras = function () { return renderExtrasSection(project); };
   tabs.push('Extras');
   tabs.push(ownerTabName); // Owner/Operator stays last, after Shop and Extras.
-  // Phones: Activity is the first subtab and the default (the left-column card is omitted above).
-  if (activityAsTab) { builders.Activity = function () { return activityCardEl; }; tabs.unshift('Activity'); }
+  // Phones: Latest is the first subtab and the default (the left-column card is omitted above).
+  if (activityAsTab) { builders.Latest = function () { return activityCardEl; }; tabs.unshift('Latest'); }
   var overflowTabNames = ['Extras', ownerTabName];
   var visibleTabs = tabs.filter(function (name) { return overflowTabNames.indexOf(name) === -1; });
   var tabBar = el('div', 'project-detail-tabbar');
@@ -7820,6 +7820,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   };
   // Resolve the initial tab (from a deep link) case-insensitively; fall back to the first tab.
   var startTab = tabs[0];
+  // Preserve project links created before the activity feed was renamed "Latest".
+  if (tabSlug(initialTab) === 'activity') initialTab = 'Latest';
   // Preserve links created while the revnet holder tab briefly used "Tokens".
   if (project.isRevnet && tabSlug(initialTab) === 'tokens') initialTab = 'Owners';
   if (initialTab) {
@@ -11437,8 +11439,7 @@ function renderActivityCard(project, opts) {
   // Header row: title on the left, filter controls right-aligned.
   var head = el('div', 'activity-head');
   var title = el('div', 'detail-card-title');
-  // When the card IS the "Activity" subtab (phones), the tab already says ACTIVITY — name the card "Recent".
-  title.textContent = (opts && opts.asTab) ? 'Recent' : 'Activity';
+  title.textContent = 'Latest';
   head.appendChild(title);
   // Filter controls (chain + event-type combos). Hidden until rows load and there's >1 value to pick.
   // Chain filter is a MULTI-select over every chain the project is deployed on; type is single-select.
