@@ -105,6 +105,10 @@ var METADATA_FETCH_TIMEOUT_MS = 5500;
 var METADATA_FETCH_STAGGER_MS = 250;
 var METADATA_CACHE_PREFIX = 'jb-metadata-json-v1:';
 var METADATA_CACHE_MAX_CHARS = 200000;
+var IPFS_MEDIA_CACHE_NAME = 'juicescan-ipfs-media-v1';
+var IPFS_MEDIA_CACHE_MAX_ENTRIES = 192;
+var IPFS_MEDIA_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+var _ipfsMediaObjectUrls = {};
 var INDEXED_STATS_TIMEOUT_MS = 3500;
 var _metadataCache = {};
 
@@ -1106,24 +1110,85 @@ function tierMediaBadge(label, alt, url) {
   node.title = alt || '';
   return node;
 }
+function cachedIpfsMedia(candidates) {
+  if (typeof caches === 'undefined') return Promise.resolve(null);
+  return caches.open(IPFS_MEDIA_CACHE_NAME).then(async function (cache) {
+    for (var index = 0; index < candidates.length; index++) {
+      var candidate = candidates[index];
+      if (_ipfsMediaObjectUrls[candidate]) {
+        return { index: index, objectUrl: _ipfsMediaObjectUrls[candidate] };
+      }
+      var response = await cache.match(candidate);
+      if (!response || !response.ok) continue;
+      var blob = await response.blob();
+      if (!blob.size || blob.size > IPFS_MEDIA_CACHE_MAX_BYTES) {
+        await cache.delete(candidate);
+        continue;
+      }
+      var objectUrl = URL.createObjectURL(blob);
+      _ipfsMediaObjectUrls[candidate] = objectUrl;
+      return { index: index, objectUrl: objectUrl };
+    }
+    return null;
+  }).catch(function () { return null; });
+}
+
+function rememberIpfsMedia(url) {
+  if (!url || typeof caches === 'undefined') return;
+  caches.open(IPFS_MEDIA_CACHE_NAME).then(async function (cache) {
+    if (await cache.match(url)) return;
+    var response = await fetch(url, { cache: 'force-cache', mode: 'cors' });
+    if (!response.ok || response.type === 'opaque') return;
+    var declared = Number(response.headers.get('content-length') || 0);
+    if (declared > IPFS_MEDIA_CACHE_MAX_BYTES) return;
+    var blob = await response.clone().blob();
+    if (!blob.size || blob.size > IPFS_MEDIA_CACHE_MAX_BYTES) return;
+    await cache.put(url, response);
+    var keys = await cache.keys();
+    while (keys.length > IPFS_MEDIA_CACHE_MAX_ENTRIES) {
+      await cache.delete(keys.shift());
+    }
+  }).catch(function () {});
+}
+
 function setMediaSource(node, url, onExhausted, options) {
   var safe = safeMediaUrl(url);
   if (!safe) return;
   options = options || {};
-  var candidates = ipfsPath(safe)
+  var isIpfs = !!ipfsPath(safe);
+  var candidates = isIpfs
     ? (options.preferMediaGateway ? ipfsMediaGatewayUrls(safe) : ipfsGatewayUrls(safe))
     : [safe];
   var i = 0;
+  var activeGatewayUrl = '';
   function next() {
     if (i >= candidates.length) {
       node.removeEventListener('error', next);
+      node.removeEventListener('load', rememberLoaded);
       if (onExhausted) onExhausted();
       return;
     }
-    node.src = candidates[i++];
+    activeGatewayUrl = candidates[i++];
+    node.src = activeGatewayUrl;
+  }
+  function rememberLoaded() {
+    if (isIpfs && activeGatewayUrl) rememberIpfsMedia(activeGatewayUrl);
   }
   node.addEventListener('error', next);
-  next();
+  node.addEventListener('load', rememberLoaded);
+  if (isIpfs && node.tagName === 'IMG' && typeof caches !== 'undefined') {
+    cachedIpfsMedia(candidates).then(function (cached) {
+      if (!cached) {
+        next();
+        return;
+      }
+      i = cached.index + 1;
+      activeGatewayUrl = '';
+      node.src = cached.objectUrl;
+    });
+  } else {
+    next();
+  }
 }
 
 function isLightNeutralPixel(rgba, pixelIndex) {
