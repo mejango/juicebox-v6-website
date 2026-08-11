@@ -5,7 +5,7 @@
 import { encodeFunctionData } from 'viem';
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange } from './wallet.js';
-import { confirmTransactionModal, truncAddr } from './component-base.js';
+import { confirmTransactionModal, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
 import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
@@ -332,6 +332,7 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
 
     var args = inputs.map(function(inp) { return inp.getValue(); });
     // Review the exact call before sending.
+    var submittedHash = null;
     confirmTransactionModal({
       action: fn.name,
       chain: (CHAINS[chainId] && CHAINS[chainId].name) || ('chain ' + chainId),
@@ -365,12 +366,21 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
         var gas = await contractGasWithHeadroom(pub, simulation.request);
         return wallet.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas }));
       }).then(function(hash) {
-        setOutputMessage(outputArea, 'tx-success', 'TX submitted: ' + hash);
-        return pub.waitForTransactionReceipt({ hash: hash });
+        submittedHash = hash;
+        setOutputMessage(outputArea, 'tx-pending', 'TX submitted: ' + hash + ' — confirming onchain…');
+        return waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
       }).then(function(receipt) {
-        if (!receipt || receipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
+        if (!receipt || receipt.status !== 'success') {
+          var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
+          reverted.onchainRevert = true;
+          throw reverted;
+        }
         setOutputMessage(outputArea, 'tx-success', 'Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash));
       }).catch(function(err) {
+        if (shouldKeepSubmittedTransactionPending(submittedHash, err)) {
+          setOutputMessage(outputArea, 'tx-pending', 'Transaction submitted; confirmation tracking is temporarily unavailable. TX: ' + submittedHash);
+          return;
+        }
         outputArea.innerHTML = '';
         outputArea.appendChild(renderError(formatError(err, abi)));
       });

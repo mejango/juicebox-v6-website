@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { quotedOutputFloor } from './slippage.js';
@@ -10444,16 +10444,20 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     await switchChain(payment.chain);
   }
   setStatus('Confirm the Relayr payment…', 'pending');
-  var paymentHash = await relayrPay(payment, account);
   var session = {
     bundleUuid: bundle.bundle_uuid,
-    paymentHash: paymentHash,
+    paymentHash: null,
     paymentChainId: Number(payment.chain),
     expectedCount: chains.length,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
     records: [],
   };
-  if (confirmOpts.onSession) { try { confirmOpts.onSession(session); } catch (_) {} }
+  var paymentHash = await relayrPay(payment, account, function (hash) {
+    session.paymentHash = hash;
+    if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
+    if (confirmOpts.onSession) { try { confirmOpts.onSession(session); } catch (_) {} }
+  });
+  session.paymentHash = paymentHash;
   if (!confirmOpts.manualRecovery) return monitorRelayrSession(session, setStatus, confirmOpts);
   setStatus('Payment confirmed — Relayr is executing on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '. Do not submit again.', 'pending');
   try {
@@ -10862,15 +10866,27 @@ function runRelayrBundle(entries, opts) {
             var wallet = getWalletClient(); var cur = await wallet.getChainId().catch(function () { return null; });
             if (cur !== o.chain) { status.textContent = 'Switching to ' + chainNameOf(o.chain) + '…'; await switchChain(o.chain); }
             status.textContent = 'Confirm the payment in your wallet…';
-            var payHash = await relayrPay(o);
-            pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
-            await waitForBundle({
-              bundleUuid: quote.bundle_uuid, paymentHash: payHash, paymentChainId: Number(o.chain),
+            var paidSession = {
+              bundleUuid: quote.bundle_uuid, paymentHash: null, paymentChainId: Number(o.chain),
               expectedCount: entries.length,
               chains: (opts.preview || entries).map(function (entry) { return { id: Number(entry.cid || entry.chain), name: entry.chain || chainNameOf(entry.cid || entry.chain) }; }),
               records: [],
+            };
+            var payHash = await relayrPay(o, null, function (hash) {
+              paidSession.paymentHash = hash;
+              saveRelayrPendingSession(pendingScope, paidSession);
             });
+            paidSession.paymentHash = payHash;
+            pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
+            await waitForBundle(paidSession);
           } catch (e) {
+            var saved = loadRelayrPendingSession(pendingScope);
+            if (e && e.code === 'RELAYR_PAYMENT_SUBMITTED' && saved) {
+              pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
+              setStatus(e.message, 'pending');
+              waitForBundle(saved);
+              return;
+            }
             pay.disabled = false; cancel.disabled = false; sel.disabled = false;
             setStatus(errMessage(e, 'Could not pay the Relayr bundle.'), 'error');
           }
@@ -12625,15 +12641,20 @@ async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
     await switchChain(payment.chain);
   }
   setStatus('Confirm the Relayr payment…', 'pending');
-  var paymentHash = await relayrPay(payment);
-  return monitorRelayrSession({
+  var session = {
     bundleUuid: bundle.bundle_uuid,
-    paymentHash: paymentHash,
+    paymentHash: null,
     paymentChainId: Number(payment.chain),
     expectedCount: calls.length,
     chains: calls.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; }),
     records: [],
-  }, setStatus, { pendingScope: pendingScope });
+  };
+  var paymentHash = await relayrPay(payment, null, function (hash) {
+    session.paymentHash = hash;
+    if (pendingScope) session = saveRelayrPendingSession(pendingScope, session) || session;
+  });
+  session.paymentHash = paymentHash;
+  return monitorRelayrSession(session, setStatus, { pendingScope: pendingScope });
 }
 
 // ---------------------------------------------------------------------------
@@ -26008,14 +26029,21 @@ async function lpSendTx(chainId, p) {
   var gas = await contractGasWithHeadroom(client, simulation.request);
   var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId], gas: gas }));
   try {
-    var receipt = await client.waitForTransactionReceipt({ hash: hash, timeout: p.smartWallet ? 180000 : undefined });
-    if (!receipt || receipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
+    var receipt = await waitForTrackedTransactionReceipt(client, hash, wallet, chainId);
+    if (!receipt || receipt.status !== 'success') {
+      var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
+      reverted.onchainRevert = true;
+      throw reverted;
+    }
   } catch (e) {
     // A multisig executes when its co-signers get to it — possibly days after the proposal. The receipt wait
     // giving up is expected there, not a failure: stop gracefully and tell the user how the flow resumes.
-    if (p.smartWallet && /timed? ?out/i.test(String(e && e.message || ''))) {
-      var pending = new Error('Proposed to your multisig — the site stopped waiting for co-signers. Execute it in your Safe, then confirm here again; completed steps are skipped.');
+    if (shouldKeepSubmittedTransactionPending(hash, e)) {
+      var pending = new Error(p.smartWallet
+        ? 'Proposed to your multisig — confirmation tracking stopped before execution was visible. Execute it in your Safe, then confirm here again; completed steps are skipped.'
+        : 'Transaction submitted, but confirmation tracking is temporarily unavailable. Check the transaction before trying again.');
       pending.txStatusKind = 'pending';
+      pending.hash = hash;
       throw pending;
     }
     throw e;

@@ -13,7 +13,7 @@
 // No API key. Host confirmed from juice-sdk-v4: https://api.relayr.ba5ed.com
 
 import { encodeFunctionData, isAddress } from 'viem';
-import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR } from './component-base.js';
+import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt } from './component-base.js';
 import { CHAINS } from './chain.js';
 import { gasWithHeadroom, transactionGasWithHeadroom } from './gas.js';
 
@@ -161,7 +161,7 @@ export async function relayrPostBundle(transactions) {
 
 // Send the single prepaid payment that funds execution on every chain. Caller ensures the wallet is on
 // payment.chain. Returns the payment tx hash.
-export async function relayrPay(payment, expectedAccount) {
+export async function relayrPay(payment, expectedAccount, onSubmitted) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var chainId = Number(payment && payment.chain);
   if (!Number.isSafeInteger(chainId) || !CHAINS[chainId]) throw new Error('Relayr returned an unsupported payment chain.');
@@ -189,7 +189,19 @@ export async function relayrPay(payment, expectedAccount) {
     data: calldata,
     gas: gas,
   });
-  var receipt = await pub.waitForTransactionReceipt({ hash: hash });
+  if (onSubmitted) { try { onSubmitted(hash); } catch (_) {} }
+  var receipt;
+  try {
+    receipt = await waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
+  } catch (cause) {
+    var submitted = new Error('Relayr payment ' + hash + ' was submitted, but confirmation tracking is temporarily unavailable. Do not pay again; resume the saved bundle instead.');
+    submitted.name = 'RelayrPaymentSubmittedError';
+    submitted.code = 'RELAYR_PAYMENT_SUBMITTED';
+    submitted.hash = hash;
+    submitted.chainId = chainId;
+    submitted.cause = cause;
+    throw submitted;
+  }
   if (receipt && receipt.status && receipt.status !== 'success') throw new Error('Relayr payment reverted onchain.');
   return hash;
 }
@@ -229,7 +241,7 @@ function relayrExecutionError(message, code, uuid, records, retryable) {
 }
 
 export function relayrErrorIsUncertain(error) {
-  return !!(error && error.code === 'RELAYR_TIMEOUT');
+  return !!(error && (error.code === 'RELAYR_TIMEOUT' || error.code === 'RELAYR_PAYMENT_SUBMITTED'));
 }
 
 // Persist only the small, non-sensitive receipt needed to resume status checks. In particular, never put

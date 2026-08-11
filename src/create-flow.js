@@ -4075,19 +4075,24 @@ async function runDeploy(state, owner) {
   var cur = await wallet.getChainId();
   if (cur !== pay.chain) { push('Switching wallet to ' + chainName(pay.chain) + '…'); await switchChain(pay.chain); }
   push('Pay once on ' + chainName(pay.chain) + ' (~' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains — confirm in wallet…');
-  var payHash = await relayrPay(pay, signer);
-  push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');
-  // Relayr's per-tx records don't carry a chain field, but they come back in submission order — map by
-  // index to the chains we deployed, and render a friendly per-chain checklist (see renderDeploy).
-  state.deployChains = plans.map(function (p) { return p.chainId; });
-  var finalRelayrTxs = await monitorCreateRelayr(state, {
+  var paidSession = {
     bundleUuid: quote.bundle_uuid,
-    paymentHash: payHash,
+    paymentHash: null,
     paymentChainId: Number(pay.chain),
     expectedCount: plans.length,
     chains: plans.map(function (p) { return { id: p.chainId, name: chainName(p.chainId) }; }),
     records: [],
-  }, false);
+  };
+  var payHash = await relayrPay(pay, signer, function (hash) {
+    paidSession.paymentHash = hash;
+    state._relayrPending = saveRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession) || paidSession;
+  });
+  paidSession.paymentHash = payHash;
+  push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');
+  // Relayr's per-tx records don't carry a chain field, but they come back in submission order — map by
+  // index to the chains we deployed, and render a friendly per-chain checklist (see renderDeploy).
+  state.deployChains = plans.map(function (p) { return p.chainId; });
+  var finalRelayrTxs = await monitorCreateRelayr(state, paidSession, false);
   push('Reading the new project…');
   await captureDeployed(state, plans[0].chainId, relayrDestinationHash(finalRelayrTxs[0]));
 }

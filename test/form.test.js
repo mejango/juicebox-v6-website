@@ -31,7 +31,9 @@ vi.mock('../src/wallet.js', () => ({
 const transactionReview = vi.hoisted(() => vi.fn());
 vi.mock('../src/component-base.js', () => ({
   confirmTransactionModal: transactionReview,
+  shouldKeepSubmittedTransactionPending: (hash, error) => !!hash && !error?.onchainRevert,
   truncAddr: value => `${String(value).slice(0, 6)}…${String(value).slice(-4)}`,
+  waitForTrackedTransactionReceipt: (client, hash) => client.waitForTransactionReceipt({ hash }),
 }));
 
 const chainState = vi.hoisted(() => ({ setCurrent: vi.fn(), setRpc: vi.fn() }));
@@ -203,6 +205,11 @@ describe('generic ABI function form', () => {
     click(transact);
     await vi.waitFor(() => expect(form.querySelector('.error-box').textContent).toMatch(/reverted onchain/i));
     expect(form.querySelector('.fn-output').textContent).not.toMatch(/Confirmed in block 124/);
+
+    state.client.waitForTransactionReceipt.mockRejectedValue(new Error('Invalid RPC parameters'));
+    click(transact);
+    await vi.waitFor(() => expect(form.querySelector('.fn-output').textContent).toMatch(/confirmation tracking is temporarily unavailable/i));
+    expect(form.querySelector('.error-box')).toBeNull();
   });
 
   it('simulates without sending and exposes custom RPC selection', async () => {
