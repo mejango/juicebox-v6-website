@@ -243,4 +243,13 @@ describe('edit-project modal wiring (source contract)', () => {
     expect(fn).toMatch(/loadLiveProjectMetadata\(/);
     expect(fn).not.toMatch(/customProperties/);
   });
+
+  it('tracks a one-chain metadata write through the resilient receipt poll', () => {
+    const dispatcher = discoverSrc.slice(
+      discoverSrc.indexOf('async function runRelayrAcrossChains'),
+      discoverSrc.indexOf('// The metadata-edit form\'s managed keys'),
+    );
+    expect(dispatcher).toMatch(/waitForTrackedTransactionReceipt\(directClient, directHash, directWallet, direct\.cid\)/);
+    expect(dispatcher).not.toMatch(/directClient\.waitForTransactionReceipt/);
+  });
 });

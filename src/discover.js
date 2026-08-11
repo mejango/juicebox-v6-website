@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { quotedOutputFloor } from './slippage.js';
@@ -10402,7 +10402,10 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
       gas: directGas,
     });
     setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
-    var directReceipt = await directClient.waitForTransactionReceipt({ hash: directHash });
+    // Use the same dual-source receipt poll as the shared transaction boundary. Some wallet/public-RPC
+    // combinations reject viem's watcher after the transaction has already landed, which used to turn a
+    // successful one-chain management action into an "Invalid parameters" error in the modal.
+    var directReceipt = await waitForTrackedTransactionReceipt(directClient, directHash, directWallet, direct.cid);
     if (!directReceipt || directReceipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
     setStatus('Confirmed in block ' + directReceipt.blockNumber + ' | TX: ' + truncAddr(directReceipt.transactionHash), 'success');
     return {
