@@ -62,7 +62,9 @@ function restoreProjectHashFromQuery() {
 function syncProjectPreviewQuery() {
   try {
     var url = new URL(location.href);
-    var route = projectRouteFromHash();
+    // Only an HTTP host renders the per-project preview, so mirroring the route there is what the
+    // query is for. Content-addressed gateways have no such server: keep those URLs short instead.
+    var route = currentIpfsCid() ? null : projectRouteFromHash();
     if (route) url.searchParams.set('project', route);
     else url.searchParams.delete('project');
     history.replaceState(null, '', url.pathname + url.search + url.hash);
@@ -76,6 +78,9 @@ function currentIpfsCid() {
   var labels = location.hostname.split('.');
   var ipfsIndex = labels.indexOf('ipfs');
   if (ipfsIndex > 0) return labels.slice(0, ipfsIndex).join('.');
+
+  // eth.sucks / eth.limo serve a CIDv1 subdomain without an `ipfs` label.
+  if (/^ba[a-z2-7]{20,}$/.test(labels[0] || '')) return labels[0];
 
   return '';
 }
