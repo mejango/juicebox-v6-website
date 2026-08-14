@@ -59,6 +59,31 @@ describe('Learn, Build, and Why guides', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${location.origin}${location.pathname}${location.search}#learn-what`);
   });
 
+  it('copies the agent build prompt and confirms it in the button', async () => {
+    renderBuildTab();
+    const button = document.querySelector('.guide-agent-prompt button');
+
+    button.click();
+    await vi.waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
+    const prompt = navigator.clipboard.writeText.mock.calls[0][0];
+    expect(prompt).toContain('Juicebox V6');
+    expect(prompt).toContain('https://github.com/Bananapus/version-6');
+    expect(prompt).toContain('https://github.com/mejango/juicescan');
+    expect(prompt).toContain('do not substitute older Juicebox versions');
+    await vi.waitFor(() => expect(button.textContent).toBe('Build prompt copied'));
+  });
+
+  it('copies the agent build prompt without a clipboard API', () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    document.execCommand = vi.fn();
+    renderBuildTab();
+
+    document.querySelector('.guide-agent-prompt button').click();
+
+    expect(document.execCommand).toHaveBeenCalledWith('copy');
+    expect(document.querySelector('.guide-agent-prompt button').textContent).toBe('Build prompt copied');
+  });
+
   it('tolerates the optional Why surface being absent', () => {
     document.getElementById('tab-why').remove();
     expect(() => renderWhyTab()).not.toThrow();
