@@ -63,13 +63,27 @@ function safeIdentityClient(opts = {}) {
 }
 
 describe('project-handle route lifecycle', () => {
+  it('uses the normalized full-origin preview in the collapsed project-handle card', () => {
+    var source = readFileSync('src/discover.js', 'utf8');
+    var start = source.indexOf('function renderProjectHandleCard');
+    var end = source.indexOf('function openProjectHandleModal', start);
+    var card = source.slice(start, end);
+    expect(card).toContain("projectHandleLocationMessage(window.location.origin, '')");
+    expect(card).toContain('projectHandleLocationMessage(window.location.origin, state.handle || state.stored)');
+    expect(card).not.toContain('Use any .eth name you control');
+    expect(card).not.toContain('No shared namespace is required');
+  });
+
   it('keeps the editor self-service, exact-tuple scoped, single-action, and resumable', () => {
     var source = readFileSync('src/discover.js', 'utf8');
     var start = source.indexOf('function openProjectHandleModal');
     var end = source.indexOf('function appendPendingSafeTxsCard', start);
     var editor = source.slice(start, end);
     expect(editor).toContain("input.placeholder = 'banny.eth'");
-    expect(editor).toContain('Enter any .eth name you control.');
+    expect(editor).toContain('projectHandleLocationMessage(window.location.origin, input.value)');
+    expect(editor).toContain('projectHandleLocationMessage(window.location.origin, normalized.handle)');
+    expect(editor).not.toContain('Enter any .eth name you control.');
+    expect(editor).not.toContain("normalizedHint.textContent = 'URL: @'");
     expect(editor).toContain("var primary = el('button', 'operator-cta operator-edit-submit')");
     expect(editor).not.toContain("textContent = '1. Set ENS record'");
     expect(editor).not.toContain("textContent = '2. Publish handle'");

@@ -94,6 +94,13 @@ export function normalizeProjectHandle(value) {
   return { handle: handle, ensName: ensName, parts: labels.slice().reverse() };
 }
 
+export function projectHandleLocationMessage(origin, value) {
+  var base = String(origin || '').replace(/\/+$/, '');
+  var handle = '<handle>';
+  try { handle = normalizeProjectHandle(value).handle; } catch (_) {}
+  return 'You’ll be able to find your project at ' + base + '/@' + handle;
+}
+
 // The Owner/Operator editor is one resumable flow with two separately reviewed Ethereum transactions. Pick the
 // next transaction exclusively from live ENS state, so reopening the dialog after step one resumes at publish.
 export function projectHandleEditorStep({ resolver, text, expectedText, selectedHandle, publishedHandle, ensQueued, publishQueued }) {

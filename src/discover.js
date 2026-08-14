@@ -26,7 +26,7 @@ import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPaye
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
 import { contractGasWithHeadroom } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
-import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
+import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationMessage, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
@@ -15257,7 +15257,7 @@ function renderProjectHandleCard(project) {
   var card = el('div', 'detail-card project-handle-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Project handle'; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro');
-  intro.textContent = 'Use any .eth name you control, such as banny.eth, as this exact project deployment’s verified @handle. No shared namespace is required.';
+  intro.textContent = projectHandleLocationMessage(window.location.origin, '');
   card.appendChild(intro);
   var body = el('div'); body.appendChild(skel('100%', '44px')); card.appendChild(body);
   var actions = el('div', 'project-handle-actions');
@@ -15270,6 +15270,7 @@ function renderProjectHandleCard(project) {
     readProjectHandleState(project).then(function (next) {
       if (!body.isConnected) return;
       state = next; body.innerHTML = ''; setBtn.disabled = false;
+      intro.textContent = projectHandleLocationMessage(window.location.origin, state.handle || state.stored);
       var row = el('div', 'powers-row');
       var head = el('div', 'powers-head');
       var label = el('span', 'powers-label');
@@ -15323,7 +15324,6 @@ function openProjectHandleModal(project, initialState, onSaved) {
   var content = el('div', 'modal-body operator-edit project-handle-modal');
   content.appendChild(operatorGateNode(authority.kind, authority.address, 'for publishing this project handle on Ethereum.', target.chainId));
   var scope = el('div', 'operator-edit-across');
-  scope.textContent = 'Enter any .eth name you control. This flow writes ' + PROJECT_HANDLE_TEXT_KEY + ' = ' + initialState.expectedText + ' for exactly ' + chainNameOf(target.chainId) + ' #' + target.projectId + ', then the live project ' + authority.kind + ' publishes that same name in JBProjectHandles. The ENS-authorized account and project authority may be different; the single button always resumes at the next required transaction.';
   content.appendChild(scope);
 
   // A Safe authority discovered on the project chain may not exist at the same address on Ethereum yet. Surface
@@ -15390,6 +15390,7 @@ function openProjectHandleModal(project, initialState, onSaved) {
   var label = el('div', 'operator-edit-label'); label.style.marginTop = '12px'; label.textContent = 'Your .eth name'; content.appendChild(label);
   var input = el('input', 'operator-edit-jwt'); input.type = 'text'; input.placeholder = 'banny.eth';
   input.value = (draft && draft.handle) || initialState.handle || initialState.stored || '';
+  scope.textContent = projectHandleLocationMessage(window.location.origin, input.value);
   content.appendChild(input);
   var normalizedHint = el('div', 'operator-edit-cur'); content.appendChild(normalizedHint);
 
@@ -15473,6 +15474,7 @@ function openProjectHandleModal(project, initialState, onSaved) {
     var normalized;
     try { normalized = normalizeProjectHandle(input.value); }
     catch (error) {
+      scope.textContent = projectHandleLocationMessage(window.location.origin, input.value);
       normalizedHint.textContent = error.message || String(error); recordStatus.textContent = '';
       primary.textContent = 'Continue'; primary.disabled = true; primary.dataset.projectHandleStep = ''; return null;
     }
@@ -15480,7 +15482,8 @@ function openProjectHandleModal(project, initialState, onSaved) {
     var publishQueuedForSelected = publishQueuedHandle === normalized.handle;
     input.disabled = busy || ensQueuedForSelected || publishQueuedForSelected;
     saveDraft(normalized.handle);
-    normalizedHint.textContent = 'URL: @' + normalized.handle + ' · ENS: ' + normalized.ensName;
+    scope.textContent = projectHandleLocationMessage(window.location.origin, normalized.handle);
+    normalizedHint.textContent = '';
     manager.href = 'https://app.ens.domains/' + encodeURIComponent(normalized.ensName);
     recordStatus.textContent = 'Checking the exact ENS resolver…';
     try {

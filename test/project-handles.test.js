@@ -15,6 +15,7 @@ import {
   parseProjectHandleRoute,
   parseProjectHandleText,
   projectHandleEditorStep,
+  projectHandleLocationMessage,
   PROJECT_HANDLE_TEXT_KEY,
   projectHandlesAbi,
   readExactEnsController,
@@ -44,6 +45,18 @@ describe('JBProjectHandles helpers', () => {
       parts: ['juicebox', 'design'],
     });
     expect(PROJECT_HANDLE_TEXT_KEY).toBe('juicebox');
+  });
+
+  it('describes the public project URL with the normalized current or draft handle', () => {
+    expect(projectHandleLocationMessage('https://juicescan.io', '@Design.Juicebox.eth')).toBe(
+      'You’ll be able to find your project at https://juicescan.io/@design.juicebox',
+    );
+    expect(projectHandleLocationMessage('https://juicescan.io/', 'banny.eth')).toBe(
+      'You’ll be able to find your project at https://juicescan.io/@banny',
+    );
+    expect(projectHandleLocationMessage('https://juicescan.io', '')).toBe(
+      'You’ll be able to find your project at https://juicescan.io/@<handle>',
+    );
   });
 
   it('rejects malformed or ambiguous ENS names', () => {
