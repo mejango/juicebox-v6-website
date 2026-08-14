@@ -214,10 +214,17 @@ describe('production app entry point', () => {
     useSection.querySelector('.fn-section-header').click();
     expect(useSection.querySelector('.function-form')).not.toBeNull();
 
+    location.hash = '#base:6';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(new URL(location.href).searchParams.get('project')).toBe('base:6');
+    expect(entry.applyDiscoverRoute).toHaveBeenCalledWith('base:6');
+
     document.querySelector('.tab[data-tab="data"]').click();
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(location.hash).toBe('#data');
+    expect(new URL(location.href).searchParams.has('project')).toBe(false);
     expect(document.getElementById('tab-data').classList.contains('active')).toBe(true);
+    entry.applyDiscoverRoute.mockClear();
 
     location.hash = '#account/0x1111111111111111111111111111111111111111';
     window.dispatchEvent(new HashChangeEvent('hashchange'));

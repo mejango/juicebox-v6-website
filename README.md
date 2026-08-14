@@ -23,6 +23,11 @@ npm run check        # production dependency audit + every deterministic gate
 
 `npm run serve` serves the existing `dist/` without rebuilding it. Set `PORT` to override its default port; Playwright does this automatically so its isolated test server remains on port 4181.
 
+Project URLs mirror their hash route into `?project=<chain>:<id>`. The bundle still works unchanged on
+IPFS; when it is served by `npm run serve`, that crawler-visible query lets the lightweight static server
+add a project-specific link card (logo, name, slogan, balance, and payment count). The project data remains
+read-only Bendystraw/IPFS data and no transaction path moves server-side.
+
 ## Architecture
 
 Vanilla ES modules, no framework, bundled with esbuild. State lives in plain objects; views are built with a tiny `el()` DOM helper and re-rendered on change. The whole app is one IIFE in `dist/app.js`.

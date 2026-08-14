@@ -42,6 +42,33 @@ function redirectBlockingPathGateway() {
 
 var REDIRECTING_FROM_BLOCKING_GATEWAY = redirectBlockingPathGateway();
 
+// Hash fragments never reach link-preview crawlers. Mirror a project route in
+// the query string so a copied URL remains static-IPFS compatible in browsers
+// while an HTTP host can render project-specific Open Graph metadata.
+function projectRouteFromHash() {
+  var raw = (location.hash || '').replace(/^#\/?/, '').split('/')[0];
+  return /^([a-z]+|\d+):[1-9]\d*$/i.test(raw) ? raw : null;
+}
+
+function restoreProjectHashFromQuery() {
+  if (location.hash) return;
+  try {
+    var route = new URL(location.href).searchParams.get('project');
+    if (!/^([a-z]+|\d+):[1-9]\d*$/i.test(route || '')) return;
+    history.replaceState(null, '', location.pathname + location.search + '#' + route);
+  } catch (_) {}
+}
+
+function syncProjectPreviewQuery() {
+  try {
+    var url = new URL(location.href);
+    var route = projectRouteFromHash();
+    if (route) url.searchParams.set('project', route);
+    else url.searchParams.delete('project');
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
+  } catch (_) {}
+}
+
 function currentIpfsCid() {
   var pathMatch = /^\/ipfs\/([^/?#]+)/.exec(location.pathname);
   if (pathMatch) return pathMatch[1];
@@ -436,6 +463,7 @@ function applyHash() {
 }
 
 function onHashChange() {
+  syncProjectPreviewQuery();
   // Programmatic hash updates (card open, detail tab, back-to-grid) set this flag so we don't re-render.
   if (window.__suppressHash) { window.__suppressHash = false; return; }
   applyHash();
@@ -1229,6 +1257,8 @@ function buildTransactionSection(getForm) {
 // --- Init ---
 
 function init() {
+  restoreProjectHashFromQuery();
+  syncProjectPreviewQuery();
   applySavedFont(); // apply the saved monospace font before first paint to avoid a flash
   updateFooterIpfsCid();
   mountFontSelector();
