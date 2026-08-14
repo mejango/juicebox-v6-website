@@ -13,6 +13,7 @@
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData, decodeFunctionData, decodeFunctionResult, keccak256, stringToHex } from 'viem';
 import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR } from './component-base.js';
 import { CHAINS, chainList, isTestnetChain } from './chain.js';
+import { contractGasWithinCap } from './gas.js';
 
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
 function cs(a) { try { return checksumAddress(a); } catch (_) { return a; } }
@@ -388,9 +389,12 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
   }
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var fees = await feeOverrides(chainId);
+  // The cap above bounds the simulation, not the cost: sending 5M gas makes the
+  // wallet reserve ~$14 of mainnet ETH for an execution that costs a fraction.
+  var sendGas = await contractGasWithinCap(pub, Object.assign({}, params, { account: account }), gas);
   if (reverify) await reverify();
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-  var hash = await wallet.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: gas }, fees));
+  var hash = await wallet.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees));
   try {
     var rcpt = await pub.waitForTransactionReceipt({ hash: hash });
     if (!rcpt) throw new Error('Receipt unavailable.');

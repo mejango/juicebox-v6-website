@@ -24,7 +24,7 @@ import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaT
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
-import { contractGasWithHeadroom } from './gas.js';
+import { contractGasWithHeadroom, gasWithinCap } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
@@ -11340,6 +11340,9 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
       await confirmOpts.reverify();
       if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     }
+    var directSendGas = await gasWithinCap(directClient, {
+      account: account, to: direct.to, data: direct.data, value: 0n,
+    }, directGas);
     setStatus('Awaiting wallet confirmation…', 'pending');
     var directHash = await directWallet.sendTransaction({
       account: account,
@@ -11347,7 +11350,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
       to: direct.to,
       data: direct.data,
       value: 0n,
-      gas: directGas,
+      gas: directSendGas,
     });
     setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
     // Use the same dual-source receipt poll as the shared transaction boundary. Some wallet/public-RPC

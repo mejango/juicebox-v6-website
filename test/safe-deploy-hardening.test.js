@@ -350,9 +350,11 @@ describe('same-address Safe deployment governance hardening', () => {
       functionName: 'createProxyWithNonce',
       args: [SINGLETON, creation().initializer, 42n],
     });
+    // The 5M cap bounds the simulation above. Sending it would make the wallet
+    // reserve cap * maxFeePerGas, so the send carries the measured 2x estimate.
     expect(deployState.wallet.writeContract).toHaveBeenCalledWith(expect.objectContaining({
       address: FACTORY,
-      gas: 5000000n,
+      gas: 200000n,
     }));
     expect(source.request.mock.invocationCallOrder[0])
       .toBeLessThan(deployState.wallet.writeContract.mock.invocationCallOrder[0]);
