@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 const entry = vi.hoisted(() => ({
   account: null,
   applyDiscoverRoute: vi.fn(),
+  cancelDiscoverRoute: vi.fn(),
   applySavedFont: vi.fn(),
   eagerConnect: vi.fn(),
   initSafeApp: vi.fn().mockResolvedValue(false),
@@ -97,6 +98,7 @@ vi.mock('../src/learn-build.js', () => ({
 vi.mock('../src/discover.js', () => ({
   renderDiscoverTab: entry.renderDiscoverTab,
   applyDiscoverRoute: entry.applyDiscoverRoute,
+  cancelDiscoverRoute: entry.cancelDiscoverRoute,
   renderAdminTab: entry.renderAdminTab,
   activeProjectForWallet: () => null,
   classifyAccountQuery: query => /^0x[0-9a-fA-F]{40}$/.test(String(query || '').trim())
@@ -219,11 +221,24 @@ describe('production app entry point', () => {
     expect(new URL(location.href).searchParams.get('project')).toBe('base:6');
     expect(entry.applyDiscoverRoute).toHaveBeenCalledWith('base:6');
 
+    location.hash = '#@design.juicebox/owner';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(new URL(location.href).searchParams.get('project')).toBe('@design.juicebox');
+    expect(entry.applyDiscoverRoute).toHaveBeenCalledWith('@design.juicebox/owner');
+
+    entry.applyDiscoverRoute.mockClear();
+    const restored = new Event('pageshow');
+    Object.defineProperty(restored, 'persisted', { value: true });
+    window.dispatchEvent(restored);
+    expect(entry.applyDiscoverRoute).toHaveBeenCalledWith('@design.juicebox/owner');
+
+    entry.cancelDiscoverRoute.mockClear();
     document.querySelector('.tab[data-tab="data"]').click();
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(location.hash).toBe('#data');
     expect(new URL(location.href).searchParams.has('project')).toBe(false);
     expect(document.getElementById('tab-data').classList.contains('active')).toBe(true);
+    expect(entry.cancelDiscoverRoute).toHaveBeenCalledTimes(1);
     entry.applyDiscoverRoute.mockClear();
 
     location.hash = '#account/0x1111111111111111111111111111111111111111';

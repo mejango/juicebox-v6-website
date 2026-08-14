@@ -11,9 +11,9 @@ import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
-import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
+import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -24,8 +24,9 @@ import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaT
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
-import { contractGasWithHeadroom, transactionGasWithHeadroom } from './gas.js';
+import { contractGasWithHeadroom } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
+import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
@@ -81,11 +82,12 @@ export function setDiscoverNetwork(mode) {
     setBendystrawNetwork(mode);
     return;
   }
+  cancelDiscoverRoute();
   DISCOVER_NETWORK = mode;
   try { localStorage.setItem('jb-network', mode); } catch (_) {}
   DISCOVER_CHAINS = mode === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
   setBendystrawNetwork(mode);
-  _groups = null; _cache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {}; _preferredProjectMetadataCache = {};
+  invalidateGroupCache(); _cache = {}; _operatorCache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {}; _preferredProjectMetadataCache = {};
   _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _instanceProvenanceCache = {}; _activeDetail = null;
   // Only discard a project route from the other network. Top-level routes such as #data must stay put.
   if (networkModeFromHash()) location.hash = '';
@@ -1709,11 +1711,13 @@ function renderShopTab(project, shopState, cart, initialSubTab) {
     if (!built[name]) built[name] = builders[name]();
     content.innerHTML = ''; content.appendChild(built[name]);
     Array.prototype.forEach.call(subRow.querySelectorAll('.owners-subtab'), function (b) { b.classList.toggle('active', b.textContent === name); });
-    if (_activeDetail && _activeDetail.current === 'Shop') { _activeDetail.subtab = name; routerSetHash(projectHash(project, 'Shop', name)); }
+    if (_activeDetail && _activeDetail.current === 'Shop') _activeDetail.subtab = name;
   }
   order.forEach(function (name) {
     var btn = document.createElement('button'); btn.className = 'owners-subtab'; btn.textContent = name;
-    btn.addEventListener('click', function () { show(name); });
+    btn.addEventListener('click', function () {
+      navigateProjectSection(project, 'Shop', name, function () { show(name); });
+    });
     subRow.appendChild(btn);
   });
   section.appendChild(subRow); section.appendChild(content);
@@ -2551,7 +2555,7 @@ function openAddTierModal(project, shop) {
     if (progress.failed) {
       setStatus('Relayr confirmed ' + progress.confirmed + '/' + progress.total + ' chains and reported ' + progress.failed + ' failed. Nothing was resubmitted.', 'error');
     } else {
-      setStatus('Relayr has not finished yet — ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (pendingSession.persisted === false ? 'Keep this window open and copy the bundle ID; the receipt could not be saved.' : 'Your paid request is saved; use “Check Relayr status” instead of submitting again.'), 'pending');
+      setStatus('Relayr reports ' + progress.confirmed + '/' + progress.total + ' complete; exact onchain verification is still pending. ' + (pendingSession.persisted === false ? 'Keep this window open and copy the bundle ID; the receipt could not be saved.' : 'Your paid request is saved; use “Check Relayr status” instead of submitting again.'), 'pending');
     }
     renderPendingSession(pendingSession, false);
     return true;
@@ -2582,8 +2586,10 @@ function openAddTierModal(project, shop) {
     relayrPoll(pendingSession.bundleUuid, function (records) {
       rememberPendingSession(pendingSession, records);
       var progress = pendingProgress(pendingSession);
-      setStatus('Relaying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (pendingSession.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'This paid request is saved.'), 'pending');
-    }, 2500, timeoutMs || 60 * 1000).then(function (records) {
+      setStatus('Relayr reports ' + progress.confirmed + '/' + progress.total + ' complete; exact onchain verification is still pending. ' + (pendingSession.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'This paid request is saved.'), 'pending');
+    }, 2500, timeoutMs || 60 * 1000, pendingSession.expectedCount, pendingSession.expectedTransactions).then(async function (records) {
+      await verifyRelayrDestinationRecords(pendingSession.expectedTransactions, records);
+      await verifyPersistedRelayrHandlePostconditions(pendingSession.expectedTransactions, records);
       pendingSession.records = records;
       finishAddItems(pendingSession);
     }).catch(function (error) {
@@ -2630,7 +2636,7 @@ function openAddTierModal(project, shop) {
   if (pendingSession) {
     renderPendingSession(pendingSession, false);
     var restored = pendingProgress(pendingSession);
-    setStatus('A paid Relayr request is still saved — ' + restored.confirmed + '/' + restored.total + ' chains confirmed. Checking it now…', 'pending');
+    setStatus('A paid Relayr request is still saved — Relayr reports ' + restored.confirmed + '/' + restored.total + ' complete. Verifying it onchain now…', 'pending');
     setTimeout(function () { if (content.isConnected) checkPendingRelayr(15 * 1000); }, 0);
   }
 }
@@ -6291,45 +6297,271 @@ export function ensAddressOf(name) {
 }
 
 var _operatorCache = {};
+var PROJECT_OPERATOR_INDEX_LIMIT = 250;
 function addressOrNull(address) {
   if (!address || String(address).toLowerCase() === ZERO_ADDRESS.toLowerCase()) return null;
   return address;
 }
 
-async function bendystrawRevnetOperatorOf(projectId, chainId) {
-  // The revnet operator = the permissionHolder flagged `isRevnetOperator`. Bendystraw's V6 reindex sets this
-  // flag (the v6-isrevnet-revowner PR), so filter on it directly — no REVOwner-address lookup needed.
-  //
-  // Bendystraw can return MORE THAN ONE flagged row: when REVOwner.setOperatorOf reassigns the operator, the
-  // indexer currently leaves `isRevnetOperator: true` on the prior operator (its `permissions` array is
-  // emptied, but the flag is stale). Taking `items[0]` blindly surfaces whichever the indexer returns first —
-  // for BAN (project 4 / Sepolia) that's the old Sphinx Safe with an empty permission set, not team.banny.eth.
-  // Disambiguate using authoritative per-row data: the live operator is the flagged holder that still HOLDS
-  // permissions. The prior operator's row carries `permissions: []`. Once the indexer clears the stale flag
-  // this filter collapses to a single row and is a no-op.
-  var data = await fetchBendystrawCollectionPages(BENDYSTRAW_PROJECT_OPERATOR_QUERY, 'permissionHolders', {
+async function bendystrawProjectHandleOperatorRows(projectId, chainId) {
+  var revOwner = getAddress('REVOwner', chainId);
+  if (!revOwner) return [];
+  var data = await fetchBendystrawCollectionPages(BENDYSTRAW_PROJECT_HANDLE_OPERATOR_QUERY, 'permissionHolders', {
+    account: revOwner,
     chainId: Number(chainId),
     projectId: Number(projectId),
     version: BENDYSTRAW_VERSION,
-  }, 250);
-  var rows = data.items || [];
-  var live = rows.filter(function (r) { return r && r.permissions && r.permissions.length > 0; });
-  var pick = (live.length ? live[0] : rows[0]) || null;
-  return addressOrNull(pick && pick.operator);
+  }, 250, PROJECT_OPERATOR_INDEX_LIMIT);
+  return data.items || [];
 }
 
-function revnetOperatorOf(projectId, chainId) {
+// Handle routing cannot trust an indexer marker or its first row. Candidates are already scoped to the canonical
+// REVOwner account; prefer permission-bearing rows, dedupe them, and ask REVOwner which address is actually live.
+export async function liveRevnetOperatorFromRows(rows, isOperatorOf, options) {
+  var shouldContinue = options && typeof options.shouldContinue === 'function' ? options.shouldContinue : function () { return true; };
+  function checkContinue() {
+    if (shouldContinue()) return;
+    var error = new Error('Project-handle route changed while indexed operators were being checked.');
+    error.code = 'project-handle-route-cancelled';
+    throw error;
+  }
+  var preferred = (rows || []).filter(function (row) { return row && row.permissions && row.permissions.length; });
+  var ordered = preferred.concat((rows || []).filter(function (row) { return preferred.indexOf(row) === -1; }));
+  var seen = {}, live = [];
+  for (var i = 0; i < ordered.length && i < 128; i++) {
+    checkContinue();
+    var candidate = addressOrNull(ordered[i] && ordered[i].operator);
+    var key = candidate && candidate.toLowerCase();
+    if (!candidate || !isAddr(candidate) || seen[key]) continue;
+    seen[key] = true;
+    try { if (await isOperatorOf(candidate)) live.push(candidate); }
+    catch (error) { if (error && error.code === 'project-handle-route-cancelled') throw error; }
+    checkContinue();
+  }
+  if (live.length > 1) throw new Error('REVOwner reported more than one current operator for this revnet.');
+  return live[0] || null;
+}
+
+var JB_PERMISSIONS_DEPLOYMENT_BLOCK = {
+  1: 25327931n, 10: 152994030n, 8453: 47398751n, 42161: 473987853n,
+  11155111: 11070525n, 11155420: 44892020n, 84532: 42909144n, 421614: 277723887n,
+};
+var PROJECT_HANDLE_HISTORY_MAX_REQUESTS = 64;
+var PROJECT_HANDLE_HISTORY_MAX_LOGS = 512;
+var PROJECT_HANDLE_HISTORY_MAX_CANDIDATES = 128;
+var OPERATOR_PERMISSIONS_SET_EVENT = {
+  type: 'event', name: 'OperatorPermissionsSet', anonymous: false,
+  inputs: [
+    { name: 'operator', type: 'address', indexed: true },
+    { name: 'account', type: 'address', indexed: true },
+    { name: 'projectId', type: 'uint256', indexed: true },
+    { name: 'permissionIds', type: 'uint8[]', indexed: false },
+    { name: 'packed', type: 'uint256', indexed: false },
+    { name: 'caller', type: 'address', indexed: false },
+  ],
+};
+
+// Permission history is authoritative and cannot be spammed for REVOwner's account by arbitrary Handles callers.
+// It covers the initial operator grant and every later rotation. Scan newest-first, dedupe, and ask the live target
+// REVOwner plus mainnet Handles state to validate each candidate before using it for an alias.
+export async function liveRevnetOperatorFromPermissionHistory(client, chainId, projectId, revOwner, validateCandidate, options) {
+  options = options || {};
+  if (!client || typeof client.getBlockNumber !== 'function' || typeof client.getLogs !== 'function') {
+    throw new Error('The project-chain RPC cannot scan operator permission history.');
+  }
+  var deploymentBlock = options.deploymentBlock == null ? JB_PERMISSIONS_DEPLOYMENT_BLOCK[Number(chainId)] : BigInt(options.deploymentBlock);
+  if (deploymentBlock == null) throw new Error('Invalid operator-history scan bounds.');
+  var permissions = getAddress('JBPermissions', chainId);
+  if (!permissions) throw new Error('JBPermissions is not deployed on the project chain.');
+  var fallbackClient = options.fallbackClient;
+  var maxRequests = Number(options.maxRequests || PROJECT_HANDLE_HISTORY_MAX_REQUESTS);
+  var maxLogs = Number(options.maxLogs || PROJECT_HANDLE_HISTORY_MAX_LOGS);
+  var maxCandidates = Number(options.maxCandidates || PROJECT_HANDLE_HISTORY_MAX_CANDIDATES);
+  var shouldContinue = typeof options.shouldContinue === 'function' ? options.shouldContinue : function () { return true; };
+  var requests = 0, logsSeen = 0, candidatesSeen = 0, seen = {};
+  function cancelled() {
+    var error = new Error('Project-handle route changed while operator history was being checked.');
+    error.code = 'project-handle-route-cancelled';
+    return error;
+  }
+  function checkContinue() { if (!shouldContinue()) throw cancelled(); }
+  function rangeLimited(error) {
+    var message = String(error && (error.shortMessage || error.message) || error || '').toLowerCase();
+    return /block range|range (?:is )?too|too many (?:results|logs)|response size|query returned more|limit exceeded|-32005|timed? ?out|timeout/.test(message);
+  }
+  async function getLatest() {
+    checkContinue();
+    try { return BigInt(await client.getBlockNumber()); }
+    catch (primaryError) {
+      if (!fallbackClient || typeof fallbackClient.getBlockNumber !== 'function') throw primaryError;
+      checkContinue();
+      return BigInt(await fallbackClient.getBlockNumber());
+    }
+  }
+  var latest = await getLatest();
+  if (latest < deploymentBlock) return null;
+  async function queryRange(provider, fromBlock, toBlock) {
+    checkContinue();
+    requests++;
+    if (requests > maxRequests) {
+      var budgetError = new Error('Operator permission history exceeded the bounded RPC request budget.');
+      budgetError.code = 'project-handle-history-budget';
+      throw budgetError;
+    }
+    return provider.getLogs({
+      address: permissions,
+      event: OPERATOR_PERMISSIONS_SET_EVENT,
+      args: { account: revOwner, projectId: BigInt(projectId) },
+      fromBlock: fromBlock,
+      toBlock: toBlock,
+    });
+  }
+  async function fetchRange(fromBlock, toBlock) {
+    var primaryError;
+    try { return await queryRange(client, fromBlock, toBlock); }
+    catch (error) {
+      primaryError = error;
+      if (error && (error.code === 'project-handle-route-cancelled' || error.code === 'project-handle-history-budget')) throw error;
+    }
+    if (fallbackClient && fallbackClient !== client && typeof fallbackClient.getLogs === 'function') {
+      try { return await queryRange(fallbackClient, fromBlock, toBlock); }
+      catch (error) {
+        if (error && (error.code === 'project-handle-route-cancelled' || error.code === 'project-handle-history-budget')) throw error;
+        if (!rangeLimited(primaryError) && !rangeLimited(error)) {
+          throw new Error('Archive RPCs could not read canonical operator permission history.');
+        }
+      }
+    } else if (!rangeLimited(primaryError)) {
+      throw new Error('The archive RPC could not read canonical operator permission history.');
+    }
+    if (fromBlock === toBlock) throw new Error('The archive RPC could not read a bounded operator-history range.');
+    return null;
+  }
+  async function scanRange(fromBlock, toBlock) {
+    checkContinue();
+    var logs = await fetchRange(fromBlock, toBlock);
+    if (logs === null) {
+      var middle = fromBlock + (toBlock - fromBlock) / 2n;
+      // Newest first: current grants normally stop the scan before old history is touched.
+      var recent = await scanRange(middle + 1n, toBlock);
+      if (recent) return recent;
+      return scanRange(fromBlock, middle);
+    }
+    logsSeen += (logs || []).length;
+    if (logsSeen > maxLogs) throw new Error('Operator permission history exceeded the bounded log budget.');
+    var ordered = (logs || []).slice().sort(function (a, b) {
+      var ab = BigInt(a.blockNumber || 0), bb = BigInt(b.blockNumber || 0);
+      if (ab !== bb) return ab > bb ? -1 : 1;
+      return Number(b.logIndex || 0) - Number(a.logIndex || 0);
+    });
+    for (var i = 0; i < ordered.length; i++) {
+      checkContinue();
+      var candidate = addressOrNull(ordered[i] && ordered[i].args && ordered[i].args.operator);
+      var key = candidate && String(candidate).toLowerCase();
+      if (!candidate || !isAddr(candidate) || seen[key]) continue;
+      seen[key] = true;
+      candidatesSeen++;
+      if (candidatesSeen > maxCandidates) throw new Error('Operator permission history exceeded the bounded candidate budget.');
+      try { if (await validateCandidate(candidate)) return candidate; } catch (_) {}
+    }
+    return null;
+  }
+  return scanRange(deploymentBlock, latest);
+}
+
+var _operatorDiscoveryInflight = {};
+var PROJECT_OPERATOR_CACHE_TTL_MS = 15000;
+
+async function isLiveRevnetOperator(chainId, projectId, candidate) {
+  if (!candidate || !isAddr(candidate)) return false;
+  var operatorAbi = [{
+    type: 'function', name: 'isOperatorOf', stateMutability: 'view',
+    inputs: [{ name: 'revnetId', type: 'uint256' }, { name: 'addr', type: 'address' }],
+    outputs: [{ type: 'bool' }],
+  }];
+  return !!(await read(chainId, 'REVOwner', operatorAbi, 'isOperatorOf', [BigInt(projectId), candidate]));
+}
+
+function discoverLiveRevnetOperator(projectId, chainId, revOwner, shouldContinue) {
+  var key = chainId + ':' + projectId + ':' + String(revOwner).toLowerCase();
+  var token = { shouldContinue: typeof shouldContinue === 'function' ? shouldContinue : function () { return true; } };
+  var entry = _operatorDiscoveryInflight[key];
+  if (!entry) {
+    entry = { consumers: new Set([token]), promise: null };
+    _operatorDiscoveryInflight[key] = entry;
+    var anyConsumerActive = function () {
+      var active = false;
+      entry.consumers.forEach(function (consumer) {
+        try { if (consumer.shouldContinue()) active = true; } catch (_) {}
+      });
+      return active;
+    };
+    entry.promise = (async function () {
+      if (!anyConsumerActive()) throw new Error('Project-handle route changed before operator verification.');
+      var rows = [];
+      try { rows = await bendystrawProjectHandleOperatorRows(projectId, chainId); } catch (_) {}
+      if (!anyConsumerActive()) throw new Error('Project-handle route changed before operator verification.');
+      var operator = await liveRevnetOperatorFromRows(rows, function (candidate) {
+        return isLiveRevnetOperator(chainId, projectId, candidate);
+      }, { shouldContinue: anyConsumerActive });
+      // A live indexed candidate is the current operator regardless of what handle it published. Return it now;
+      // the caller performs exactly one reverse-handle check and never walks history because an alias mismatched.
+      if (operator) return operator;
+      var normalClient = clientFor(chainId);
+      var archiveClient = lpLogsClient(chainId) || normalClient;
+      operator = await liveRevnetOperatorFromPermissionHistory(
+        archiveClient, chainId, projectId, revOwner,
+        function (candidate) { return isLiveRevnetOperator(chainId, projectId, candidate); },
+        { fallbackClient: normalClient, shouldContinue: anyConsumerActive },
+      );
+      if (!operator) throw new Error('Could not live-verify that revnet’s current operator.');
+      return operator;
+    })();
+    entry.promise.then(function () { if (_operatorDiscoveryInflight[key] === entry) delete _operatorDiscoveryInflight[key]; },
+      function () { if (_operatorDiscoveryInflight[key] === entry) delete _operatorDiscoveryInflight[key]; });
+  } else {
+    entry.consumers.add(token);
+  }
+  return entry.promise.finally(function () { entry.consumers.delete(token); }).then(function (operator) {
+    if (!token.shouldContinue()) {
+      var error = new Error('Project-handle route changed before operator verification.');
+      error.code = 'project-handle-route-cancelled';
+      throw error;
+    }
+    return operator;
+  });
+}
+
+function setVerifiedOperatorCache(projectId, chainId, operator) {
   var key = chainId + ':' + projectId;
-  if (_operatorCache[key]) return _operatorCache[key];
-  // Bendystraw only — no deploy-script fallback. A FAILED read is not "this revnet has no operator": collapsing
-  // the two to null renders an unread indexer exactly like a genuinely operator-less project, and every
-  // authority-gated surface then behaves as if no operator exists. The rejection propagates so callers can say
-  // which it is. Failures are not cached either, so a transient indexer blip doesn't pin "unavailable" for the
-  // whole session.
-  var p = bendystrawRevnetOperatorOf(projectId, chainId);
-  _operatorCache[key] = p;
-  p.catch(function () { if (_operatorCache[key] === p) delete _operatorCache[key]; });
-  return p;
+  _operatorCache[key] = { candidate: operator, expiresAt: Date.now() + PROJECT_OPERATOR_CACHE_TTL_MS, pending: false };
+}
+
+function invalidateRevnetOperatorCache(projectId, chainId) {
+  delete _operatorCache[chainId + ':' + projectId];
+}
+
+async function revnetOperatorOf(projectId, chainId) {
+  var key = chainId + ':' + projectId;
+  var cached = _operatorCache[key];
+  if (cached && cached.pending) return cached.promise;
+  if (cached && cached.candidate && cached.expiresAt > Date.now()) {
+    try { if (await isLiveRevnetOperator(chainId, projectId, cached.candidate)) return cached.candidate; }
+    catch (_) { throw new Error('Could not live-verify the cached revnet operator.'); }
+    invalidateRevnetOperatorCache(projectId, chainId);
+  }
+  var revOwner = getAddress('REVOwner', chainId);
+  if (!revOwner) throw new Error('REVOwner is not deployed on the project chain.');
+  var p = discoverLiveRevnetOperator(projectId, chainId, revOwner);
+  _operatorCache[key] = { pending: true, promise: p };
+  try {
+    var operator = await p;
+    setVerifiedOperatorCache(projectId, chainId, operator);
+    return operator;
+  } catch (error) {
+    if (_operatorCache[key] && _operatorCache[key].promise === p) delete _operatorCache[key];
+    throw error;
+  }
 }
 
 function projectAuthorityLabel(project) {
@@ -6517,31 +6749,255 @@ function fullAddressNode(address, resolveEns, chainId) {
 }
 
 // ── Safe (Gnosis Safe) detection + details ───────────────────────────────────
-var SAFE_ABI = [
-  { type: 'function', name: 'getThreshold', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'getOwners', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
-];
+var SAFE_SENTINEL_ADDRESS = '0x0000000000000000000000000000000000000001';
+var SAFE_SINGLETON_SLOT = '0x0000000000000000000000000000000000000000000000000000000000000000';
+var SAFE_GUARD_SLOT = '0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8';
+var SAFE_FALLBACK_HANDLER_SLOT = '0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5';
+// Official Safe/SafeL2 singleton deployments supported by the existing queue/deploy code (v1.3.0 + v1.4.1).
+// A contract which merely imitates getOwners/getThreshold is not enough to establish cross-chain identity.
+var SUPPORTED_SAFE_SINGLETONS = {
+  '0xd9db270c1b5e3bd161e8c8503c55ceabee709552': '1.3.0',
+  '0x3e5c63644e683549055b9be8653de26e0b4cd36e': '1.3.0',
+  '0x41675c099f32341bf84bfc5382af534df5c7461a': '1.4.1',
+  '0x29fcb43b46531bca003ddc8fcb67ffe91900c762': '1.4.1',
+};
+var SUPPORTED_SAFE_FALLBACK_HANDLERS = {
+  '0xf48f2b2d2a534e402487b3ee7c18c33aec0fe5e4': true,
+  '0xfd0732dc9e303f09fcef3a7388ad10a83459ec99': true,
+};
+var SUPPORTED_SAFE_PROXY_CODE_HASHES = {
+  // SafeProxyFactory v1.3.0 and v1.4.1 canonical proxy runtime bytecode.
+  '0xb89c1b3bdf2cf8827818646bce9a8f6e372885f8c55e5c07acbd307cb133b000': true,
+  '0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c': true,
+};
 // Safe wallet-app chain prefixes (https://app.safe.global) for the "Open in Safe" link. Best-effort.
 var SAFE_CHAIN_PREFIX = { 1: 'eth', 10: 'oeth', 8453: 'base', 42161: 'arb1', 11155111: 'sep' };
 var SAFE_ICON_SVG = '<svg viewBox="0 0 661.62 661.47" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="m531.98 330.7h-49.42c-14.76 0-26.72 11.96-26.72 26.72v71.73c0 14.76-11.96 26.72-26.72 26.72h-196.61c-14.76 0-26.72 11.96-26.72 26.72v49.42c0 14.76 11.96 26.72 26.72 26.72h207.99c14.76 0 26.55-11.96 26.55-26.72v-39.65c0-14.76 11.96-25.23 26.72-25.23h38.2c14.76 0 26.72-11.96 26.72-26.72v-83.3c0-14.76-11.96-26.41-26.72-26.41zm-326.2-98.18c0-14.76 11.96-26.72 26.72-26.72h196.49c14.76 0 26.72-11.96 26.72-26.72v-49.42c0-14.76-11.96-26.72-26.72-26.72h-207.88c-14.76 0-26.72 11.96-26.72 26.72v38.08c0 14.76-11.96 26.72-26.72 26.72h-38.03c-14.76 0-26.72 11.96-26.72 26.72v83.39c0 14.76 12.01 26.12 26.77 26.12h49.42c14.76 0 26.72-11.96 26.72-26.72l-.05-71.44zm101.77 46.23h47.47c15.47 0 28.02 12.56 28.02 28.02v47.47c0 15.47-12.56 28.02-28.02 28.02h-47.47c-15.47 0-28.02-12.56-28.02-28.02v-47.47c0-15.47 12.56-28.02 28.02-28.02z" fill="currentColor"></path></svg>';
 
 var _safeCache = {};
 // Return { owners, threshold } if `address` is a Safe on `chainId`, else null. Onchain (works any chain).
-export function fetchSafeInfo(address, chainId) {
+export function fetchSafeInfo(address, chainId, clientFactory) {
   if (!address || address === ZERO_ADDRESS || !chainId) return Promise.resolve(null);
   var key = chainId + ':' + address.toLowerCase();
-  if (_safeCache[key]) return _safeCache[key];
+  var cached = _safeCache[key];
+  if (cached && (cached.pending || cached.expiresAt > Date.now())) return cached.promise;
   var p = (async function () {
     try {
-      var client = clientFor(chainId);
-      var threshold = await client.readContract({ address: address, abi: SAFE_ABI, functionName: 'getThreshold', args: [] });
-      var owners = await client.readContract({ address: address, abi: SAFE_ABI, functionName: 'getOwners', args: [] });
-      if (owners && owners.length && BigInt(threshold) > 0n) return { owners: owners, threshold: Number(threshold) };
-      return null;
+      var client = (clientFactory || clientFor)(chainId);
+      return await readRecognizedSafeGovernance(client, address);
     } catch (_) { return null; }
   })();
-  _safeCache[key] = p;
+  var entry = { promise: p, pending: true, expiresAt: 0 };
+  _safeCache[key] = entry;
+  // Governance is mutable. Keep a short display/network TTL and authenticate the canonical proxy again after it;
+  // missing/invalid results are never cached, including during same-address deployment repair.
+  p.then(function (info) {
+    if (_safeCache[key] !== entry) return;
+    if (!info) delete _safeCache[key];
+    else { entry.pending = false; entry.expiresAt = Date.now() + 15000; }
+  }, function () { if (_safeCache[key] === entry) delete _safeCache[key]; });
   return p;
+}
+
+async function fetchSafeInfoFresh(address, chainId, clientFactory) {
+  if (!address || address === ZERO_ADDRESS || !chainId) return null;
+  try { return await readRecognizedSafeGovernance((clientFactory || clientFor)(chainId), address); }
+  catch (_) { return null; }
+}
+
+async function inspectRecognizedSafeDeployment(address, chainId, clientFactory) {
+  var client = (clientFactory || clientFor)(chainId);
+  var code = normalizedAuthorityCode(await codeAt(client, address));
+  if (!code) return { kind: 'missing', info: null };
+  return { kind: 'safe', info: await readRecognizedSafeGovernance(client, address) };
+}
+
+async function requireFreshSafeGovernance(address, chainId, signer) {
+  var info = await fetchSafeInfoFresh(address, chainId);
+  if (!info) throw new Error('The authority on ' + chainNameOf(chainId) + ' is no longer a recognized Safe. Review the action again.');
+  if (signer && !(info.owners || []).some(function (owner) { return sameAddr(owner, signer); })) {
+    throw new Error('Connected wallet is no longer an owner of the Safe on ' + chainNameOf(chainId) + '. Review the action again.');
+  }
+  return info;
+}
+
+// A mainnet JBProjectHandles claim is keyed only by the setter address. An L2 contract address is therefore
+// not automatically the same authority on Ethereum: the same address can be absent or controlled by different
+// owners there. Fail closed unless it is an EOA on both chains, or a plain Safe with identical governance on
+// both. Guards/modules are deliberately unsupported because matching owner lists would not prove who can act.
+async function readSafeAuthorityIdentity(client, address) {
+  function storageAddress(word) {
+    if (typeof word !== 'string' || !/^0x0{24}[0-9a-f]{40}$/i.test(word)) throw new Error('Could not verify the Safe proxy storage.');
+    return '0x' + word.slice(-40);
+  }
+  // Slot zero and its official implementation are authenticated before any proxy-delegated policy view. Every
+  // delegated call that follows is raw, CCIP-off, gas-capped, and return-data bounded by safe.js.
+  var singletonWord = await client.getStorageAt({ address: address, slot: SAFE_SINGLETON_SLOT });
+  var singleton = storageAddress(singletonWord);
+  var expectedVersion = SUPPORTED_SAFE_SINGLETONS[singleton.toLowerCase()];
+  if (!expectedVersion) throw new Error('The project authority contract does not use a supported official Safe singleton.');
+  var singletonCode = normalizedAuthorityCode(await codeAt(client, singleton));
+  if (!singletonCode) throw new Error('Could not verify the Safe singleton implementation.');
+  var masterCopy = await readSafeMasterCopyBounded(client, address);
+  if (!isAddr(masterCopy) || !sameAddr(masterCopy, singleton)) throw new Error('The Safe proxy masterCopy does not match its singleton storage.');
+  var values = await Promise.all([
+    readSafeUintBounded(client, address, 'getThreshold'),
+    readSafeOwnersBounded(client, address),
+    readSafeModulesBounded(client, address),
+    readSafeVersionBounded(client, address),
+    client.getStorageAt({ address: address, slot: SAFE_GUARD_SLOT }),
+    client.getStorageAt({ address: address, slot: SAFE_FALLBACK_HANDLER_SLOT }),
+  ]);
+  var threshold = Number(values[0]);
+  var rawOwners = values[1] || [];
+  if (rawOwners.length > SAFE_MAX_OWNERS) throw new Error('The Safe has too many owners for project-handle verification.');
+  var owners = rawOwners.map(function (owner) { return String(owner).toLowerCase(); }).sort();
+  var modulePage = values[2] || [];
+  var modules = modulePage[0] || [];
+  var next = modulePage[1];
+  var version = values[3];
+  var guard = storageAddress(values[4]);
+  var fallbackHandler = storageAddress(values[5]);
+  var uniqueOwners = Array.from(new Set(owners));
+  if (!owners.length || uniqueOwners.length !== owners.length || owners.some(function (owner) { return !isAddr(owner) || sameAddr(owner, ZERO_ADDRESS); })
+      || !Number.isSafeInteger(threshold) || threshold < 1 || threshold > owners.length) {
+    throw new Error('The project authority contract is not a supported Safe.');
+  }
+  if (version !== expectedVersion) throw new Error('The Safe singleton VERSION does not match its supported deployment.');
+  if (!sameAddr(guard, ZERO_ADDRESS)) {
+    throw new Error('Project-handle aliases do not support a Safe with a transaction guard.');
+  }
+  if (modules.length || !next || !sameAddr(next, SAFE_SENTINEL_ADDRESS)) {
+    throw new Error('Project-handle aliases do not support a Safe with enabled modules.');
+  }
+  var fallbackCode = null;
+  if (!sameAddr(fallbackHandler, ZERO_ADDRESS)) {
+    if (!SUPPORTED_SAFE_FALLBACK_HANDLERS[fallbackHandler.toLowerCase()]) throw new Error('The Safe uses an unsupported fallback handler.');
+    fallbackCode = normalizedAuthorityCode(await codeAt(client, fallbackHandler));
+    if (!fallbackCode) throw new Error('Could not verify the Safe fallback handler.');
+  }
+  return {
+    owners: owners, threshold: threshold,
+    singleton: singleton.toLowerCase(), singletonCode: String(singletonCode).toLowerCase(), version: version,
+    fallbackHandler: fallbackHandler.toLowerCase(), fallbackCode: fallbackCode && String(fallbackCode).toLowerCase(),
+  };
+}
+
+function codeAt(client, address) {
+  if (client && typeof client.getCode === 'function') return client.getCode({ address: address });
+  if (client && typeof client.getBytecode === 'function') return client.getBytecode({ address: address });
+  throw new Error('The RPC client cannot verify authority bytecode.');
+}
+
+function normalizedAuthorityCode(code) {
+  if (code === undefined || code === '0x') return null;
+  if (typeof code !== 'string' || !/^0x(?:[0-9a-f]{2})+$/i.test(code)) {
+    throw new Error('The RPC returned malformed authority bytecode.');
+  }
+  return code.toLowerCase();
+}
+
+async function readRecognizedSafeGovernance(client, address) {
+  var proxyCode = normalizedAuthorityCode(await codeAt(client, address));
+  if (!proxyCode || !SUPPORTED_SAFE_PROXY_CODE_HASHES[keccak256(proxyCode)]) {
+    throw new Error('The authority is not a supported official Safe proxy.');
+  }
+  var singletonWord = await client.getStorageAt({ address: address, slot: SAFE_SINGLETON_SLOT });
+  if (typeof singletonWord !== 'string' || !/^0x0{24}[0-9a-f]{40}$/i.test(singletonWord)) {
+    throw new Error('Could not verify the Safe proxy storage.');
+  }
+  var singleton = '0x' + singletonWord.slice(-40);
+  var expectedVersion = SUPPORTED_SAFE_SINGLETONS[singleton.toLowerCase()];
+  if (!expectedVersion || !normalizedAuthorityCode(await codeAt(client, singleton))) {
+    throw new Error('The Safe singleton is not a supported deployment.');
+  }
+  var masterCopy = await readSafeMasterCopyBounded(client, address);
+  if (!isAddr(masterCopy) || !sameAddr(masterCopy, singleton)) throw new Error('The Safe masterCopy does not match slot zero.');
+  var values = await Promise.all([
+    readSafeUintBounded(client, address, 'getThreshold'),
+    readSafeOwnersBounded(client, address),
+    readSafeVersionBounded(client, address),
+  ]);
+  var owners = (values[1] || []).map(function (owner) { return String(owner).toLowerCase(); }).sort();
+  var threshold = Number(values[0]);
+  if (values[2] !== expectedVersion || !owners.length || owners.length > SAFE_MAX_OWNERS
+      || new Set(owners).size !== owners.length
+      || owners.some(function (owner) { return !isAddr(owner) || sameAddr(owner, ZERO_ADDRESS); })
+      || !Number.isSafeInteger(threshold) || threshold < 1 || threshold > owners.length) {
+    throw new Error('The Safe returned invalid governance.');
+  }
+  return { owners: owners, threshold: threshold };
+}
+
+export async function inspectProjectHandleAuthorityIdentity(chainId, address, clientFactory) {
+  chainId = Number(chainId);
+  if (chainId === 1) return { kind: 'same-chain', status: 'verified' };
+  clientFactory = clientFactory || clientFor;
+  var sourceClient = clientFactory(chainId);
+  var mainnetClient = clientFactory(1);
+  if (!sourceClient || !mainnetClient) throw new Error('Could not create both authority-verification clients.');
+  var rawCodes, codes;
+  try {
+    rawCodes = await Promise.all([codeAt(sourceClient, address), codeAt(mainnetClient, address)]);
+    codes = rawCodes.map(normalizedAuthorityCode);
+  }
+  catch (_) { throw new Error('Could not verify the project authority on both its project chain and Ethereum.'); }
+  var sourceContract = !!codes[0];
+  var mainnetContract = !!codes[1];
+  if (!sourceContract && !mainnetContract) return { kind: 'eoa', status: 'verified' };
+  if (!sourceContract && mainnetContract) throw new Error('The project authority is an EOA on its project chain but a contract at that address on Ethereum.');
+  if (!SUPPORTED_SAFE_PROXY_CODE_HASHES[keccak256(codes[0])]) {
+    throw new Error('The project authority contract is not a supported official Safe proxy.');
+  }
+  var sourceIdentity;
+  try { sourceIdentity = await readSafeAuthorityIdentity(sourceClient, address); }
+  catch (error) { throw new Error((error && error.message) || 'The project authority is not a supported Safe on its project chain.'); }
+
+  // Nested/contract Safe owners can themselves have chain-specific governance. This narrow alias policy supports
+  // only owner keys which are EOAs on both chains; recursively proving arbitrary smart-account policy is out of scope.
+  var ownerCodes;
+  try {
+    ownerCodes = await Promise.all(sourceIdentity.owners.map(function (owner) {
+      return Promise.all([codeAt(sourceClient, owner), codeAt(mainnetClient, owner)]).then(function (pair) {
+        return pair.map(normalizedAuthorityCode);
+      });
+    }));
+  } catch (_) { throw new Error('Could not verify every Safe owner on both chains.'); }
+  if (ownerCodes.some(function (pair) { return !!pair[0] || !!pair[1]; })) {
+    throw new Error('Project-handle aliases support only Safes whose owners are EOAs on both chains.');
+  }
+
+  // This is the only repairable mismatch. Both getCode calls succeeded, Ethereum is demonstrably empty, and the
+  // project-chain address has already passed the full official/plain-Safe and EOA-owner policy above.
+  if (!mainnetContract) {
+    return { kind: 'safe-missing-mainnet', status: 'safe-missing-mainnet', source: sourceIdentity };
+  }
+  if (!SUPPORTED_SAFE_PROXY_CODE_HASHES[keccak256(codes[1])] || codes[0] !== codes[1]) {
+    throw new Error('The Safe proxy bytecode differs between the project chain and Ethereum.');
+  }
+  var mainnetIdentity;
+  try { mainnetIdentity = await readSafeAuthorityIdentity(mainnetClient, address); }
+  catch (error) { throw new Error((error && error.message) || 'The project authority is not a supported Safe on Ethereum.'); }
+  if (sourceIdentity.threshold !== mainnetIdentity.threshold || sourceIdentity.owners.join(',') !== mainnetIdentity.owners.join(',')) {
+    throw new Error('The Safe at this address has different owners or threshold on Ethereum.');
+  }
+  if (sourceIdentity.singleton !== mainnetIdentity.singleton || sourceIdentity.singletonCode !== mainnetIdentity.singletonCode
+      || sourceIdentity.fallbackHandler !== mainnetIdentity.fallbackHandler || sourceIdentity.fallbackCode !== mainnetIdentity.fallbackCode
+      || sourceIdentity.version !== mainnetIdentity.version) {
+    throw new Error('The Safe at this address uses a different singleton or fallback handler on Ethereum.');
+  }
+  return { kind: 'safe', status: 'verified', source: sourceIdentity, mainnet: mainnetIdentity };
+}
+
+export async function verifyProjectHandleAuthorityIdentity(chainId, address, clientFactory) {
+  var identity = await inspectProjectHandleAuthorityIdentity(chainId, address, clientFactory);
+  if (identity.kind === 'safe-missing-mainnet') {
+    var error = new Error('The project authority is a verified Safe on its project chain but is not deployed at the same address on Ethereum.');
+    error.code = 'safe-missing-mainnet';
+    error.identity = identity;
+    throw error;
+  }
+  return identity;
 }
 // A slot that fills with a small Safe icon (opening the details modal) once we confirm the address is a Safe.
 function safeBadge(address, chainId) {
@@ -6966,6 +7422,7 @@ function fetchProject(id, chainId, onFresh) {
 
 function subscribeProjectRefresh(id, chainId, onFresh, ready) {
   fetchBendystrawProjectRecord(id, chainId, function () {
+    invalidateRevnetOperatorCache(id, chainId);
     Promise.resolve(ready).then(function () {
       // Let the initial render's promise handlers commit their DOM first.
       return new Promise(function (resolve) { setTimeout(resolve, 0); });
@@ -6980,10 +7437,13 @@ var _container = null;
 var _gridWrapper = null;
 var _cache = {}; // "<chainId>-<projectId>" -> projectData
 var _groups = null; // cached buildGroups result
+var _groupsGeneration = 0;
 var _activeDetail = null; // { key, showTab, project, isMobile } for the currently open project detail
 var _projectRefreshTimer = null;
 var _projectRefreshSeq = 0;
 var _groupRefreshTimer = null;
+
+function invalidateGroupCache() { _groups = null; _groupsGeneration++; }
 
 // Header wallet menus live outside the Discover renderer. Expose only the
 // active project's balance metadata rather than leaking the mutable detail
@@ -7014,6 +7474,7 @@ function scheduleActiveProjectRefresh(project) {
     var chains = (active.project.chains || project.chains || []).slice();
     var idByChain = Object.assign({}, active.project.idByChain || project.idByChain || {});
     var urlChainId = active.project._urlChainId || project._urlChainId || project.chainId;
+    var urlHandle = active.project._urlHandle || project._urlHandle || null;
     var urlProjectId;
     try { urlProjectId = Number(pidOn(active.project, urlChainId)); }
     catch (_) { return; }
@@ -7024,6 +7485,7 @@ function scheduleActiveProjectRefresh(project) {
       fresh.idByChain = idByChain;
       fresh.chains = chains.length ? chains : [{ id: urlChainId, name: chainNameOf(urlChainId), projectId: Number(fresh.id) }];
       fresh._urlChainId = urlChainId;
+      if (urlHandle) fresh._urlHandle = urlHandle;
       _cache[urlChainId + '-' + urlProjectId] = fresh;
       showProjectDetail(fresh, tab, true, subtab);
     }).catch(function () {});
@@ -7100,17 +7562,19 @@ function refreshActiveProjectDisplay(fresh) {
 // `suckerGroupId` is point-in-time. If confirmation changes it, rebuild the
 // grid grouping; defer while a detail is open so a background refresh never
 // tears down a transaction form.
-function scheduleProjectGroupRefresh() {
+function scheduleProjectGroupRefresh(generation) {
+  if (generation !== _groupsGeneration) return;
   if (_groupRefreshTimer) return;
   _groupRefreshTimer = setTimeout(function () {
     _groupRefreshTimer = null;
-    _groups = null;
+    if (generation !== _groupsGeneration) return;
+    invalidateGroupCache();
     if (!_activeDetail && _container) renderDiscoverTab();
   }, 100);
 }
 
 function invalidateDiscoverProjects() {
-  _groups = null; _cache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {};
+  invalidateGroupCache(); _cache = {}; _operatorCache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {};
   _preferredProjectMetadataCache = {}; _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _instanceProvenanceCache = {};
   _activeDetail = null;
   if (_container) renderDiscoverTab();
@@ -7145,7 +7609,11 @@ if (typeof window !== 'undefined') {
 
 function ensureGroups() {
   if (_groups) return Promise.resolve(_groups);
-  return buildGroups().then(function (g) { _groups = g; return g; });
+  var generation = _groupsGeneration;
+  return buildGroups(generation).then(function (g) {
+    if (generation === _groupsGeneration) _groups = g;
+    return g;
+  });
 }
 
 export function renderDiscoverTab() {
@@ -7155,12 +7623,208 @@ export function renderDiscoverTab() {
   renderGrid();
 }
 
+var _discoverRouteSeq = 0;
+
+// Top-level navigation calls this when Discover is no longer active so late ENS/indexer/RPC work cannot reopen it.
+export function cancelDiscoverRoute() { _discoverRouteSeq++; }
+
+export function canReuseProjectDetail(active, key) {
+  return !!(active && active.key === key && active.element && active.element.isConnected);
+}
+
+function mountProjectRouteSkeleton() {
+  if (_gridWrapper) _gridWrapper.style.display = 'none';
+  if (_container) {
+    var stale = _container.querySelector('.project-detail');
+    if (stale) stale.remove();
+  }
+  // Once the old detail is detached its controller must not service a same-project route while only the skeleton
+  // is mounted. The numeric load below will install a fresh connected controller.
+  _activeDetail = null;
+  if (!_container) return;
+  _container.appendChild(renderDetailSkeleton());
+}
+
+function renderHandleRouteError(handle, message) {
+  if (!_container) return;
+  if (_gridWrapper) _gridWrapper.style.display = 'none';
+  var stale = _container.querySelector('.project-detail');
+  if (stale) stale.remove();
+  _activeDetail = null;
+  var wrap = el('div', 'project-detail detail-spacious');
+  var back = el('button', 'detail-back'); back.textContent = '←'; back.title = 'Back to projects';
+  back.addEventListener('click', function () { showProjectGrid(false); });
+  wrap.appendChild(back);
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title'); title.textContent = handle ? ('@' + handle) : 'Project handle'; card.appendChild(title);
+  var body = el('div', 'detail-card-body backoffice-intro'); body.textContent = message; card.appendChild(body);
+  wrap.appendChild(card);
+  _container.appendChild(wrap);
+}
+
+function networkForProjectHandleChain(chainId) {
+  if (MAINNET_CHAINS.some(function (chain) { return chain.id === chainId; })) return 'mainnet';
+  if (TESTNET_CHAINS.some(function (chain) { return chain.id === chainId; })) return 'testnet';
+  return null;
+}
+
+// Only the project's effective authority is an authoritative setter: the current NFT owner for a custom
+// project, or the current REVOwner operator for a revnet. Arbitrary addresses can write proposals into
+// JBProjectHandles, but their values must never control routing.
+async function liveProjectHandleAuthorityOf(chainId, projectId, shouldContinue) {
+  var active = typeof shouldContinue === 'function' ? shouldContinue : function () { return true; };
+  if (!active()) throw new Error('Project-handle route changed before authority verification.');
+  var owner = await read(chainId, 'JBProjects', ownerOfAbi, 'ownerOf', [BigInt(projectId)]);
+  if (!active()) throw new Error('Project-handle route changed before authority verification.');
+  if (!owner || owner === ZERO_ADDRESS) throw new Error('That ENS record does not point to a live Juicebox project.');
+  var revOwner = getAddress('REVOwner', chainId);
+  if (revOwner && sameAddr(owner, revOwner)) {
+    var operator = await discoverLiveRevnetOperator(projectId, chainId, revOwner, active);
+    if (!active()) throw new Error('Project-handle route changed before authority verification.');
+    return { address: operator, kind: 'operator' };
+  }
+  return { address: owner, kind: 'owner' };
+}
+
+async function projectHandleAuthorityOf(chainId, projectId, shouldContinue) {
+  var active = typeof shouldContinue === 'function' ? shouldContinue : function () { return true; };
+  var authority = await liveProjectHandleAuthorityOf(chainId, projectId, active);
+  if (!active()) throw new Error('Project-handle route changed before identity verification.');
+  authority.identity = await verifyProjectHandleAuthorityIdentity(chainId, authority.address);
+  if (!active()) throw new Error('Project-handle route changed before identity verification.');
+  return authority;
+}
+
+async function exactEnsProjectRecord(ensName) {
+  return readExactEnsText(clientFor(1), ensName, PROJECT_HANDLE_TEXT_KEY);
+}
+
+// ENS resolvers may authorize the Registry/NameWrapper controller, an approved delegate, or a custom policy.
+// Test the exact reviewed setText call from each narrow candidate instead of assuming ownership is the only path.
+export async function findEnsRecordWriteAuthority(client, candidates, call) {
+  var seen = {};
+  for (var i = 0; i < (candidates || []).length; i++) {
+    var candidate = candidates[i];
+    var key = candidate && String(candidate).toLowerCase();
+    if (!candidate || !isAddr(candidate) || seen[key]) continue;
+    seen[key] = true;
+    try {
+      // The resolver is controlled by the ENS name owner. Keep this authorization probe a raw, gas-capped
+      // eth_call so an OffchainLookup revert cannot trigger Viem CCIP fetches to an attacker-selected URL.
+      var result = await client.request({
+        method: 'eth_call',
+        params: [{ from: candidate, to: call.target, data: call.data, value: '0x0', gas: '0x493e0' }, 'latest'],
+      });
+      if (typeof result !== 'string' || !/^0x[0-9a-f]*$/i.test(result) || result.length > 258) throw new Error('Malformed resolver simulation response.');
+      return candidate;
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Re-run both halves of the ENS write boundary after an open review or Safe-signing delay. Pinning the resolver
+// and text is not enough: the controller can revoke a resolver delegate while leaving both unchanged. The exact
+// raw, capped setText simulation from the reviewed writer is therefore authoritative every time.
+export async function verifyEnsRecordWriteAuthorization(params, readers) {
+  readers = readers || {};
+  var readRecord = readers.record || function (ensName) { return exactEnsProjectRecord(ensName); };
+  var findAuthority = readers.findAuthority || findEnsRecordWriteAuthority;
+  var fresh = await readRecord(params.ensName);
+  if (!fresh || !fresh.resolver || !sameAddr(fresh.resolver, params.resolver)) throw new Error('The ENS resolver changed. Review the transaction again.');
+  if (!params.request || !sameAddr(params.request.target, params.resolver)) throw new Error('The reviewed ENS resolver call changed.');
+  if (fresh.text === params.expectedText) throw new Error('The ENS record is already set; refresh instead of submitting another transaction.');
+  var authorized = await findAuthority(params.client, [params.writeAuthority], params.request);
+  if (!authorized || !sameAddr(authorized, params.writeAuthority)) {
+    throw new Error('The ENS resolver no longer authorizes this account. Review the transaction again.');
+  }
+  return fresh;
+}
+
+async function rawProjectHandleOf(target, authority) {
+  return readProjectHandleBounded(clientFor(1), target.chainId, target.projectId, authority);
+}
+
+async function canonicalProjectHandleOf(target, authority) {
+  return canonicalProjectHandle(await rawProjectHandleOf(target, authority));
+}
+
+// Receipt success is not association success: authority and ENS can change while a wallet transaction is pending.
+// Re-read every leg before telling the user the newly published handle is usable.
+export async function verifyPublishedProjectHandle(target, expectedHandle, expectedText, expectedAuthority, readers) {
+  readers = readers || {};
+  var authority = await (readers.authorityOf
+    ? readers.authorityOf(target)
+    : projectHandleAuthorityOf(target.chainId, target.projectId));
+  if (!authority || !sameAddr(authority.address, expectedAuthority.address) || authority.kind !== expectedAuthority.kind) {
+    throw new Error('The project authority changed before the handle could be verified.');
+  }
+  var record = await (readers.ensRecord
+    ? readers.ensRecord(expectedHandle + '.eth')
+    : exactEnsProjectRecord(expectedHandle + '.eth'));
+  if (!record || !record.resolver || record.text !== expectedText) {
+    throw new Error('The exact ENS record no longer points to this project.');
+  }
+  var rawHandle = await (readers.handleOf
+    ? readers.handleOf(target, authority.address)
+    : rawProjectHandleOf(target, authority.address));
+  var handle = canonicalProjectHandle(rawHandle);
+  if (handle !== expectedHandle) throw new Error('JBProjectHandles did not return the exact canonical handle.');
+  return { authority: authority, record: record, handle: handle };
+}
+
+// Resolve the ENS-controlled direction first, then verify the reverse association on Ethereum mainnet's
+// JBProjectHandles. This avoids trusting an indexer's handle field or scanning every project for a match.
+async function resolveProjectHandleRoute(parsed, shouldContinue) {
+  var active = typeof shouldContinue === 'function' ? shouldContinue : function () { return true; };
+  var ensRecord = await exactEnsProjectRecord(parsed.ensName);
+  if (!active()) throw new Error('Project-handle route changed before ENS verification.');
+  if (!ensRecord.resolver) throw new Error(parsed.ensName + ' does not have an ENS resolver set on its exact registry node.');
+  var target = parseProjectHandleText(ensRecord.text);
+  if (!target) throw new Error(parsed.ensName + ' needs an ENS text record named “' + PROJECT_HANDLE_TEXT_KEY + '” with the value chainId:projectId.');
+  var network = networkForProjectHandleChain(target.chainId);
+  if (!network) throw new Error('That ENS record points to a chain this client does not support.');
+  var authority = await projectHandleAuthorityOf(target.chainId, target.projectId, active);
+  if (!active()) throw new Error('Project-handle route changed before reverse verification.');
+  var verifiedHandle = await canonicalProjectHandleOf(target, authority.address);
+  if (!active()) throw new Error('Project-handle route changed before reverse verification.');
+  if (verifiedHandle !== parsed.handle) {
+    throw new Error('The project’s current ' + authority.kind + ' has not verified this handle in JBProjectHandles.');
+  }
+  var route = slugForChain(target.chainId) + ':' + target.projectId;
+  if (parsed.tab) { route += '/' + parsed.tab; if (parsed.subtab) route += '/' + parsed.subtab; }
+  return { route: route, network: network, authority: authority, target: target };
+}
+
 // Open whatever project route is in the hash (called on load and on back/forward). null → grid.
-export function applyDiscoverRoute(route) {
+export function applyDiscoverRoute(route, routeContext) {
   if (!route) {
-    if (_activeDetail) showProjectGrid(true);
+    cancelDiscoverRoute();
+    if (_activeDetail || (_container && _container.querySelector('.project-detail'))) showProjectGrid(true);
     return;
   }
+  if (String(route).charAt(0) === '@') {
+    var seq = ++_discoverRouteSeq;
+    var parsed;
+    try { parsed = parseProjectHandleRoute(route); }
+    catch (error) { renderHandleRouteError('', error.message || String(error)); return; }
+    if (!parsed) { renderHandleRouteError('', 'This project handle URL is malformed.'); return; }
+    mountProjectRouteSkeleton();
+    resolveProjectHandleRoute(parsed, function () { return seq === _discoverRouteSeq; }).then(function (resolved) {
+      if (seq !== _discoverRouteSeq) return;
+      if (resolved.network !== DISCOVER_NETWORK) setDiscoverNetwork(resolved.network);
+      if (resolved.authority && resolved.authority.kind === 'operator') {
+        setVerifiedOperatorCache(resolved.target.projectId, resolved.target.chainId, resolved.authority.address);
+      }
+      // Load through the exact numeric identity while leaving the verified alias in the address bar. The loaded
+      // project carries the alias so changing tabs keeps producing #@handle[/tab] URLs.
+      applyDiscoverRoute(resolved.route, { handle: parsed.handle, authority: resolved.authority });
+    }).catch(function (error) {
+      if (seq !== _discoverRouteSeq) return;
+      renderHandleRouteError(parsed.handle, errMessage(error, 'Could not resolve this project handle.'));
+    });
+    return;
+  }
+  var seq = ++_discoverRouteSeq;
   var m = /^([a-z0-9]+):(\d+)(?:\/([a-z0-9]+))?(?:\/([a-z0-9]+))?$/i.exec(route);
   if (!m) { showProjectGrid(true); return; }
   // Hide the grid immediately (before the async fetch) so it doesn't flash before the detail loads.
@@ -7172,7 +7836,9 @@ export function applyDiscoverRoute(route) {
   var key = m[1].toLowerCase() + ':' + id;
 
   // Same project already open → just switch the tab (no re-fetch / re-render).
-  if (_activeDetail && _activeDetail.key === key) {
+  if (!(routeContext && routeContext.handle) && canReuseProjectDetail(_activeDetail, key)) {
+    if (routeContext && routeContext.handle) _activeDetail.project._urlHandle = routeContext.handle;
+    else delete _activeDetail.project._urlHandle;
     if (tab) _activeDetail.showTab(tab);
     if (sub && _activeDetail.showSubTab) _activeDetail.showSubTab(sub);
     return;
@@ -7180,43 +7846,100 @@ export function applyDiscoverRoute(route) {
 
   // Show a ghost detail immediately so a direct route load isn't blank during the fetch.
   // showProjectDetail() later removes this `.project-detail` and swaps in the real page.
-  if (_container) {
-    var stale = _container.querySelector('.project-detail');
-    if (stale) stale.remove();
-    _container.appendChild(renderDetailSkeleton());
-  }
+  mountProjectRouteSkeleton();
 
-  ensureGroups().then(function (groups) {
-    var g = null;
-    for (var i = 0; i < groups.length; i++) {
-      if (groups[i].chains.some(function (deployment) { return Number(deployment.id) === Number(chainId) && Number(deployment.projectId) === id; })) { g = groups[i]; break; }
+  var loadedHandleProject = null, pendingHandleEnrichment = null;
+  function applyVerifiedRouteAuthority(project) {
+    return applyVerifiedProjectAuthority(project, routeContext && routeContext.authority, getAddress('REVOwner', chainId));
+  }
+  function applyHandleEnrichment(project, standalone, enriched) {
+    if (!project || !enriched || seq !== _discoverRouteSeq) return;
+    project.chains = standalone.chains;
+    project.idByChain = Object.assign({}, standalone.idByChain);
+    project._transactionScopeConfirmed = true;
+    if (_activeDetail && sameProjectDeployment(_activeDetail.project, project)) {
+      showProjectDetail(project, _activeDetail.current, true, _activeDetail.subtab);
     }
-    if (!g) { showProjectGrid(true); return; }
+  }
+  function loadProjectGroup(g) {
     var urlChain = chainId;
     var fk = urlChain + '-' + id;
     function applyFreshProject(fresh) {
+      if (seq !== _discoverRouteSeq) return;
+      applyVerifiedRouteAuthority(fresh);
       fresh.chains = g.chains;
       delete fresh.idByChain;
       fresh._urlChainId = urlChain;
+      if (routeContext && routeContext.handle) fresh._urlHandle = routeContext.handle;
+      else delete fresh._urlHandle;
       attachProjectChainIds(fresh).then(function () {
+        if (seq !== _discoverRouteSeq) return;
         fresh._transactionScopeConfirmed = true;
         _cache[fk] = fresh;
         refreshActiveProjectDisplay(fresh);
       });
     }
     var p = _cache[fk]
+      && !(routeContext && routeContext.handle)
       ? Promise.resolve(_cache[fk])
-      : fetchProject(id, urlChain).then(function (d) { _cache[fk] = d; return d; });
+      : fetchProject(id, urlChain);
     var shown = p.then(function (project) {
+      if (seq !== _discoverRouteSeq) return null;
+      applyVerifiedRouteAuthority(project);
+      _cache[fk] = project;
       project.chains = g.chains;
       project.idByChain = Object.assign({}, g.idByChain);
       project._urlChainId = urlChain;
+      if (routeContext && routeContext.handle) project._urlHandle = routeContext.handle;
+      else delete project._urlHandle;
       // Resolve the sucker-group-authoritative chains + per-chain ids before rendering so every money-path
       // read/tx targets the right project on each chain (never a coincidental same-id project).
-      return prepareProjectTransactionScope(project).then(function () { showProjectDetail(project, tab, true, sub); });
-    }).catch(function () { showProjectGrid(true); });
+      return prepareProjectTransactionScope(project).then(function () {
+        if (seq !== _discoverRouteSeq) return null;
+        if (routeContext && routeContext.handle) {
+          loadedHandleProject = project;
+          if (pendingHandleEnrichment) applyHandleEnrichment(project, pendingHandleEnrichment.standalone, pendingHandleEnrichment.enriched);
+        }
+        showProjectDetail(project, tab, true, sub);
+        return project;
+      });
+    }).catch(function (error) {
+      if (seq !== _discoverRouteSeq) return;
+      if (routeContext && routeContext.handle) renderHandleRouteError(routeContext.handle, errMessage(error, 'Could not refresh this verified project.'));
+      else showProjectGrid(true);
+    });
     subscribeProjectRefresh(id, urlChain, applyFreshProject, shown);
-  });
+  }
+
+  // ENS + live authority + reverse Handles verification already proved this exact deployment exists. Do not
+  // make that cryptographic route depend on Bendystraw having indexed a project/group row: paint a fail-closed
+  // one-chain scope now, while the ordinary confirmed group discovery may enrich it in the background.
+  if (routeContext && routeContext.handle) {
+    var standalone = verifiedHandleProjectGroup([], chainId, id);
+    loadProjectGroup(standalone);
+    ensureGroups().then(function (groups) {
+      if (seq !== _discoverRouteSeq) return;
+      var enriched = verifiedHandleProjectGroup(groups, chainId, id);
+      if (enriched.key === standalone.key) return;
+      standalone.key = enriched.key;
+      standalone.suckerGroupId = enriched.suckerGroupId;
+      standalone.chains.splice.apply(standalone.chains, [0, standalone.chains.length].concat(enriched.chains));
+      Object.keys(standalone.idByChain).forEach(function (key) { delete standalone.idByChain[key]; });
+      Object.assign(standalone.idByChain, enriched.idByChain);
+      standalone.primary = enriched.primary;
+      if (loadedHandleProject) {
+        applyHandleEnrichment(loadedHandleProject, standalone, enriched);
+      } else pendingHandleEnrichment = { standalone: standalone, enriched: enriched };
+    }).catch(function () {});
+    return;
+  }
+
+  ensureGroups().then(function (groups) {
+    if (seq !== _discoverRouteSeq) return;
+    var g = projectGroupForDeployment(groups, chainId, id);
+    if (!g) { showProjectGrid(true); return; }
+    loadProjectGroup(g);
+  }).catch(function () { if (seq === _discoverRouteSeq) showProjectGrid(true); });
 }
 
 // Pure: classify the primary-search query. A full 0x address or an ENS-looking name surfaces an
@@ -7338,9 +8061,20 @@ function renderGrid() {
     searchEmpty.style.display = searchQuery && pendingCards === 0 && visible === 0 ? '' : 'none';
   }
   searchInput.addEventListener('input', applySearch);
-  // Enter with a pure address / resolved ENS prefers the account hit over the (empty) project filter.
+  // Enter with an explicit @handle opens the verified-handle route. A pure address / resolved ENS otherwise
+  // prefers the account hit over the (empty) project filter.
   searchInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && accountHitTarget) { e.preventDefault(); openAccountHit(); }
+    if (e.key !== 'Enter' || e.isComposing) return;
+    var raw = String(searchInput.value || '').trim();
+    if (raw.charAt(0) === '@') {
+      try {
+        var normalized = normalizeProjectHandle(raw);
+        e.preventDefault();
+        location.hash = '#@' + encodeURIComponent(normalized.handle);
+        return;
+      } catch (_) { /* malformed @ input remains an ordinary text filter */ }
+    }
+    if (accountHitTarget) { e.preventDefault(); openAccountHit(); }
   });
 
   ensureGroups().then(function (groups) {
@@ -7417,6 +8151,56 @@ export function groupProjectDeployments(deployments) {
   return groups;
 }
 
+export function projectGroupForDeployment(groups, chainId, projectId) {
+  chainId = Number(chainId); projectId = Number(projectId);
+  for (var i = 0; i < (groups || []).length; i++) {
+    if ((groups[i].chains || []).some(function (deployment) {
+      return Number(deployment.id) === chainId && Number(deployment.projectId) === projectId;
+    })) return groups[i];
+  }
+  return null;
+}
+
+// A verified handle proves one exact tuple, never sibling-chain identity. This standalone shape is intentionally
+// indistinguishable from groupProjectDeployments' single-chain output so the normal project loader can use it.
+export function verifiedHandleProjectGroup(groups, chainId, projectId) {
+  var found = projectGroupForDeployment(groups, chainId, projectId);
+  if (found) return found;
+  chainId = Number(chainId); projectId = Number(projectId);
+  var deployment = { id: chainId, name: chainNameOf(chainId), projectId: projectId };
+  var idByChain = {}; idByChain[chainId] = projectId;
+  return {
+    key: 'project:' + chainId + ':' + projectId,
+    suckerGroupId: null,
+    chains: [deployment], idByChain: idByChain,
+    primary: deployment, id: projectId,
+  };
+}
+
+export function applyVerifiedProjectAuthority(project, verified, revOwner) {
+  if (!project || !verified) return project;
+  if (verified.kind === 'owner') {
+    if (!project.owner) throw new Error('Could not confirm the current project owner while resolving this handle.');
+    if (!sameAddr(project.owner, verified.address)) throw new Error('The project owner changed while resolving this handle.');
+    project.owner = verified.address;
+    project.isRevnet = false;
+  } else if (verified.kind === 'operator') {
+    if (!revOwner) throw new Error('REVOwner is not deployed on the project chain.');
+    if (project.owner && !sameAddr(project.owner, revOwner)) throw new Error('The project is no longer controlled by REVOwner.');
+    // The project loader performs its own live operator lookup after the alias resolver. Never overwrite a newer
+    // result with the earlier route snapshot: a rotation between those reads invalidates the alias and must render
+    // an error until ENS + handleOf verify again for the new operator.
+    if (project.operatorUnavailable || !project.operator) throw new Error('Could not confirm the current revnet operator while resolving this handle.');
+    if (!sameAddr(project.operator, verified.address)) throw new Error('The revnet operator changed while resolving this handle.');
+    project.owner = revOwner;
+    project.isRevnet = true;
+    project.operatorUnavailable = false;
+  } else {
+    throw new Error('The verified project authority kind is unsupported.');
+  }
+  return project;
+}
+
 // Discover may paint a stored project row immediately, but a cold cache must
 // wait for the live row before deciding omnichain identity. The ordinary
 // project display is allowed to soft-timeout; grouping is not, because a slow
@@ -7428,7 +8212,7 @@ export async function resolveDiscoverIdentityRecord(initial, fresh) {
 // Enumerate projects across every chain. JBProjects.count is only the upper bound: a project NFT can exist
 // before the project has any JBDirectory state. Treat it as live only once controllerOf(projectId) is set,
 // then use Bendystraw's suckerGroupId—not the numeric ID—to identify linked deployments.
-function buildGroups() {
+function buildGroups(generation) {
   return Promise.all(DISCOVER_CHAINS.map(function (c) {
     return read(c.id, 'JBProjects', countAbi, 'count', [])
       .then(function (n) { return { chain: c, count: Number(n) }; })
@@ -7446,7 +8230,7 @@ function buildGroups() {
         var after = fresh && fresh.suckerGroupId || null;
         // Cold grouping below already waits for `fresh`. Only a stored row can
         // have painted an identity that needs a background regroup.
-        if (shown && before !== after) scheduleProjectGroupRefresh();
+        if (shown && before !== after) scheduleProjectGroupRefresh(generation);
       });
       var record = await resolveDiscoverIdentityRecord(
         initial,
@@ -7643,9 +8427,26 @@ function tabSlug(name) { return String(name).toLowerCase().replace(/[^a-z0-9]+/g
 
 function projectHash(project, tabName, subTab) {
   var routeChainId = project._urlChainId == null ? project.chainId : project._urlChainId;
-  var h = '#' + slugForChain(routeChainId) + ':' + pidOn(project, routeChainId).toString();
+  var h = project._urlHandle
+    ? '#@' + encodeURIComponent(project._urlHandle)
+    : ('#' + slugForChain(routeChainId) + ':' + pidOn(project, routeChainId).toString());
   if (tabName) { h += '/' + tabSlug(tabName); if (subTab) h += '/' + tabSlug(subTab); }
   return h;
+}
+
+// A mutable handle must be re-resolved before its requested section is shown. Numeric routes keep the connected
+// detail's fast path; handle routes deliberately go through hashchange → applyDiscoverRoute and its ENS checks.
+export function navigateProjectSection(project, tabName, subTab, applyNumeric) {
+  if (project && project._urlHandle) {
+    var handleHash = projectHash(project, tabName, subTab);
+    if (location.hash === handleHash) applyDiscoverRoute(handleHash.slice(1));
+    else location.hash = handleHash;
+    return false;
+  }
+  if (applyNumeric) applyNumeric();
+  var numericSubTab = subTab === undefined && _activeDetail ? _activeDetail.subtab : subTab;
+  routerSetHash(projectHash(project, tabName, numericSubTab));
+  return true;
 }
 
 function showProjectDetail(project, initialTab, fromRoute, initialSubTab) {
@@ -7851,9 +8652,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     }
   }
   function selectProjectTab(tabName) {
-    showTab(tabName);
-    // A subtabbed section sets _activeDetail.subtab during build; include it so refresh restores both.
-    routerSetHash(projectHash(project, tabName, _activeDetail && _activeDetail.subtab));
+    // A numeric route switches immediately. A handle route waits for ENS/current-authority revalidation.
+    navigateProjectSection(project, tabName, undefined, function () { showTab(tabName); });
   }
   for (var i = 0; i < visibleTabs.length; i++) {
     (function (tabName) {
@@ -7929,7 +8729,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // down and the operator can't be resolved — the actions self-gate on connect.
 
   rightCol.appendChild(tabBar);
-  _activeDetail = { key: detailKey, showTab: showTab, current: startTab, project: project, isMobile: activityAsTab };
+  _activeDetail = { key: detailKey, showTab: showTab, current: startTab, project: project, isMobile: activityAsTab, element: wrap };
   showTab(startTab);
   rightCol.appendChild(contentArea);
   columns.appendChild(rightCol);
@@ -7989,10 +8789,13 @@ function renderPayRuleChangeNotice(project) {
   link.addEventListener('click', function (e) {
     e.preventDefault();
     var tab = project.isRevnet ? 'Terms' : 'Rulesets';
-    if (_activeDetail && _activeDetail.showTab) _activeDetail.showTab(tab);
-    routerSetHash(projectHash(project, tab));
-    var sec = document.querySelector('.project-detail-content');
-    if (sec) sec.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    var immediate = navigateProjectSection(project, tab, null, function () {
+      if (_activeDetail && _activeDetail.showTab) _activeDetail.showTab(tab);
+    });
+    if (immediate) {
+      var sec = document.querySelector('.project-detail-content');
+      if (sec) sec.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
   });
 
   fetchUpcomingRuleChangeInfo(project).then(function (info) {
@@ -8360,19 +9163,19 @@ function renderPayCard(project, cart) {
   // Open the Shop tab (and scroll it into view). Used by the strip's "All →" link.
   function openShopTab() {
     if (!_activeDetail || !_activeDetail.showTab) return;
-    _activeDetail.showTab('Shop');
-    routerSetHash(projectHash(project, 'Shop'));
-    requestAnimationFrame(function () {
-      var sec = document.querySelector('.project-detail-content');
-      if (sec) sec.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    });
+    var immediate = navigateProjectSection(project, 'Shop', null, function () { _activeDetail.showTab('Shop'); });
+    if (immediate) {
+      requestAnimationFrame(function () {
+        var sec = document.querySelector('.project-detail-content');
+        if (sec) sec.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      });
+    }
   }
 
   // Clicking a strip item switches to the Shop tab (without scrolling — the user stays where they are).
   function focusShopTier(id) {
     if (!_activeDetail || !_activeDetail.showTab) return;
-    _activeDetail.showTab('Shop');
-    routerSetHash(projectHash(project, 'Shop'));
+    navigateProjectSection(project, 'Shop', null, function () { _activeDetail.showTab('Shop'); });
   }
 
   // Mini-shop first: if the project has 721 tiers, surface a compact selectable strip atop the Pay card.
@@ -9686,14 +10489,31 @@ function projectChains(project) {
   return chains.map(function (c) { return { id: c.id, name: c.name || chainNameOf(c.id), projectId: Number(pidOn(project, c.id)) }; });
 }
 
+// Project-handle proposals always live in the Ethereum Safe queue, even when the project itself exists only
+// on an L2/testnet. Add one synthetic queue source in that case. It is deliberately marked handle-only: the
+// pending-card loader will ignore ordinary Ethereum Safe transactions and will never infer a nonexistent
+// Ethereum project authority for them.
+export function projectSafeQueueChains(chains) {
+  var planned = (chains || []).map(function (chain) { return Object.assign({}, chain); });
+  if (!planned.some(function (chain) { return Number(chain.id) === 1; })) {
+    planned.push({
+      id: 1, name: 'Ethereum', handleQueueOnly: true,
+      handleQueueTargets: planned.filter(function (chain) {
+        return Number.isSafeInteger(Number(chain.id)) && Number.isSafeInteger(Number(chain.projectId)) && Number(chain.projectId) > 0;
+      }).map(function (chain) { return { chainId: Number(chain.id), projectId: Number(chain.projectId) }; }),
+    });
+  }
+  return planned;
+}
+
 // Read JBProjects.ownerOf(projectId) on every chain and report whether the owner diverges.
 // { rows:[{chainId,name,owner}], diverged }.
 function fetchOwnersPerChain(project) {
   var chains = projectChains(project);
   return Promise.all(chains.map(function (c) {
     return read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pidOn(project, c.id)])
-      .then(function (o) { return { chainId: c.id, name: c.name, owner: o }; })
-      .catch(function () { return { chainId: c.id, name: c.name, owner: null }; });
+      .then(function (o) { return { chainId: c.id, projectId: c.projectId, name: c.name, owner: o }; })
+      .catch(function () { return { chainId: c.id, projectId: c.projectId, name: c.name, owner: null }; });
   })).then(function (rows) {
     return { rows: rows, diverged: authorityRowsDiverged(rows) };
   });
@@ -9705,10 +10525,10 @@ function fetchOperatorsPerChain(project) {
   var chains = projectChains(project);
   return Promise.all(chains.map(function (c) {
     return revnetOperatorOf(Number(pidOn(project, c.id)), c.id)
-      .then(function (o) { return { chainId: c.id, name: c.name, owner: o }; })
+      .then(function (o) { return { chainId: c.id, projectId: c.projectId, name: c.name, owner: o }; })
       // `unavailable` keeps an unread chain out of the divergence comparison AND out of the "—" that means
       // "no operator here". authorityRowsDiverged already ignores rows with no address.
-      .catch(function () { return { chainId: c.id, name: c.name, owner: null, unavailable: true }; });
+      .catch(function () { return { chainId: c.id, projectId: c.projectId, name: c.name, owner: null, unavailable: true }; });
   })).then(function (rows) {
     return { rows: rows, diverged: authorityRowsDiverged(rows) };
   });
@@ -9802,23 +10622,96 @@ var jbProjectsTransferAbi = [{
 // Run an owner/operator-only action across chains, routing by the authority's account type: a Safe →
 // propose to its per-chain queue (multichain, one payment to execute later); an EOA → Relayr (sign per
 // chain, pay once). Returns { queued, skipped, cancelled } for the Safe path, { relayr:true } for EOA, or null.
+export async function safeInfoForAuthority(address, executionChainId, authorityChainId, fetcher) {
+  // Transaction dispatch never trusts the display cache: authenticate the official proxy, singleton, and bounded
+  // live governance immediately before deciding whether to solicit a Safe signature or send a Safe write.
+  fetcher = fetcher || fetchSafeInfoFresh;
+  var info = await fetcher(address, executionChainId).catch(function () { return null; });
+  if (!info && authorityChainId && Number(authorityChainId) !== Number(executionChainId)) {
+    info = await fetcher(address, authorityChainId).catch(function () { return null; });
+  }
+  return info;
+}
+
+export function safeAuthorityAccessMode(signer, authority, safeInfo, safeConnected) {
+  if (!signer || !authority || !safeInfo) return null;
+  if (safeConnected && sameAddr(signer, authority)) return 'safe-app';
+  return (safeInfo.owners || []).some(function (owner) { return sameAddr(owner, signer); }) ? 'owner' : null;
+}
+
+// Inside a Safe App the exposed wallet account is the Safe itself, not one of its EOA owners. Reuse the app's
+// reviewed Safe proposal boundary for a one-chain call instead of asking the Safe address to sign its own typed
+// proposal. A Safe App is fixed to one network, so never let an L2 Safe propose a mainnet call by address alone.
+async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall, opts, setStatus) {
+  var wallet = getWalletClient();
+  if (!wallet) throw new Error('Connect the Safe to continue.');
+  var walletChainId = await wallet.getChainId();
+  if (Number(walletChainId) !== Number(chain.id)) {
+    throw new Error('Open this Safe on ' + (chain.name || chainNameOf(chain.id)) + ' before proposing the transaction.');
+  }
+  var call = buildCall(chain.id);
+  if (!call || !call.to || !call.abi || !call.functionName || !Array.isArray(call.args)) {
+    throw new Error('This Safe App action is missing a reviewable contract call.');
+  }
+  return new Promise(function (resolve, reject) {
+    executeTransaction({
+      chainId: chain.id,
+      address: call.to,
+      abi: call.abi,
+      functionName: call.functionName,
+      args: call.args,
+      value: 0n,
+      contractName: call.contract || call.contractName,
+      label: opts.label,
+      confirmTitle: opts.title,
+      reverify: async function () {
+        if (!isSafeConnected() || !sameAddr(getAccount(), authorityAddr)) throw new Error('The connected Safe changed. Review the transaction again.');
+        var activeChainId = await getWalletClient().getChainId();
+        if (Number(activeChainId) !== Number(chain.id)) throw new Error('The connected Safe network changed. Review the transaction again.');
+        var liveSafe = await fetchSafeInfoFresh(authorityAddr, chain.id);
+        if (!liveSafe) throw new Error('The authority Safe is not deployed on ' + (chain.name || chainNameOf(chain.id)) + '.');
+        if (opts.reverify) await opts.reverify();
+      },
+      onStatus: setStatus,
+      onSuccess: function (message, meta) {
+        setStatus(message, meta && meta.phase === 'safe-proposed' ? 'pending' : 'success', meta);
+        resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash });
+      },
+      onError: function (message) {
+        if (String(message || '').toLowerCase() === 'cancelled') { resolve({ queued: 0, skipped: [], cancelled: true, safeApp: true }); return; }
+        reject(new Error(String(message || 'Could not propose the transaction to the Safe.')));
+      },
+    });
+  });
+}
+
 async function runAuthorityActionAcrossChains(project, chains, authorityAddr, buildCall, opts, setStatus) {
   opts = opts || {};
   var homeChainId = (chains && chains[0] && chains[0].id) || project.chainId;
-  var safeInfo = await fetchSafeInfo(authorityAddr, homeChainId).catch(function () { return null; });
+  var authorityChainId = Number(opts.authorityChainId || project._urlChainId || project.chainId);
+  var safeInfo = await safeInfoForAuthority(authorityAddr, homeChainId, authorityChainId);
   if (safeInfo) {
     var signer = getAccount();
     if (!signer) { setStatus('Connecting wallet…', 'pending'); signer = await connect().then(getAccount).catch(function () { return null; }); }
     if (!signer) { setStatus('Connect a wallet to continue', 'error'); return null; }
-    if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
+    var accessMode = safeAuthorityAccessMode(signer, authorityAddr, safeInfo, isSafeConnected());
+    if (!accessMode) {
       setStatus('Connected wallet isn’t a signer of the Safe (' + truncAddr(authorityAddr) + ').', 'error'); return null;
     }
-    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab });
+    // If the same-address Safe exists on the execution chain, Safe Apps can submit through their native proposal
+    // provider. If it only exists on the project chain, fall through to the standard proposal modal: it offers
+    // the reviewed same-address deployment flow for Ethereum before an EOA owner signs there.
+    if (accessMode === 'safe-app' && chains && chains.length === 1) {
+      var executionSafe = await fetchSafeInfoFresh(authorityAddr, homeChainId);
+      if (executionSafe) return runConnectedSafeAppAuthorityCall(chains[0], authorityAddr, buildCall, opts, setStatus);
+    }
+    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab, reverify: opts.reverify, authorityChainId: authorityChainId });
   }
   var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
   if (!account) return null;
   var relaySession = await runRelayrAcrossChains(chains, account, buildCall, opts.gas || 500000n, setStatus, {
     label: opts.label, title: opts.title,
+    reverify: opts.reverify,
     pendingScope: opts.pendingScope || relayrActionScope(project, opts.label || opts.title),
   });
   return { relayr: true, resumed: !!(relaySession && relaySession.resumed), session: relaySession };
@@ -9868,6 +10761,7 @@ function openTransferAuthorityModal(project, opts) {
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
       if (res.relayr) {
         setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ((isRev ? 'Operator' : 'Ownership') + ' transferred on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '.'), 'success');
+        if (isRev) chains.forEach(function (c) { invalidateRevnetOperatorCache(Number(pidOn(project, c.id)), Number(c.id)); });
         if (!res.resumed && isRev && chains.some(function (c) { return Number(c.id) === Number(project.chainId); })) project.operator = to;
         if (res.resumed) notifyProjectUpdated(project);
         setTimeout(function () { modal.close(); }, 1400); return;
@@ -10259,15 +11153,29 @@ async function monitorRelayrSession(session, setStatus, opts) {
   function progressUpdate(records) {
     persist(records);
     var progress = relayrProgress(records, expected);
-    setStatus('Relaying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (session.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'This paid request is saved.'), 'pending');
+    setStatus('Relayr reports ' + progress.confirmed + '/' + progress.total + ' complete; exact onchain results are still being verified. ' + (session.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'This paid request is saved.'), 'pending');
     renderRelayrRecoveryPanel(setStatus, session, 'checking');
     if (opts.onProgress) { try { opts.onProgress(session, records, progress); } catch (_) {} }
   }
   async function poll(timeoutMs) {
     renderRelayrRecoveryPanel(setStatus, session, 'checking');
     try {
-      var records = await relayrPoll(session.bundleUuid, progressUpdate, 2500, timeoutMs);
+      if (!Array.isArray(session.expectedTransactions) || session.expectedTransactions.length !== expected) {
+        var unbound = new Error('This saved Relayr receipt predates exact transaction binding. Keep it for support and verify its destination transactions manually; it cannot be marked complete automatically.');
+        unbound.code = 'RELAYR_STATUS_UNBOUND'; unbound.retryable = true;
+        throw unbound;
+      }
+      var records = await relayrPoll(session.bundleUuid, progressUpdate, 2500, timeoutMs, expected, session.expectedTransactions);
       session.records = records;
+      try {
+        await verifyRelayrDestinationRecords(session.expectedTransactions, records);
+        await verifyPersistedRelayrHandlePostconditions(session.expectedTransactions, records);
+        if (opts.verifyCompletion) await opts.verifyCompletion(session, records);
+      } catch (cause) {
+        var pending = new Error('Relayr reported completion, but the exact destination transaction or live postcondition is not verified yet. Keep this paid receipt and check it again. ' + ((cause && cause.message) || ''));
+        pending.code = 'RELAYR_POSTCONDITION_PENDING'; pending.retryable = true; pending.cause = cause; pending.records = records;
+        throw pending;
+      }
       if (scope) clearRelayrPendingSession(scope);
       removeRelayrRecoveryPanel(setStatus);
       return session;
@@ -10282,11 +11190,13 @@ async function monitorRelayrSession(session, setStatus, opts) {
   // failed-state card. This rule guards "when may the user pay again" — keep it in this one helper.
   function showFailurePanel() {
     var allFailed = relayrProgress(session.records, expected).allFailed;
-    if (allFailed && scope) clearRelayrPendingSession(scope);
-    renderRelayrRecoveryPanel(setStatus, session, 'failed', null, allFailed, !allFailed && scope ? function () {
-      if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already confirmed. Review the affected feature and retry only missing work.')) return;
+    var hasSafeProof = (session.expectedTransactions || []).some(function (binding) { return binding && binding.result && binding.result.kind === 'safe-exec'; });
+    var mayDiscard = allFailed && !hasSafeProof;
+    if (mayDiscard && scope) clearRelayrPendingSession(scope);
+    renderRelayrRecoveryPanel(setStatus, session, 'failed', null, mayDiscard, !mayDiscard && scope ? function () {
+      if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains Relayr reported complete. Review the affected feature and retry only missing work.')) return;
       clearRelayrPendingSession(scope); removeRelayrRecoveryPanel(setStatus);
-      setStatus('Saved receipt cleared. Review confirmed chains before submitting any missing work again.', '');
+      setStatus('Saved receipt cleared. Verify every Relayr-reported chain onchain before submitting any missing work again.', '');
     } : null);
   }
 
@@ -10306,7 +11216,7 @@ async function monitorRelayrSession(session, setStatus, opts) {
     return await new Promise(function (resolve, reject) {
       function waitAgain(error) {
         var progress = relayrProgress(session.records, expected);
-        setStatus('Relayr is taking longer than usual — ' + progress.confirmed + '/' + progress.total + ' chains confirmed. Use “Check Relayr status”; do not submit again.', 'pending');
+        setStatus('Relayr is taking longer than usual — it reports ' + progress.confirmed + '/' + progress.total + ' complete, with exact onchain verification still pending. Use “Check Relayr status”; do not submit again.', 'pending');
         renderRelayrRecoveryPanel(setStatus, session, 'waiting', check);
         if (error && typeof error === 'object') error.relayrSession = session;
       }
@@ -10388,11 +11298,28 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) {
       throw new Error('Connected account changed. Review the transaction again.');
     }
+    if (confirmOpts.reverify) {
+      setStatus('Rechecking the reviewed onchain state…', 'pending');
+      await confirmOpts.reverify();
+      if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+    }
     var directClient = clientFor(direct.cid);
+    var directGas;
+    try { directGas = BigInt(gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
+    if (directGas < 21000n || directGas > 5000000n) throw new Error('This transaction gas limit is outside the supported direct-send range.');
     setStatus('Simulating the confirmed transaction…', 'pending');
-    await directClient.call({ account: account, to: direct.to, data: direct.data });
+    var directResult = await directClient.request({
+      method: 'eth_call',
+      params: [{ from: account, to: direct.to, data: direct.data, value: '0x0', gas: '0x' + directGas.toString(16) }, 'latest'],
+    });
+    if (typeof directResult !== 'string' || !/^0x[0-9a-f]*$/i.test(directResult) || directResult.length > 8194) {
+      throw new Error('The transaction simulation returned malformed or oversized data.');
+    }
+    if (confirmOpts.reverify) {
+      await confirmOpts.reverify();
+      if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+    }
     setStatus('Awaiting wallet confirmation…', 'pending');
-    var directGas = await transactionGasWithHeadroom(directClient, { account: account, to: direct.to, data: direct.data, value: 0n });
     var directHash = await directWallet.sendTransaction({
       account: account,
       chain: CHAINS[direct.cid],
@@ -10449,6 +11376,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     paymentHash: null,
     paymentChainId: Number(payment.chain),
     expectedCount: chains.length,
+    expectedTransactions: bundle.expected_transactions,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
     records: [],
   };
@@ -10456,7 +11384,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     session.paymentHash = hash;
     if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
     if (confirmOpts.onSession) { try { confirmOpts.onSession(session); } catch (_) {} }
-  });
+  }, bundle.bundle_uuid, confirmOpts.reverify);
   session.paymentHash = paymentHash;
   if (!confirmOpts.manualRecovery) return monitorRelayrSession(session, setStatus, confirmOpts);
   setStatus('Payment confirmed — Relayr is executing on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '. Do not submit again.', 'pending');
@@ -10464,9 +11392,11 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     session.records = await relayrPoll(bundle.bundle_uuid, function (records) {
       session.records = records;
       var progress = relayrProgress(records, chains.length);
-      setStatus('Relaying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. Do not submit it again.', 'pending');
+      setStatus('Relayr reports ' + progress.confirmed + '/' + progress.total + ' complete; exact onchain verification is pending. Do not submit it again.', 'pending');
       if (confirmOpts.onProgress) { try { confirmOpts.onProgress(session, records, progress); } catch (_) {} }
-    });
+    }, undefined, undefined, chains.length, session.expectedTransactions);
+    await verifyRelayrDestinationRecords(session.expectedTransactions, session.records);
+    await verifyPersistedRelayrHandlePostconditions(session.expectedTransactions, session.records);
   } catch (error) {
     if (error && error.records) session.records = error.records;
     if (error && typeof error === 'object') error.relayrSession = session;
@@ -10821,13 +11751,20 @@ function runRelayrBundle(entries, opts) {
       (txList || []).forEach(function (t, i) {
         if (!pvStatus[i]) return;
         var s = t.status && t.status.state;
-        if (relayrStateIsSuccess(s)) { pvStatus[i].textContent = 'done'; pvStatus[i].className = 'relayr-preview-status ok'; }
+        if (relayrStateIsSuccess(s)) { pvStatus[i].textContent = 'Relayr reported success — verifying…'; pvStatus[i].className = 'relayr-preview-status pending'; }
         else if (relayrStateIsFailed(s)) { pvStatus[i].textContent = 'failed'; pvStatus[i].className = 'relayr-preview-status err'; }
         else { pvStatus[i].textContent = 'executing…'; pvStatus[i].className = 'relayr-preview-status pending'; }
       });
     }
     function waitForBundle(session) {
-      return monitorRelayrSession(session, setStatus, { pendingScope: pendingScope, initialTimeoutMs: session === restored ? 60 * 1000 : undefined, onProgress: function (_session, txList) { updatePreview(txList); } })
+      return monitorRelayrSession(session, setStatus, {
+        pendingScope: pendingScope,
+        initialTimeoutMs: session === restored ? 60 * 1000 : undefined,
+        onProgress: function (_session, txList) { updatePreview(txList); },
+        // A restored stable Safe scope can outlive the queue rows that created it. Its persisted request/Safe
+        // proof and reconstructed handle postcondition are authoritative; never apply a closure over newer rows.
+        verifyCompletion: session === restored ? null : opts.verifyCompletion,
+      })
         .then(function () {
           setStatus('Executed on ' + entries.length + ' chains.', 'success');
           document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
@@ -10847,7 +11784,12 @@ function runRelayrBundle(entries, opts) {
       return;
     }
 
-    relayrPostBundle(entries).then(function (quote) {
+    Promise.resolve(opts.reverify ? opts.reverify() : null).then(function () {
+      return relayrPostBundle(entries);
+    }).then(function (quote) {
+      if (opts.safeExecutionProofs) {
+        quote.expected_transactions = bindRelayrSafeExecutions(quote.expected_transactions, opts.safeExecutionProofs);
+      }
       var options = (quote.payment_info || []).slice().sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : 1; });
       if (!options.length) { status.className = 'modal-status'; status.textContent = 'Relayr returned no payment option.'; return; }
       status.className = 'modal-status';
@@ -10865,26 +11807,30 @@ function runRelayrBundle(entries, opts) {
             status.className = 'modal-status pending';
             var wallet = getWalletClient(); var cur = await wallet.getChainId().catch(function () { return null; });
             if (cur !== o.chain) { status.textContent = 'Switching to ' + chainNameOf(o.chain) + '…'; await switchChain(o.chain); }
+            if (opts.reverify) await opts.reverify();
             status.textContent = 'Confirm the payment in your wallet…';
             var paidSession = {
               bundleUuid: quote.bundle_uuid, paymentHash: null, paymentChainId: Number(o.chain),
               expectedCount: entries.length,
+              expectedTransactions: quote.expected_transactions,
               chains: (opts.preview || entries).map(function (entry) { return { id: Number(entry.cid || entry.chain), name: entry.chain || chainNameOf(entry.cid || entry.chain) }; }),
               records: [],
             };
             var payHash = await relayrPay(o, null, function (hash) {
               paidSession.paymentHash = hash;
-              saveRelayrPendingSession(pendingScope, paidSession);
-            });
+              paidSession = saveRelayrPendingSession(pendingScope, paidSession) || paidSession;
+            }, quote.bundle_uuid, opts.reverify);
             paidSession.paymentHash = payHash;
             pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
             await waitForBundle(paidSession);
           } catch (e) {
             var saved = loadRelayrPendingSession(pendingScope);
-            if (e && e.code === 'RELAYR_PAYMENT_SUBMITTED' && saved) {
+            var recovery = saved || paidSession;
+            if (e && e.code === 'RELAYR_PAYMENT_SUBMITTED' && recovery && recovery.paymentHash) {
+              recovery.persisted = !!saved;
               pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
               setStatus(e.message, 'pending');
-              waitForBundle(saved);
+              waitForBundle(recovery);
               return;
             }
             pay.disabled = false; cancel.disabled = false; sel.disabled = false;
@@ -10896,9 +11842,197 @@ function runRelayrBundle(entries, opts) {
   });
 }
 
+function safeTxWithCurrentOwnerConfirmations(tx, owners) {
+  var allowed = new Set((owners || []).map(function (owner) { return String(owner).toLowerCase(); }));
+  var seen = new Set();
+  var confirmations = (tx.confirmations || []).filter(function (confirmation) {
+    var owner = confirmation && confirmation.owner && String(confirmation.owner).toLowerCase();
+    if (!owner || !allowed.has(owner) || seen.has(owner)) return false;
+    seen.add(owner); return true;
+  });
+  return Object.assign({}, tx, { confirmations: confirmations });
+}
+
+async function safeTxWithVerifiedOwnerConfirmations(chainId, safe, tx, owners) {
+  var current = safeTxWithCurrentOwnerConfirmations(tx, owners);
+  var hash = queuedSafeTxHash(current);
+  if (!hash) return current;
+  var nullSignatureOwners = (current.confirmations || []).filter(function (confirmation) {
+    return confirmation && confirmation.owner && !(confirmation.signature || '').replace(/^0x/, '');
+  }).map(function (confirmation) { return confirmation.owner; });
+  if (!nullSignatureOwners.length) return current;
+  var approved = await safeApprovalsOf(chainId, safe, hash, nullSignatureOwners);
+  var approvedSet = new Set(approved.map(function (owner) { return String(owner).toLowerCase(); }));
+  return Object.assign({}, current, {
+    confirmations: (current.confirmations || []).filter(function (confirmation) {
+      var hasSignature = !!(confirmation && (confirmation.signature || '').replace(/^0x/, ''));
+      return hasSignature || approvedSet.has(String(confirmation.owner || '').toLowerCase());
+    }).map(function (confirmation) {
+      return (confirmation.signature || '').replace(/^0x/, '')
+        ? confirmation
+        : Object.assign({}, confirmation, { approvedHash: true });
+    }),
+  });
+}
+
+function sameSafeGovernance(left, right) {
+  return !!left && !!right && Number(left.threshold) === Number(right.threshold)
+    && (left.owners || []).map(function (owner) { return owner.toLowerCase(); }).sort().join(',')
+      === (right.owners || []).map(function (owner) { return owner.toLowerCase(); }).sort().join(',');
+}
+
+function queuedSafeTxHash(tx) {
+  var hash = tx && (tx.safeTxHash || tx.contractTransactionHash);
+  return typeof hash === 'string' && /^0x[0-9a-f]{64}$/i.test(hash) ? hash.toLowerCase() : null;
+}
+
+function hasCanonicalSafeRefundFields(tx) {
+  try {
+    return BigInt(tx.safeTxGas || 0) === 0n && BigInt(tx.baseGas || 0) === 0n && BigInt(tx.gasPrice || 0) === 0n
+      && sameAddr(tx.gasToken || ZERO_ADDRESS, ZERO_ADDRESS)
+      && sameAddr(tx.refundReceiver || ZERO_ADDRESS, ZERO_ADDRESS);
+  } catch (_) { return false; }
+}
+
+async function freshQueuedSafeTx(safe, chainId, tx, opts) {
+  opts = opts || {};
+  var expectedHash = queuedSafeTxHash(tx);
+  if (!expectedHash) throw new Error('The queued Safe transaction is missing its canonical hash.');
+  if (!hasCanonicalSafeRefundFields(tx)) throw new Error('This Safe transaction uses custom gas/refund fields. Review and execute it in the Safe app instead.');
+  var reviewedHash;
+  try { reviewedHash = safeTxHashForQueuedTx(chainId, safe, tx).toLowerCase(); }
+  catch (_) { throw new Error('The reviewed Safe transaction fields are malformed.'); }
+  if (reviewedHash !== expectedHash) throw new Error('The reviewed Safe transaction fields do not match its advertised hash.');
+  var loaded = await Promise.all([
+    opts.verifyAuthority ? opts.verifyAuthority() : null,
+    requireFreshSafeGovernance(safe, chainId, opts.signer),
+    readSafeUintBounded(clientFor(chainId), safe, 'nonce'),
+    listPendingSafeTxs(chainId, safe),
+  ]);
+  var info = loaded[1];
+  if (opts.expectedGovernance && !sameSafeGovernance(info, opts.expectedGovernance)) {
+    throw new Error('Safe owners or threshold changed on ' + chainNameOf(chainId) + '. Review the transaction again.');
+  }
+  var currentBig = BigInt(loaded[2]);
+  if (currentBig < 0n || currentBig > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Could not verify the live Safe nonce on ' + chainNameOf(chainId) + '.');
+  var current = Number(currentBig);
+  var currentTx = (loaded[3] || []).find(function (candidate) { return queuedSafeTxHash(candidate) === expectedHash; });
+  if (!currentTx) throw new Error('The reviewed transaction is no longer in the pending Safe queue on ' + chainNameOf(chainId) + '.');
+  if (!hasCanonicalSafeRefundFields(currentTx)) throw new Error('The refreshed Safe transaction uses custom gas/refund fields. Review it in the Safe app instead.');
+  var refreshedHash;
+  try { refreshedHash = safeTxHashForQueuedTx(chainId, safe, currentTx).toLowerCase(); }
+  catch (_) { throw new Error('The refreshed Safe transaction fields are malformed.'); }
+  if (refreshedHash !== expectedHash) throw new Error('The refreshed Safe transaction fields do not match the reviewed hash.');
+  currentTx = await safeTxWithVerifiedOwnerConfirmations(chainId, safe, currentTx, info.owners);
+  var nonce = Number(currentTx.nonce);
+  if (!Number.isSafeInteger(nonce) || nonce < current || (opts.requireCurrent && nonce !== current)) {
+    throw new Error('The reviewed Safe nonce is no longer executable on ' + chainNameOf(chainId) + '.');
+  }
+  if (opts.requireThreshold && safeUsableConfirmationCount(currentTx, info.owners) < Number(info.threshold)) {
+    throw new Error('The reviewed transaction no longer has enough current-owner confirmations on ' + chainNameOf(chainId) + '.');
+  }
+  return { info: info, current: current, nonce: nonce, tx: currentTx };
+}
+
+function readySafeExecutionSnapshot(item) {
+  var confirmations = (item.ready.tx.confirmations || []).map(function (confirmation) {
+    return String(confirmation.owner || '').toLowerCase() + ':' + String(confirmation.signature || '').toLowerCase();
+  }).sort().join('|');
+  return [
+    queuedSafeTxHash(item.ready.tx), item.nonce, Number(item.info.threshold),
+    (item.info.owners || []).map(function (owner) { return owner.toLowerCase(); }).sort().join(','), confirmations,
+  ].join('::');
+}
+
+function readySafeExecutionKey(ready) {
+  return Number(ready.cid) + ':' + String(ready.safe).toLowerCase() + ':' + queuedSafeTxHash(ready.tx);
+}
+
+async function preflightReadySafeExecution(item) {
+  var call = safeExecRelayrTx(item.ready.cid, item.ready.safe, item.ready.tx);
+  var result = await clientFor(item.ready.cid).request({
+    method: 'eth_call',
+    // A Relayr executor is not a Safe owner. Simulate from zero so every v=1 signature must use the onchain
+    // approvedHashes entry proven above instead of passing through Safe's msg.sender==owner shortcut.
+    params: [{ from: ZERO_ADDRESS, to: call.target, data: call.data, value: '0x0', gas: '0x4c4b40' }, 'latest'],
+  });
+  if (typeof result !== 'string' || !/^0x[0-9a-f]{64}$/i.test(result) || BigInt(result) !== 1n) {
+    throw new Error('Safe execution simulation failed on ' + (item.ready.chain || chainNameOf(item.ready.cid)) + '. Nothing was submitted or paid.');
+  }
+}
+
+async function verifyReadySafeTransactions(readyExecs, expectedSnapshots) {
+  var verified = await Promise.all((readyExecs || []).map(async function (ready) {
+    var fresh = await freshQueuedSafeTx(ready.safe, ready.cid, ready.tx, { requireThreshold: true, verifyAuthority: ready.verifyAuthority });
+    ready.tx = fresh.tx;
+    var item = { ready: ready, info: fresh.info, current: fresh.current, nonce: fresh.nonce };
+    var expected = expectedSnapshots && expectedSnapshots[readySafeExecutionKey(ready)];
+    if (expected && readySafeExecutionSnapshot(item) !== expected) {
+      throw new Error('The reviewed Safe governance, nonce, or execution signatures changed on ' + (ready.chain || chainNameOf(ready.cid)) + '. Review the execution again.');
+    }
+    return item;
+  }));
+  var byChain = {};
+  verified.forEach(function (item) { (byChain[item.ready.cid] || (byChain[item.ready.cid] = [])).push(item); });
+  Object.keys(byChain).forEach(function (cid) {
+    var items = byChain[cid].sort(function (a, b) { return a.nonce - b.nonce; });
+    var expected = items[0].current;
+    items.forEach(function (item) {
+      if (item.current !== items[0].current || item.nonce !== expected) {
+        throw new Error('The ready Safe transactions on ' + (item.ready.chain || chainNameOf(item.ready.cid)) + ' are not contiguous from the live nonce.');
+      }
+      expected += 1;
+    });
+  });
+  // Only the live-nonce transaction on each chain can be simulated against current state. Direct same-chain
+  // batches simulate later nonces after the prior receipt; cross-chain Relayr batches are restricted below to one
+  // tx per chain, so every paid entry has returned true from this exact raw, CCIP-off execTransaction call.
+  await Promise.all(verified.filter(function (item) { return item.nonce === item.current; }).map(preflightReadySafeExecution));
+  return verified;
+}
+
+async function verifyCompletedReadySafeTransactions(readyExecs) {
+  await Promise.all((readyExecs || []).map(async function (ready) {
+    var liveNonce = BigInt(await readSafeUintBounded(clientFor(ready.cid), ready.safe, 'nonce'));
+    var reviewedNonce = BigInt(ready.tx && ready.tx.nonce);
+    if (liveNonce <= reviewedNonce) {
+      throw new Error('The Safe nonce did not advance after Relayr execution on ' + (ready.chain || chainNameOf(ready.cid)) + '.');
+    }
+    await verifyCompletedQueuedProjectHandleTransaction(ready.safe, ready.cid, ready.tx);
+  }));
+  return true;
+}
+
+// The complete bound Relayr status echoes the exact execTransaction calldata. Decode it with the persisted Safe
+// nonce proof and re-run only handle-specific semantic postconditions. This keeps restored sessions verifiable
+// after the hosted queue row has disappeared and no in-memory `readyExecs` object remains.
+export async function verifyPersistedRelayrHandlePostconditions(expectedTransactions, records) {
+  var expected = Array.isArray(expectedTransactions) ? expectedTransactions : [];
+  var results = Array.isArray(records) ? records : [];
+  if (expected.length !== results.length) throw new Error('The paid Relayr completion is missing a reviewed transaction.');
+  await Promise.all(expected.map(async function (binding, index) {
+    var proof = binding && binding.result;
+    if (!proof || proof.kind !== 'safe-exec') return;
+    var request = results[index] && results[index].request;
+    if (!request || Number(request.chain) !== Number(binding.chain)) throw new Error('The paid Safe result does not match its reviewed chain.');
+    var decoded = decodeSafeExecRelayrTx(Number(binding.chain), proof.safe, request.data, proof.nonce);
+    if (String(decoded.safeTxHash).toLowerCase() !== String(proof.safeTxHash).toLowerCase()) {
+      throw new Error('The paid Safe result does not match its reviewed transaction hash.');
+    }
+    await verifyCompletedQueuedProjectHandleTransaction(proof.safe, Number(binding.chain), decoded.tx);
+  }));
+  return true;
+}
+
 async function executeReadySafeTransactions(readyExecs, opts) {
   opts = opts || {};
   readyExecs = readyExecs || [];
+  if (!readyExecs.length) return { done: false, cancelled: true };
+  // Authenticate every target-chain Safe before rendering an execution review. The same check runs again after
+  // review (and immediately before a direct write / Relayr payment) because Safe governance is mutable.
+  var initialReady = await verifyReadySafeTransactions(readyExecs);
+  var expectedSnapshots = {};
+  initialReady.forEach(function (item) { expectedSnapshots[readySafeExecutionKey(item.ready)] = readySafeExecutionSnapshot(item); });
   var chainIds = Array.from(new Set(readyExecs.map(function (r) { return Number(r.cid); })));
   if (readyExecs.length && chainIds.length === 1) {
     var ordered = readyExecs.slice().sort(function (a, b) { return Number(a.tx.nonce) - Number(b.tx.nonce); });
@@ -10918,13 +12052,34 @@ async function executeReadySafeTransactions(readyExecs, opts) {
       }),
     }, { title: opts.title || 'Confirm queued transactions', confirmText: 'Confirm & execute' });
     if (directOk !== true) return { done: false, cancelled: true };
+    await verifyReadySafeTransactions(ordered, expectedSnapshots);
     for (var i = 0; i < ordered.length; i++) {
-      await executeSafeTx(ordered[i].cid, ordered[i].safe, ordered[i].tx);
+      var direct = ordered[i];
+      await executeSafeTx(direct.cid, direct.safe, direct.tx, function () {
+        return verifyReadySafeTransactions([direct], expectedSnapshots);
+      });
+      await verifyCompletedQueuedProjectHandleTransaction(direct.safe, direct.cid, direct.tx);
     }
     return { done: true, direct: true };
   }
-  var entries = readyExecs.map(function (r) { return safeExecRelayrTx(r.cid, r.safe, r.tx); });
-  var preview = readyExecs.map(function (r) {
+  var relayReady = readyExecs.slice().sort(function (a, b) {
+    return Number(a.cid) - Number(b.cid) || Number(a.tx.nonce) - Number(b.tx.nonce);
+  });
+  var countsByChain = {};
+  relayReady.forEach(function (ready) { countsByChain[ready.cid] = (countsByChain[ready.cid] || 0) + 1; });
+  if (Object.keys(countsByChain).some(function (cid) { return countsByChain[cid] > 1; })) {
+    throw new Error('Cross-chain Safe execution supports one live-nonce transaction per chain. Execute this chain’s queued transactions in nonce order first.');
+  }
+  var entries = relayReady.map(function (r) { return safeExecRelayrTx(r.cid, r.safe, r.tx); });
+  var relaySafes = Array.from(new Set(relayReady.map(function (ready) { return String(ready.safe).toLowerCase(); })));
+  if (relaySafes.length !== 1) throw new Error('A Relayr Safe batch must use one exact Safe address across chains.');
+  var safeExecutionProofs = relayReady.map(function (ready) {
+    return {
+      chain: Number(ready.cid), safe: ready.safe, nonce: Number(ready.tx.nonce),
+      safeTxHash: queuedSafeTxHash(ready.tx),
+    };
+  });
+  var preview = relayReady.map(function (r) {
     return {
       cid: r.cid,
       chain: r.chain,
@@ -10935,6 +12090,10 @@ async function executeReadySafeTransactions(readyExecs, opts) {
   return runRelayrBundle(entries, {
     title: opts.title || ('Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's')),
     preview: preview,
+    pendingScope: 'safe-queue:' + relaySafes[0],
+    safeExecutionProofs: safeExecutionProofs,
+    reverify: function () { return verifyReadySafeTransactions(relayReady, expectedSnapshots); },
+    verifyCompletion: function () { return verifyCompletedReadySafeTransactions(relayReady); },
   });
 }
 
@@ -10981,6 +12140,81 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     function finish(res) { if (done) return; done = true; modal.close(); resolve(res); }
 
     var rows = [];
+    btn.disabled = true;
+    btn.textContent = 'Checking Safes…';
+    function updateProposalReadiness() {
+      if (mode !== 'sign') return;
+      var checking = rows.length < chains.length || rows.some(function (row) { return !row.initialized; });
+      btn.disabled = checking;
+      btn.textContent = checking ? 'Checking Safes…' : 'Sign & queue';
+    }
+    function serviceQueueSnapshot(txs) {
+      return (txs || []).map(function (tx) {
+        var hash = tx && (tx.safeTxHash || tx.contractTransactionHash);
+        return String(Number(tx && tx.nonce)) + ':' + String(hash || '').toLowerCase();
+      }).sort().join('|');
+    }
+    function initializeSafeRow(rec, info) {
+      rec.deployed = true; rec.ready = false; rec.state = 'checking'; rec.threshold = info.threshold; rec.owners = info.owners;
+      if (hasSafeService(rec.cid)) {
+        rec.onChain = false;
+        rec.st.textContent = 'Safe service | ' + info.threshold + '-of-' + info.owners.length + ' multisig.';
+        // The pending list is load-bearing twice over: it spots an already-queued proposal and establishes the
+        // exact nonce. Never make a service row actionable until BOTH reads finish with a real nonnegative nonce.
+        return Promise.all([getSafeNextNonce(rec.cid, safe), listPendingSafeTxs(rec.cid, safe).catch(function (err) {
+          throw new Error('could not read the Safe’s pending queue — ' + ((err && (err.shortMessage || err.message)) || String(err)));
+        })]).then(function (rr) {
+          var next = Number(rr[0]);
+          if (!Number.isSafeInteger(next) || next < 0) throw new Error('could not read a valid Safe nonce');
+          var queuedNonces = (rr[1] || []).map(function (t) { return Number(t.nonce); })
+            .filter(function (v, i, a) { return Number.isSafeInteger(v) && v >= 0 && a.indexOf(v) === i; })
+            .sort(function (a, b) { return a - b; });
+          var def = queuedNonces.length ? Math.max(next, queuedNonces[queuedNonces.length - 1] + 1) : next;
+          if (!Number.isSafeInteger(def) || def < 0) throw new Error('the next Safe nonce is outside the supported range');
+          var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
+          var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
+          var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.value = String(def); nrow.appendChild(nInput);
+          var nhint = el('span', 'safe-propose-hint'); nhint.textContent = queuedNonces.length ? (' next ' + def + ' | queued #' + queuedNonces.join(', #') + ' — reuse one to replace it') : ' next nonce'; nrow.appendChild(nhint);
+          rec.block.appendChild(nrow); rec.nInput = nInput; rec.serviceNext = next;
+          rec.queuedNonces = queuedNonces; rec.queueSnapshot = serviceQueueSnapshot(rr[1]);
+          rec.ready = true; rec.state = 'ready';
+        });
+      }
+      rec.onChain = true;
+      return refreshOnChainStatus(rec).then(function () { rec.ready = true; rec.state = 'ready'; });
+    }
+    function renderMissingSafeRow(rec, c, block, st) {
+      rec.state = 'missing'; block.classList.add('safe-propose-skip'); st.innerHTML = '';
+      st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — '));
+      // Deploy the SAME-address Safe here by replaying its original creation. The explicit authority source chain
+      // binds the replay to the project's current governance; service metadata is not authority evidence.
+      var dep = el('button', 'operator-cta'); dep.textContent = 'deploy it here (same address)';
+      dep.addEventListener('click', function (e) {
+        e.preventDefault(); rec.initialized = false; rec.ready = false; rec.state = 'deploying'; updateProposalReadiness();
+        st.innerHTML = ''; st.appendChild(document.createTextNode('Reading the Safe’s deployment config…'));
+        fetchSafeCreation(safe).then(function (creation) {
+          if (!creation) throw new Error('couldn’t read the Safe’s creation config (needs a chain where it already exists + a Safe service)');
+          st.textContent = 'Deploying the Safe on ' + c.name + ' — confirm in your wallet…';
+          return deploySafeSameAddress(c.id, creation, safe, Number(opts.authorityChainId || project._urlChainId || project.chainId));
+        }).then(function () {
+          block.classList.remove('safe-propose-skip'); rec.nInput = null;
+          return fetchSafeInfoFresh(safe, c.id).then(function (info2) {
+            if (!info2) throw new Error('deployment confirmed, but the recognized Safe identity is not readable yet');
+            return initializeSafeRow(rec, info2);
+          });
+        }).then(function () {
+          rec.initialized = true; updateProposalReadiness();
+        }).catch(function (err) {
+          rec.deployed = false; rec.ready = false; rec.state = 'unknown'; rec.initialized = true;
+          st.innerHTML = ''; st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — ' + ((err && (err.shortMessage || err.message)) || String(err))));
+          updateProposalReadiness();
+        });
+      });
+      st.appendChild(dep);
+      st.appendChild(document.createTextNode(' | or '));
+      var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'the Safe app ↗'; st.appendChild(a);
+      st.appendChild(document.createTextNode('. Skipped for now.'));
+    }
     chains.forEach(function (c) {
       var call = buildCall(c.id);
       var block = el('div', 'safe-propose-chain');
@@ -10988,65 +12222,20 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       block.appendChild(renderTxReview({ chain: c.name, chainId: c.id, contract: resolveContractName(call.to, c.id) || call.to, address: call.to, calldata: call.data, value: '0' }));
       var st = el('div', 'safe-propose-hint'); st.style.marginTop = '6px'; st.textContent = 'checking Safe…'; block.appendChild(st);
       listEl.appendChild(block);
-      var rec = { cid: c.id, chain: c.name, to: call.to, data: call.data, deployed: false, onChain: false, st: st, block: block };
+      var rec = { cid: c.id, chain: c.name, to: call.to, data: call.data, deployed: false, ready: false, initialized: false, state: 'checking', onChain: false, st: st, block: block };
       rows.push(rec);
+      updateProposalReadiness();
 
-      fetchSafeInfo(safe, c.id).then(function (info) {
-        if (!info) {
-          block.classList.add('safe-propose-skip'); st.innerHTML = '';
-          st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — '));
-          // Deploy the SAME-address Safe here by replaying its original creation (works even where the Safe app has
-          // no UI, e.g. Arbitrum Sepolia). On success, re-check the chain so it's queue-able without reopening.
-          var dep = el('button', 'operator-cta'); dep.textContent = 'deploy it here (same address)';
-          dep.addEventListener('click', function (e) {
-            e.preventDefault();
-            st.innerHTML = ''; st.appendChild(document.createTextNode('Reading the Safe’s deployment config…'));
-            fetchSafeCreation(safe).then(function (creation) {
-              if (!creation) throw new Error('couldn’t read the Safe’s creation config (needs a chain where it already exists + a Safe service)');
-              st.textContent = 'Deploying the Safe on ' + c.name + ' — confirm in your wallet…';
-              return deploySafeSameAddress(c.id, creation, safe);
-            }).then(function () {
-              block.classList.remove('safe-propose-skip'); rec.nInput = null;
-              return fetchSafeInfo(safe, c.id).then(function (info2) {
-                if (!info2) { st.textContent = 'Deploy on ' + c.name + ' successful — reopen this action to queue there.'; return; }
-                rec.deployed = true; rec.threshold = info2.threshold; rec.owners = info2.owners; rec.onChain = true;
-                return refreshOnChainStatus(rec);
-              });
-            }).catch(function (err) {
-              st.innerHTML = ''; st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — ' + ((err && (err.shortMessage || err.message)) || String(err))));
-            });
-          });
-          st.appendChild(dep);
-          st.appendChild(document.createTextNode(' | or '));
-          var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'the Safe app ↗'; st.appendChild(a);
-          st.appendChild(document.createTextNode('. Skipped for now.')); return;
+      inspectRecognizedSafeDeployment(safe, c.id).then(function (state) {
+        if (state.kind === 'missing') {
+          renderMissingSafeRow(rec, c, block, st); return;
         }
-        rec.deployed = true; rec.threshold = info.threshold; rec.owners = info.owners;
-        if (hasSafeService(c.id)) {
-          st.textContent = 'Safe service | ' + info.threshold + '-of-' + info.owners.length + ' multisig.';
-          // The pending list is load-bearing twice over: it is the only thing that spots an already-queued
-          // proposal, and it picks the nonce this one is signed at. Swallowing a service outage into `[]` makes
-          // an unread queue look empty, so this proposal defaults to the Safe's next nonce ON TOP of whatever is
-          // really queued there — the two become competing replacements at one nonce and only one can ever
-          // execute. Let the failure reject so this chain is skipped instead of proposing on fabricated data.
-          return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function (err) {
-            throw new Error('could not read the Safe’s pending queue — ' + ((err && (err.shortMessage || err.message)) || String(err)));
-          })]).then(function (rr) {
-            var next = rr[0] != null ? rr[0] : 0;
-            var queuedNonces = (rr[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
-            var def = queuedNonces.length ? Math.max(next, queuedNonces[queuedNonces.length - 1] + 1) : next;
-            var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
-            var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
-            var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.value = String(def); nrow.appendChild(nInput);
-            var nhint = el('span', 'safe-propose-hint'); nhint.textContent = queuedNonces.length ? (' next ' + def + ' | queued #' + queuedNonces.join(', #') + ' — reuse one to replace it') : ' next nonce'; nrow.appendChild(nhint);
-            rec.block.appendChild(nrow); rec.nInput = nInput;
-          });
-        }
-        rec.onChain = true;
-        return refreshOnChainStatus(rec);
+        return initializeSafeRow(rec, state.info);
       }).catch(function (e) {
-        block.classList.add('safe-propose-skip'); rec.deployed = false;
+        block.classList.add('safe-propose-skip'); rec.deployed = false; rec.ready = false; rec.state = 'unknown';
         st.textContent = 'Could not read the Safe here — skipped. ' + ((e && (e.shortMessage || e.message)) || String(e));
+      }).then(function () {
+        rec.initialized = true; updateProposalReadiness();
       });
     });
 
@@ -11072,7 +12261,9 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           rec.block.appendChild(nrow); rec.nInput = nInput;
           nInput.addEventListener('change', function () { refreshOnChainStatus(rec); });
         }
-        var chosen = Number(rec.nInput.value); rec.chosenNonce = chosen;
+        var chosen = Number(rec.nInput.value);
+        if (!Number.isSafeInteger(chosen) || chosen < 0) throw new Error('Enter a valid whole-number nonce for ' + rec.chain + '.');
+        rec.chosenNonce = chosen;
         var ahead = chosen - Number(ctx.nonce);
         rec.nHint.textContent = ahead < 0 ? ' below current nonce ' + ctx.nonce + ' — already used; pick ≥ ' + ctx.nonce
           : ahead === 0 ? ' current — this one executes next'
@@ -11093,6 +12284,40 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       });
     }
 
+    async function verifySafeRowAction(rec, account, expectedGovernance) {
+      if (opts.reverify) await opts.reverify();
+      if (!getAccount() || !sameAddr(getAccount(), account)) throw new Error('Connected account changed. Review the transaction again.');
+      var info = await requireFreshSafeGovernance(safe, rec.cid, account);
+      if (expectedGovernance && (Number(info.threshold) !== Number(expectedGovernance.threshold)
+          || (info.owners || []).map(function (owner) { return owner.toLowerCase(); }).sort().join(',')
+            !== (expectedGovernance.owners || []).map(function (owner) { return owner.toLowerCase(); }).sort().join(','))) {
+        throw new Error('Safe owners or threshold changed on ' + rec.chain + '. Review the action again.');
+      }
+      rec.threshold = info.threshold; rec.owners = info.owners;
+      return info;
+    }
+
+    async function verifyServiceQueueSnapshot(rec, expectedNonce) {
+      var rr = await Promise.all([getSafeNextNonce(rec.cid, safe), listPendingSafeTxs(rec.cid, safe)]);
+      var next = Number(rr[0]);
+      if (!Number.isSafeInteger(next) || next < 0) throw new Error('Could not re-read a valid Safe nonce on ' + rec.chain + '.');
+      var queued = (rr[1] || []).map(function (tx) { return Number(tx.nonce); })
+        .filter(function (nonce, i, all) { return Number.isSafeInteger(nonce) && nonce >= 0 && all.indexOf(nonce) === i; })
+        .sort(function (a, b) { return a - b; });
+      if (next !== rec.serviceNext || queued.join(',') !== (rec.queuedNonces || []).join(',')
+          || serviceQueueSnapshot(rr[1]) !== rec.queueSnapshot) {
+        throw new Error('The Safe nonce or pending queue changed on ' + rec.chain + '. Reopen this review before signing.');
+      }
+      var chosen = Number(rec.nInput && rec.nInput.value);
+      if (!Number.isSafeInteger(chosen) || chosen < next) throw new Error('Choose an unused or replaceable Safe nonce of at least ' + next + ' on ' + rec.chain + '.');
+      if (expectedNonce != null && chosen !== Number(expectedNonce)) throw new Error('The selected nonce changed while signing on ' + rec.chain + '. Review the transaction again.');
+      return chosen;
+    }
+
+    function setProposalNonceInputsDisabled(disabled) {
+      rows.forEach(function (row) { if (row.nInput) row.nInput.disabled = !!disabled; });
+    }
+
     var setStatus = makeStatusSetter(status);
     cancel.addEventListener('click', function () { finish(lastResult || { queued: 0, skipped: [], cancelled: true }); });
     // One CTA does the connected signer's part on EVERY chain: service chains get sign+queue; onchain chains get
@@ -11101,9 +12326,17 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     btn.addEventListener('click', function () {
       if (mode === 'executeReady') {
         if (!readyExecs.length) return;
-        btn.disabled = true; cancel.disabled = true;
+        btn.disabled = true; cancel.disabled = true; setProposalNonceInputsDisabled(true);
         setStatus('Preparing execution…', 'pending');
-        executeReadySafeTransactions(readyExecs, { title: 'Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's') }).then(function (res) {
+        Promise.resolve(opts.reverify ? opts.reverify() : null).then(function () {
+          return Promise.all(readyExecs.map(function (ready) {
+            return fetchSafeInfoFresh(ready.safe, ready.cid).then(function (info) {
+              if (!info) throw new Error('The authority on ' + ready.chain + ' is no longer a recognized Safe.');
+            });
+          }));
+        }).then(function () {
+          return executeReadySafeTransactions(readyExecs, { title: 'Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's') });
+        }).then(function (res) {
           if (res && res.done) {
             readyExecs.forEach(function (r) { if (r.rec && r.rec.st) r.rec.st.textContent = 'Executed'; });
             if (lastResult) { lastResult.executedReady = readyExecs.length; lastResult.readyExecs = []; }
@@ -11111,58 +12344,126 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             setStatus('Executed on ' + readyExecs.length + ' chain' + (readyExecs.length === 1 ? '' : 's') + '.', 'success');
             setTimeout(function () { finish(lastResult || { queued: 0, executedReady: readyExecs.length, skipped: [], cancelled: false }); }, 1400);
           } else {
-            btn.disabled = false; cancel.disabled = false;
+            btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
             setStatus('Cancelled — queued transactions are still available in the ' + queueTabName + ' tab or Safe app.', '');
           }
         }).catch(function (e) {
-          btn.disabled = false; cancel.disabled = false;
+          btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
           setStatus(errMessage(e, 'Could not execute the transactions.'), 'error');
         });
         return;
       }
       var acct = (getAccount && getAccount()) || null;
-      var live = rows.filter(function (r) { return r.deployed; });
-      var skipped = rows.filter(function (r) { return !r.deployed; }).map(function (r) { return r.chain; });
+      if (rows.some(function (r) { return !r.initialized; })) { setStatus('Still checking the selected Safes. Wait for every chain to finish before signing.', 'pending'); return; }
+      var unknown = rows.filter(function (r) { return r.state === 'unknown'; });
+      if (unknown.length) {
+        setStatus('Could not verify the Safe on ' + unknown.map(function (r) { return r.chain; }).join(', ') + '. Nothing was submitted; retry once every selected chain is readable.', 'error');
+        return;
+      }
+      var live = rows.filter(function (r) { return r.ready; });
+      var skipped = rows.filter(function (r) { return r.state === 'missing'; }).map(function (r) { return r.chain; });
       if (!live.length) { setStatus('The Safe isn’t deployed (or readable) on any selected chain. Add it on those chains in the Safe app first.', 'error'); return; }
       if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
-      btn.disabled = true; cancel.disabled = true;
+      btn.disabled = true; cancel.disabled = true; setProposalNonceInputsDisabled(true);
       (async function () {
-        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, notOwner = 0, pendingExec = 0, staleNonce = 0;
+        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, pendingExec = 0, staleNonce = 0;
+        var queuedSafeTxHashes = [];
+        function checkpointPartialResult() {
+          lastResult = { queued: queued, executed: executed, approved: approvedThisRun, skipped: skipped, cancelled: false, partial: true, readyExecs: readyExecs.slice(), safeTxHashes: queuedSafeTxHashes.slice() };
+          document.dispatchEvent(new CustomEvent('jb:safe-queued'));
+          document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+        }
         try {
+          if (opts.reverify) {
+            setStatus('Rechecking the reviewed onchain state…', 'pending');
+            await opts.reverify();
+            if (!getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+          }
+          setStatus('Checking every selected Safe before the first signature…', 'pending');
+          await Promise.all(live.map(async function (row) {
+            if (row.done) return;
+            var displayed = { threshold: row.threshold, owners: (row.owners || []).slice() };
+            var info = await verifySafeRowAction(row, acct, displayed);
+            if (!row.onChain) {
+              var serviceNonce = await verifyServiceQueueSnapshot(row);
+              row.actionSnapshot = { info: info, nonce: serviceNonce };
+              return;
+            }
+            await refreshOnChainStatus(row);
+            if (Number(row.chosenNonce) < Number(row.ctx && row.ctx.nonce)) {
+              throw new Error('Nonce ' + row.chosenNonce + ' is already used on ' + row.chain + '. Raise it before signing on any chain.');
+            }
+            row.actionSnapshot = { info: info, nonce: row.chosenNonce, hash: row.hash };
+          }));
           for (var i = 0; i < live.length; i++) {
             var r = live[i];
             if (r.done) continue; // already queued/executed in a prior run (re-click after a wallet switch)
-            var isOwner = (r.owners || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
-            if (!isOwner) { r.st.textContent = 'Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe — skipped.'; notOwner++; continue; }
+            var actionSnapshot = r.actionSnapshot;
+            if (!actionSnapshot) throw new Error('The Safe review snapshot is missing for ' + r.chain + '.');
+            var liveSafeInfo = await verifySafeRowAction(r, acct, actionSnapshot.info);
+            r.threshold = liveSafeInfo.threshold; r.owners = liveSafeInfo.owners;
             if (!r.onChain) {
-              var nonce = r.nInput ? Number(r.nInput.value) : 0;
-              if (!(nonce >= 0)) throw new Error('Enter a valid nonce for ' + r.chain);
+              var nonce = await verifyServiceQueueSnapshot(r, actionSnapshot.nonce);
               setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
-              var proposed = await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce });
+              var proposed = await proposeSafeTx({
+                chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce,
+                reverify: async function () {
+                  await verifySafeRowAction(r, acct, liveSafeInfo);
+                  await verifyServiceQueueSnapshot(r, nonce);
+                },
+              });
               r.done = true; queued++;
               var qtx = Object.assign({}, proposed.tx || {}, { confirmationsRequired: r.threshold });
+              if (proposed.safeTxHash) queuedSafeTxHashes.push(proposed.safeTxHash);
               if (safeUsableConfirmationCount(qtx) >= Number(r.threshold || 1)) {
-                readyExecs.push({ cid: r.cid, chain: r.chain, safe: safe, tx: qtx, rec: r });
+                // Carry the action's live project/ENS authority verifier through the later execution review,
+                // direct write, or Relayr payment. A handle proposal can remain open across an authority change;
+                // checking only once before this queue entry is created is not a safe write boundary.
+                readyExecs.push({ cid: r.cid, chain: r.chain, safe: safe, tx: qtx, rec: r, verifyAuthority: opts.reverify });
                 r.st.textContent = 'Queued — ready to execute now.';
               } else {
                 r.st.textContent = 'Queued — co-sign + execute it in the ' + queueTabName + ' tab’s “Pending Multisig Transactions”.';
               }
+              checkpointPartialResult();
             } else {
               await refreshOnChainStatus(r); // re-read at the chosen nonce so a co-signer's earlier approval counts
               var chosen = r.chosenNonce, current = Number(r.ctx.nonce);
+              var reviewedHash = r.hash;
+              if (chosen !== actionSnapshot.nonce || reviewedHash !== actionSnapshot.hash) {
+                throw new Error('The selected nonce or Safe transaction changed on ' + r.chain + '. Review the action again.');
+              }
               if (chosen < current) { r.st.textContent = 'Nonce ' + chosen + ' already used on ' + r.chain + ' — set it to ≥ ' + current + '.'; staleNonce++; continue; }
               var iApproved = (r.approved || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
               if (!iApproved) {
                 setStatus('Approving on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
-                await approveSafeHashOnChain(r.cid, safe, r.hash);
-                r.approved = (r.approved || []).concat([acct]); approvedThisRun++;
+                await approveSafeHashOnChain(r.cid, safe, reviewedHash, async function () {
+                  await verifySafeRowAction(r, acct, liveSafeInfo);
+                  if (Number(r.nInput && r.nInput.value) !== Number(chosen) || r.hash !== reviewedHash) {
+                    throw new Error('The selected nonce or Safe transaction changed while approving on ' + r.chain + '. Review the action again.');
+                  }
+                });
+                await verifySafeRowAction(r, acct, liveSafeInfo);
+                await refreshOnChainStatus(r);
+                chosen = r.chosenNonce; current = Number(r.ctx.nonce);
+                if (!(r.approved || []).some(function (owner) { return sameAddr(owner, acct); })) {
+                  throw new Error('The approval receipt confirmed on ' + r.chain + ', but the exact Safe approval is not readable. Refresh before executing.');
+                }
+                approvedThisRun++;
                 _onchainNonceHint[safe.toLowerCase() + ':' + r.cid + ':' + acct.toLowerCase()] = chosen + 1; _saveOnchainNonceHint(); // this signer's next onchain tx here defaults to the next nonce
+                checkpointPartialResult();
               }
               if ((r.approved || []).length >= r.ctx.threshold) {
                 if (chosen === current) {
                   setStatus('Executing on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
-                  await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o }; }) });
+                  await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o, approvedHash: true }; }) }, async function () {
+                    await verifySafeRowAction(r, acct, liveSafeInfo);
+                    await refreshOnChainStatus(r);
+                    if (Number(r.ctx.nonce) !== Number(chosen) || (r.approved || []).length < Number(r.ctx.threshold)) {
+                      throw new Error('The Safe nonce or exact approvals changed on ' + r.chain + '. Review the action again.');
+                    }
+                  });
                   r.done = true; r.st.textContent = 'Executed (nonce ' + chosen + ')'; executed++;
+                  checkpointPartialResult();
                 } else {
                   // Fully approved but not next in line — the Safe executes in strict nonce order, so lower nonces
                   // run first. Left un-done so a later click (once the nonce is current) picks it up and executes it.
@@ -11175,7 +12476,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           }
           document.dispatchEvent(new CustomEvent('jb:safe-queued'));
           document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
-          btn.disabled = false; cancel.disabled = false;
+          btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
           var summary = [];
           if (executed) summary.push('executed on ' + executed);
           if (queued) summary.push('queued on ' + queued);
@@ -11183,11 +12484,8 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           if (pendingExec) summary.push(pendingExec + ' awaiting nonce order');
           var didSomething = (queued + executed + approvedThisRun) > 0;
           var base = (summary.join(' | ') || 'No new actions') + (skipped.length ? ' | skipped ' + skipped.join(', ') : '') + '.';
-          lastResult = { queued: queued, executed: executed, skipped: skipped, cancelled: false, readyExecs: readyExecs.slice() };
-          if (!didSomething && !pending && !pendingExec && !staleNonce && notOwner) {
-            // Nothing happened because the connected wallet signs for none of these Safes — say so loudly.
-            setStatus('Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe on ' + notOwner + ' selected chain' + (notOwner > 1 ? 's' : '') + '. Switch to an owner’s wallet and try again.', 'error');
-          } else if (staleNonce) {
+          lastResult = { queued: queued, executed: executed, skipped: skipped, cancelled: false, readyExecs: readyExecs.slice(), safeTxHashes: queuedSafeTxHashes.slice() };
+          if (staleNonce) {
             // Chosen nonce is below the Safe's current nonce (already used) — actionable, so keep the modal open
             // with an error rather than the green-success + auto-close path.
             setStatus(base + ' ' + staleNonce + ' chain' + (staleNonce > 1 ? 's have' : ' has') + ' a stale nonce — raise it to the current value and click again.', 'error');
@@ -11213,7 +12511,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           }
         } catch (e) {
           if (typeof console !== 'undefined') console.error('[safe-apply]', e);
-          btn.disabled = false; cancel.disabled = false;
+          btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
           var msg = (e && (e.shortMessage || e.message)) || String(e);
           // A wallet SUBMISSION-RPC failure (HTTP/internal error while broadcasting), NOT a contract revert or fee
           // problem — maxFeePerGas is already over-capped. Point the signer at the real fix (switch the chain's RPC in
@@ -12646,13 +13944,14 @@ async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
     paymentHash: null,
     paymentChainId: Number(payment.chain),
     expectedCount: calls.length,
+    expectedTransactions: bundle.expected_transactions,
     chains: calls.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; }),
     records: [],
   };
   var paymentHash = await relayrPay(payment, null, function (hash) {
     session.paymentHash = hash;
     if (pendingScope) session = saveRelayrPendingSession(pendingScope, session) || session;
-  });
+  }, bundle.bundle_uuid);
   session.paymentHash = paymentHash;
   return monitorRelayrSession(session, setStatus, { pendingScope: pendingScope });
 }
@@ -13757,6 +15056,9 @@ function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
   var ethVal; try { ethVal = BigInt(tx.value || 0); } catch (_) { ethVal = 0n; }
   if (ethVal > 0n) warns.push('Sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe.');
   if (!nm) warns.push('Targets an UNRECOGNIZED contract (' + tx.to + ') — not a known Juicebox/Revnet contract. Review the raw data below before approving.');
+  warns.push('Safe gas/refund fields: safeTxGas=' + String(tx.safeTxGas || 0)
+    + ', baseGas=' + String(tx.baseGas || 0) + ', gasPrice=' + String(tx.gasPrice || 0)
+    + ', gasToken=' + String(tx.gasToken || ZERO_ADDRESS) + ', refundReceiver=' + String(tx.refundReceiver || ZERO_ADDRESS) + '.');
   var viewOnly = actionLabel === 'View';
   var desc = warns.join(' ') || null;
   if (viewOnly) desc = (desc ? (desc + ' ') : '') + 'This details view is read-only. To sign, use the Sign button on the transaction row, or open the transaction in the Safe app.';
@@ -13909,6 +15211,509 @@ function renderAccountCard(project) {
   return card;
 }
 
+function projectHandleTarget(project) {
+  var chainId = Number(project._urlChainId == null ? project.chainId : project._urlChainId);
+  return { chainId: chainId, projectId: Number(pidOn(project, chainId)) };
+}
+
+function storedProjectHandle(parts) {
+  return Array.isArray(parts) && parts.length ? parts.slice().reverse().join('.') : null;
+}
+
+async function readProjectHandleState(project) {
+  var target = projectHandleTarget(project);
+  var authority = await liveProjectHandleAuthorityOf(target.chainId, target.projectId);
+  var identity = null, identityError = null;
+  try { identity = await verifyProjectHandleAuthorityIdentity(target.chainId, authority.address); }
+  catch (error) { identityError = error; }
+  var values = await Promise.all([
+    readProjectHandlePartsBounded(clientFor(1), target.chainId, target.projectId, authority.address),
+    readProjectHandleBounded(clientFor(1), target.chainId, target.projectId, authority.address),
+  ]);
+  var stored = canonicalProjectHandle(storedProjectHandle(values[0]));
+  // A canonical contract return is not enough for an L2 contract authority: the address must represent the
+  // same EOA/plain-Safe authority on Ethereum before the card calls it verified or offers a routable alias.
+  var verified = identityError ? null : canonicalProjectHandle(values[1]);
+  var record = null;
+  if (stored) {
+    try { record = await exactEnsProjectRecord(stored + '.eth'); }
+    catch (_) { record = { resolver: null, text: null, unavailable: true }; }
+  }
+  return {
+    chainId: target.chainId,
+    projectId: target.projectId,
+    authority: authority,
+    authorityIdentity: identity,
+    authorityIdentityError: identityError,
+    expectedText: target.chainId + ':' + target.projectId,
+    stored: stored,
+    handle: verified,
+    invalidHandle: !identityError && !!values[1] && !verified,
+    record: record,
+  };
+}
+
+function renderProjectHandleCard(project) {
+  var card = el('div', 'detail-card project-handle-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Project handle'; card.appendChild(title);
+  var intro = el('div', 'detail-card-body backoffice-intro');
+  intro.textContent = 'Use any .eth name you control, such as banny.eth, as this exact project deployment’s verified @handle. No shared namespace is required.';
+  card.appendChild(intro);
+  var body = el('div'); body.appendChild(skel('100%', '44px')); card.appendChild(body);
+  var actions = el('div', 'project-handle-actions');
+  var setBtn = el('button', 'operator-cta powers-act'); setBtn.textContent = 'Set or change handle'; setBtn.disabled = true; actions.appendChild(setBtn);
+  card.appendChild(actions);
+  var state = null;
+
+  function load() {
+    body.innerHTML = ''; body.appendChild(skel('100%', '44px')); setBtn.disabled = true;
+    readProjectHandleState(project).then(function (next) {
+      if (!body.isConnected) return;
+      state = next; body.innerHTML = ''; setBtn.disabled = false;
+      var row = el('div', 'powers-row');
+      var head = el('div', 'powers-head');
+      var label = el('span', 'powers-label');
+      if (state.handle) {
+        var link = document.createElement('a'); link.href = '#@' + encodeURIComponent(state.handle); link.textContent = '@' + state.handle;
+        label.appendChild(link);
+      } else label.textContent = state.stored ? ('@' + state.stored) : 'Not set';
+      head.appendChild(label);
+      var badge = el('span', 'powers-state ' + (state.handle ? 'on' : 'off'));
+      badge.textContent = state.handle ? 'Verified' : (state.authorityIdentityError ? 'Authority mismatch' : (state.invalidHandle ? 'Invalid handle' : (state.stored ? 'Awaiting ENS' : 'No handle')));
+      head.appendChild(badge); row.appendChild(head);
+      var desc = el('div', 'powers-desc');
+      desc.textContent = chainNameOf(state.chainId) + ' #' + state.projectId + ' · ENS text: ' + PROJECT_HANDLE_TEXT_KEY + ' = ' + state.expectedText;
+      row.appendChild(desc);
+      if (state.authorityIdentityError) {
+        var mismatch = el('div', 'powers-warn');
+        mismatch.textContent = state.authorityIdentityError.message || String(state.authorityIdentityError);
+        row.appendChild(mismatch);
+      } else if (state.stored && !state.handle) {
+        var why = el('div', 'powers-warn');
+        why.textContent = state.record && state.record.unavailable
+          ? 'Could not read the exact ENS resolver.'
+          : (!state.record || !state.record.resolver
+            ? state.stored + '.eth has no resolver set on its exact ENS node.'
+            : 'Current ENS text is ' + (state.record.text == null ? 'unset' : '“' + state.record.text + '”') + '.');
+        row.appendChild(why);
+      } else if (state.invalidHandle) {
+        var invalid = el('div', 'powers-warn');
+        invalid.textContent = 'The contract returned a non-canonical ENS handle. Publish a normalized handle before using it as a URL.';
+        row.appendChild(invalid);
+      }
+      body.appendChild(row);
+    }).catch(function (error) {
+      if (!body.isConnected) return;
+      body.innerHTML = '';
+      var failed = el('div', 'powers-desc'); failed.textContent = errMessage(error, 'Could not read the project handle.'); body.appendChild(failed);
+    });
+  }
+
+  setBtn.addEventListener('click', function (event) {
+    event.preventDefault();
+    if (state) openProjectHandleModal(project, state, load);
+  });
+  load();
+  return card;
+}
+
+function openProjectHandleModal(project, initialState, onSaved) {
+  var target = { chainId: initialState.chainId, projectId: initialState.projectId };
+  var authority = initialState.authority;
+  var content = el('div', 'modal-body operator-edit project-handle-modal');
+  content.appendChild(operatorGateNode(authority.kind, authority.address, 'for publishing this project handle on Ethereum.', target.chainId));
+  var scope = el('div', 'operator-edit-across');
+  scope.textContent = 'Enter any .eth name you control. This flow writes ' + PROJECT_HANDLE_TEXT_KEY + ' = ' + initialState.expectedText + ' for exactly ' + chainNameOf(target.chainId) + ' #' + target.projectId + ', then the live project ' + authority.kind + ' publishes that same name in JBProjectHandles. The ENS-authorized account and project authority may be different; the single button always resumes at the next required transaction.';
+  content.appendChild(scope);
+
+  // A Safe authority discovered on the project chain may not exist at the same address on Ethereum yet. Surface
+  // the existing deterministic deployment flow here; publishing remains blocked until the full identity gate
+  // rechecks proxy code, singleton/handler, owners/threshold, owner account type, guard, and modules on both chains.
+  var authorityRepair = el('div', 'project-handle-authority-repair'); content.appendChild(authorityRepair);
+  if (target.chainId !== 1) {
+    inspectProjectHandleAuthorityIdentity(target.chainId, authority.address).then(function (identityState) {
+      if (!authorityRepair.isConnected || identityState.kind !== 'safe-missing-mainnet') return;
+      var repairNote = el('div', 'powers-warn');
+      repairNote.textContent = 'This project is controlled by a Safe on ' + chainNameOf(target.chainId) + ', but that address is not deployed on Ethereum. Deploy the same Safe there before publishing the handle.';
+      authorityRepair.appendChild(repairNote);
+      var deploySafe = el('button', 'operator-cta powers-act'); deploySafe.type = 'button'; deploySafe.textContent = 'Deploy same Safe on Ethereum'; authorityRepair.appendChild(deploySafe);
+      deploySafe.addEventListener('click', function (event) {
+        event.preventDefault(); if (deploySafe.disabled) return; deploySafe.disabled = true;
+        setStatus('Reading and validating the Safe’s original setup…', 'pending');
+        fetchSafeCreation(authority.address).then(function (creation) {
+          if (!creation) throw new Error('Could not read the Safe’s original deployment setup.');
+          setStatus('Deploying the same-address Safe on Ethereum…', 'pending');
+          return deploySafeSameAddress(1, creation, authority.address, target.chainId);
+        }).then(function () {
+          delete _safeCache['1:' + authority.address.toLowerCase()];
+          return verifyProjectHandleAuthorityIdentity(target.chainId, authority.address);
+        }).then(function (identity) {
+          initialState.authorityIdentity = identity; initialState.authorityIdentityError = null;
+          setStatus('The Ethereum Safe is deployed and its live authority matches the project chain.', 'success');
+          authorityRepair.innerHTML = '';
+          if (onSaved) onSaved();
+        }).catch(function (error) {
+          deploySafe.disabled = false;
+          setStatus(errMessage(error, 'Could not deploy and verify the same-address Safe on Ethereum.'), 'error');
+        });
+      });
+    }).catch(function () {});
+  }
+
+  var draftKey = 'jb-project-handle-draft:' + target.chainId + ':' + target.projectId;
+  var draft = null;
+  try {
+    draft = JSON.parse(localStorage.getItem(draftKey) || 'null');
+    if (!draft || normalizeProjectHandle(draft.handle).handle !== draft.handle
+        || String(draft.authority || '').toLowerCase() !== String(authority.address || '').toLowerCase()
+        || draft.authorityKind !== authority.kind) draft = null;
+  } catch (_) { draft = null; }
+  var ensQueuedHandle = draft && draft.ensQueued ? draft.handle : null;
+  var ensPendingHash = draft && draft.ensPendingHash || null;
+  var ensPendingSafe = draft && draft.ensPendingSafe || null;
+  var publishQueuedHandle = draft && draft.publishQueued ? draft.handle : null;
+  var publishPendingHash = draft && draft.publishPendingHash || null;
+  function saveDraft(handle) {
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({
+        handle: handle,
+        authority: String(authority.address || '').toLowerCase(), authorityKind: authority.kind,
+        ensQueued: ensQueuedHandle === handle,
+        ensPendingHash: ensQueuedHandle === handle ? ensPendingHash : null,
+        ensPendingSafe: ensQueuedHandle === handle ? ensPendingSafe : null,
+        publishQueued: publishQueuedHandle === handle, publishPendingHash: publishQueuedHandle === handle ? publishPendingHash : null,
+      }));
+    } catch (_) {}
+  }
+  function clearDraft() { try { localStorage.removeItem(draftKey); } catch (_) {} }
+
+  var label = el('div', 'operator-edit-label'); label.style.marginTop = '12px'; label.textContent = 'Your .eth name'; content.appendChild(label);
+  var input = el('input', 'operator-edit-jwt'); input.type = 'text'; input.placeholder = 'banny.eth';
+  input.value = (draft && draft.handle) || initialState.handle || initialState.stored || '';
+  content.appendChild(input);
+  var normalizedHint = el('div', 'operator-edit-cur'); content.appendChild(normalizedHint);
+
+  var recordBox = el('div', 'project-handle-record');
+  var expected = el('div', 'powers-desc');
+  expected.textContent = 'Required ENS text record: ' + PROJECT_HANDLE_TEXT_KEY + ' = ' + initialState.expectedText;
+  recordBox.appendChild(expected);
+  var copy = el('button', 'operator-cta powers-act'); copy.type = 'button'; copy.textContent = 'Copy record';
+  copy.addEventListener('click', function (event) {
+    event.preventDefault();
+    copyText(PROJECT_HANDLE_TEXT_KEY + '=' + initialState.expectedText).then(function () {
+      copy.textContent = 'Copied'; setTimeout(function () { copy.textContent = 'Copy record'; }, 1200);
+    }).catch(function () {});
+  });
+  recordBox.appendChild(copy);
+  var manager = document.createElement('a'); manager.className = 'operator-cta powers-act'; manager.href = 'https://app.ens.domains/';
+  manager.target = '_blank'; manager.rel = 'noopener'; manager.textContent = 'Open ENS Manager ↗'; recordBox.appendChild(manager);
+  var recordStatus = el('div', 'operator-edit-cur'); recordBox.appendChild(recordStatus);
+  content.appendChild(recordBox);
+
+  var status = el('div', 'operator-edit-status'); content.appendChild(status);
+  var actions = el('div', 'operator-edit-actions');
+  var primary = el('button', 'operator-cta operator-edit-submit'); primary.type = 'button'; primary.textContent = 'Continue'; primary.disabled = true; actions.appendChild(primary); content.appendChild(actions);
+  var modal = openModal('Set project handle', content);
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
+  var checkSeq = 0, checked = null, busy = false;
+
+  function buildHandleWrite(normalized) {
+    var address = getAddress('JBProjectHandles', 1);
+    if (!address) throw new Error('No JBProjectHandles deployment on Ethereum.');
+    return buildSetProjectHandleCall({
+      address: address, chainId: target.chainId, projectId: target.projectId, parts: normalized.parts,
+    });
+  }
+
+  async function pendingHandleWriteState(normalized) {
+    var expectedCall = buildHandleWrite(normalized);
+    var txs = await listPendingSafeTxs(1, authority.address);
+    var exact = false, hashSeen = false;
+    (txs || []).forEach(function (tx) {
+      var txHash = String((tx && (tx.safeTxHash || tx.contractTransactionHash)) || '').toLowerCase();
+      if (publishPendingHash && txHash === String(publishPendingHash).toLowerCase()) hashSeen = true;
+      var toMatches = tx && tx.to && sameAddr(tx.to, expectedCall.target);
+      var valueIsZero = false;
+      try { valueIsZero = BigInt((tx && tx.value) || 0) === 0n; } catch (_) {}
+      if (toMatches && valueIsZero && Number((tx && tx.operation) || 0) === 0
+          && String((tx && tx.data) || '').toLowerCase() === expectedCall.data.toLowerCase()) exact = true;
+    });
+    if (hashSeen && !exact) throw new Error('The saved Safe proposal no longer matches this exact project-handle call.');
+    if (exact) return 'pending';
+    // The Safe service endpoint is deliberately bounded to 50 rows. Absence is conclusive only below that cap;
+    // at the cap keep the draft locked rather than risk proposing a duplicate outside the returned page.
+    return (txs || []).length >= 50 ? 'unknown' : 'absent';
+  }
+
+  async function pendingEnsWriteState(review) {
+    if (!ensPendingSafe) return 'absent';
+    var expectedCall = buildSetEnsProjectRecordCall({
+      resolver: review.record.resolver, ensName: review.normalized.ensName,
+      chainId: target.chainId, projectId: target.projectId,
+    });
+    var txs = await listPendingSafeTxs(1, ensPendingSafe);
+    var exact = false, hashSeen = false;
+    (txs || []).forEach(function (tx) {
+      var txHash = String((tx && (tx.safeTxHash || tx.contractTransactionHash)) || '').toLowerCase();
+      if (ensPendingHash && txHash === String(ensPendingHash).toLowerCase()) hashSeen = true;
+      var toMatches = tx && tx.to && sameAddr(tx.to, expectedCall.target);
+      var valueIsZero = false;
+      try { valueIsZero = BigInt((tx && tx.value) || 0) === 0n; } catch (_) {}
+      if (toMatches && valueIsZero && Number((tx && tx.operation) || 0) === 0
+          && String((tx && tx.data) || '').toLowerCase() === expectedCall.data.toLowerCase()) exact = true;
+    });
+    if (hashSeen && !exact) throw new Error('The saved ENS Safe proposal no longer matches this exact resolver call.');
+    if (exact) return 'pending';
+    return (txs || []).length >= 50 ? 'unknown' : 'absent';
+  }
+
+  async function checkRecord() {
+    var seq = ++checkSeq;
+    checked = null;
+    var normalized;
+    try { normalized = normalizeProjectHandle(input.value); }
+    catch (error) {
+      normalizedHint.textContent = error.message || String(error); recordStatus.textContent = '';
+      primary.textContent = 'Continue'; primary.disabled = true; primary.dataset.projectHandleStep = ''; return null;
+    }
+    var ensQueuedForSelected = ensQueuedHandle === normalized.handle;
+    var publishQueuedForSelected = publishQueuedHandle === normalized.handle;
+    input.disabled = busy || ensQueuedForSelected || publishQueuedForSelected;
+    saveDraft(normalized.handle);
+    normalizedHint.textContent = 'URL: @' + normalized.handle + ' · ENS: ' + normalized.ensName;
+    manager.href = 'https://app.ens.domains/' + encodeURIComponent(normalized.ensName);
+    recordStatus.textContent = 'Checking the exact ENS resolver…';
+    try {
+      var pair = await Promise.all([
+        exactEnsProjectRecord(normalized.ensName),
+        readExactEnsController(clientFor(1), normalized.ensName).catch(function () { return null; }),
+      ]);
+      if (seq !== checkSeq) return null;
+      var record = pair[0], controller = pair[1];
+      var publishedHandle = null, liveAuthority = null, publishQueueUnknown = false;
+      if (record.text === initialState.expectedText) {
+        if (ensQueuedForSelected) {
+          ensQueuedHandle = null; ensPendingHash = null; ensPendingSafe = null; ensQueuedForSelected = false; saveDraft(normalized.handle);
+        }
+        liveAuthority = await projectHandleAuthorityOf(target.chainId, target.projectId);
+        if (seq !== checkSeq) return null;
+        if (!sameAddr(liveAuthority.address, authority.address) || liveAuthority.kind !== authority.kind) {
+          throw new Error('The project authority changed. Close this dialog and reload before continuing.');
+        }
+        publishedHandle = await canonicalProjectHandleOf(target, liveAuthority.address);
+        if (seq !== checkSeq) return null;
+        if (publishedHandle === normalized.handle) {
+          publishQueuedHandle = null; publishPendingHash = null; publishQueuedForSelected = false; clearDraft();
+        } else if (publishQueuedForSelected) {
+          var pendingState = await pendingHandleWriteState(normalized);
+          if (seq !== checkSeq) return null;
+          if (pendingState === 'absent') {
+            publishQueuedHandle = null; publishPendingHash = null; publishQueuedForSelected = false; saveDraft(normalized.handle);
+          } else publishQueueUnknown = pendingState === 'unknown';
+        }
+      }
+      checked = {
+        normalized: normalized, record: record, controller: controller,
+        authority: liveAuthority, publishedHandle: publishedHandle,
+        ensQueued: ensQueuedForSelected, publishQueued: publishQueuedForSelected,
+        publishQueueUnknown: publishQueueUnknown,
+      };
+      var next = projectHandleEditorStep({
+        resolver: record.resolver, text: record.text, expectedText: initialState.expectedText,
+        selectedHandle: normalized.handle, publishedHandle: publishedHandle,
+        ensQueued: ensQueuedForSelected, publishQueued: publishQueuedForSelected,
+      });
+      primary.dataset.projectHandleStep = next.kind;
+      primary.textContent = next.label;
+      primary.disabled = busy || !next.enabled;
+      input.disabled = busy || (!!record.resolver && (ensQueuedForSelected || publishQueuedForSelected));
+      if (!record.resolver) {
+        recordStatus.textContent = 'No resolver is set on this exact ENS node. Set one in ENS Manager first; this app will not replace it.';
+      } else if (record.text !== initialState.expectedText) {
+        recordStatus.textContent = 'Current ' + PROJECT_HANDLE_TEXT_KEY + ' text is ' + (record.text == null ? 'unset' : '“' + record.text + '”') + '. The connected ENS-authorized account can set it to ' + initialState.expectedText + '.' + (controller ? ' Registry/NameWrapper controller: ' + truncAddr(controller) + '.' : ' Controller unavailable; a resolver delegate may still be authorized.');
+      } else {
+        recordStatus.textContent = publishedHandle === normalized.handle
+          ? 'This .eth name and the project authority’s matching JBProjectHandles claim are verified.'
+          : publishQueuedForSelected
+            ? (publishQueueUnknown
+              ? 'The saved Safe proposal is outside the bounded queue page. Check it in Safe before retrying.'
+              : 'The exact JBProjectHandles transaction is queued in the Ethereum Safe. Execute it, then check again.')
+          : 'ENS record verified. Continue to publish from the live project ' + authority.kind + '.';
+      }
+      return checked;
+    } catch (error) {
+      if (seq === checkSeq) {
+        var canRetryPending = ensQueuedForSelected || publishQueuedForSelected;
+        primary.textContent = canRetryPending ? 'Retry pending check' : 'Try again';
+        primary.disabled = busy || !canRetryPending; primary.dataset.projectHandleStep = canRetryPending ? 'pending-check' : '';
+        recordStatus.textContent = errMessage(error, 'Could not read the exact ENS resolver.');
+      }
+      return null;
+    }
+  }
+  input.addEventListener('input', function () { checkRecord(); });
+  checkRecord();
+
+  async function resumeEditor() {
+    busy = false; input.disabled = false; await checkRecord();
+  }
+
+  async function runEnsRecordStep(review) {
+      if (!review || !review.record.resolver) {
+        setStatus('This exact ENS node needs an existing resolver before its text record can be set.', 'error'); await resumeEditor(); return;
+      }
+      if (review.record.text === initialState.expectedText) {
+        ensQueuedHandle = null; ensPendingHash = null; ensPendingSafe = null; saveDraft(review.normalized.handle);
+        setStatus('ENS already has the correct project record. Continue to publish the handle.', 'success'); await resumeEditor(); return;
+      }
+      if (ensQueuedHandle === review.normalized.handle) {
+        var ensPendingState = await pendingEnsWriteState(review);
+        if (ensPendingState !== 'absent') {
+          setStatus(ensPendingState === 'unknown'
+            ? 'The saved ENS Safe proposal is outside the bounded queue page. Check it in Safe before retrying.'
+            : 'The queued ENS Safe transaction has not executed yet. Execute it in Safe, then use this same button to check again.', 'pending');
+          await resumeEditor(); return;
+        }
+        ensQueuedHandle = null; ensPendingHash = null; ensPendingSafe = null; saveDraft(review.normalized.handle);
+      }
+      var connected = getAccount();
+      if (!connected) {
+        setStatus('Connecting an ENS-authorized wallet…', 'pending');
+        connected = await connect().then(getAccount).catch(function () { return null; });
+      }
+      if (!connected) { setStatus('Connect an ENS-authorized wallet to continue.', 'error'); await resumeEditor(); return; }
+      var request = buildSetEnsProjectRecordCall({
+        resolver: review.record.resolver, ensName: review.normalized.ensName,
+        chainId: target.chainId, projectId: target.projectId,
+      });
+      setStatus('Checking this wallet and the ENS controller against the exact resolver…', 'pending');
+      var writeAuthority = await findEnsRecordWriteAuthority(clientFor(1), [connected, review.controller], request);
+      if (!writeAuthority) {
+        setStatus('The connected wallet is not authorized by this resolver. Switch to an ENS-authorized account' + (review.controller ? ' or a signer of ' + truncAddr(review.controller) : '') + ', or use ENS Manager.', 'error');
+        await resumeEditor(); return;
+      }
+      var resolverAtReview = review.record.resolver;
+      var reverifyResolver = async function () {
+        return verifyEnsRecordWriteAuthorization({
+          client: clientFor(1), ensName: review.normalized.ensName, resolver: resolverAtReview,
+          expectedText: initialState.expectedText, writeAuthority: writeAuthority, request: request,
+        });
+      };
+      var ensProject = { id: 'ens-' + review.normalized.handle, chainId: 1, owner: writeAuthority, isRevnet: false };
+      var result = await runAuthorityActionAcrossChains(ensProject, [{ id: 1, name: 'Ethereum' }], writeAuthority, function () {
+        return {
+          to: request.target, data: request.data, contract: 'ENS resolver',
+          abi: request.abi, functionName: request.functionName, args: request.args,
+        };
+      }, {
+        label: 'Set ENS project record', title: 'Set ENS project record', gas: 300000n,
+        authorityChainId: 1, reverify: reverifyResolver,
+        pendingScope: relayrActionScope(ensProject, 'set-ens-project-record', review.normalized.handle),
+      }, setStatus).catch(function (error) {
+        setStatus(errMessage(error, 'Could not set the ENS project record.'), 'error'); return null;
+      });
+      if (!result) { await resumeEditor(); return; }
+      if (result.cancelled) { setStatus('Cancelled', ''); await resumeEditor(); return; }
+      if (result.relayr || result.executedReady || Number(result.executed) > 0) {
+        setStatus('Transaction executed. Verifying the current exact resolver and text…', 'pending');
+        try {
+          await verifyEnsProjectRecord(clientFor(1), {
+            ensName: review.normalized.ensName, resolver: resolverAtReview,
+            chainId: target.chainId, projectId: target.projectId,
+          });
+        } catch (error) {
+          setStatus('Transaction executed, but the ENS record is not verified: ' + errMessage(error, 'live verification failed.'), 'error');
+          await resumeEditor(); return;
+        }
+        ensQueuedHandle = null; ensPendingHash = null; ensPendingSafe = null; saveDraft(review.normalized.handle);
+        setStatus('ENS record set and verified. Use the same button to publish from the live project ' + authority.kind + '.', 'success');
+        if (onSaved) onSaved(); await resumeEditor(); return;
+      }
+      ensQueuedHandle = review.normalized.handle;
+      ensPendingHash = result.safeTxHash || (result.safeTxHashes && result.safeTxHashes[0]) || null;
+      ensPendingSafe = writeAuthority;
+      saveDraft(review.normalized.handle);
+      setStatus('ENS record queued in the Ethereum Safe. Execute it there, then reopen this flow or use “Check ENS execution”.', 'pending');
+      await resumeEditor();
+  }
+
+  async function runPublishStep(review) {
+      if (!review || !review.record.resolver || review.record.text !== initialState.expectedText) {
+        setStatus('Set and verify the exact ENS text record before publishing the handle.', 'error'); await resumeEditor(); return;
+      }
+      var liveAuthority;
+      try { liveAuthority = await projectHandleAuthorityOf(target.chainId, target.projectId); }
+      catch (error) { setStatus(errMessage(error, 'Could not verify the current project authority.'), 'error'); await resumeEditor(); return; }
+      if (!sameAddr(liveAuthority.address, authority.address) || liveAuthority.kind !== authority.kind) {
+        setStatus('The project authority changed. Close this dialog and reload before publishing.', 'error'); await resumeEditor(); return;
+      }
+      var ethereum = [{ id: 1, name: 'Ethereum' }];
+      var buildCall = function () {
+        var call = buildHandleWrite(review.normalized);
+        return Object.assign({ to: call.target, contract: 'JBProjectHandles' }, call);
+      };
+      var result = await runAuthorityActionAcrossChains(project, ethereum, authority.address, buildCall, {
+        label: 'Set project handle', title: 'Publish project handle', gas: 1500000n,
+        authorityChainId: target.chainId,
+        reverify: async function () {
+          var freshAuthority = await projectHandleAuthorityOf(target.chainId, target.projectId);
+          if (!sameAddr(freshAuthority.address, authority.address) || freshAuthority.kind !== authority.kind) throw new Error('The project authority changed. Review the transaction again.');
+          var freshRecord = await exactEnsProjectRecord(review.normalized.ensName);
+          if (!freshRecord.resolver || freshRecord.text !== initialState.expectedText) throw new Error('The exact ENS record changed. Review the transaction again.');
+        },
+        pendingScope: relayrActionScope(project, 'set-project-handle', target.chainId + ':' + target.projectId),
+      }, setStatus).catch(function (error) {
+        setStatus(errMessage(error, 'Could not publish the project handle.'), 'error'); return null;
+      });
+      if (!result) { await resumeEditor(); return; }
+      if (result.cancelled) { setStatus('Cancelled', ''); await resumeEditor(); return; }
+      if (result.relayr || result.executedReady || Number(result.executed) > 0) {
+        setStatus('Transaction confirmed. Verifying the live authority, ENS record, and handle…', 'pending');
+        try {
+          await verifyPublishedProjectHandle(target, review.normalized.handle, initialState.expectedText, authority);
+        }
+        catch (error) {
+          setStatus('Transaction confirmed, but the handle is not verified: ' + errMessage(error, 'live verification failed.'), 'error');
+          if (onSaved) onSaved();
+          await resumeEditor(); return;
+        }
+        clearDraft();
+        setStatus('Handle published and verified: @' + review.normalized.handle + '.', 'success');
+        if (onSaved) onSaved();
+        setTimeout(function () { modal.close(); }, 1600);
+      } else {
+        publishQueuedHandle = review.normalized.handle;
+        publishPendingHash = result.safeTxHash || (result.safeTxHashes && result.safeTxHashes[0]) || null;
+        saveDraft(review.normalized.handle);
+        setStatus('Queued in the Ethereum Safe. Execute it there; success is shown only after the live authority, exact ENS record, and handle all verify.', 'pending');
+        await resumeEditor();
+      }
+  }
+
+  primary.addEventListener('click', function (event) {
+    event.preventDefault(); if (busy) return;
+    busy = true; input.disabled = true; primary.disabled = true;
+    (async function () {
+      var review = await checkRecord();
+      if (!review || !review.record.resolver) {
+        setStatus('Enter a .eth name with an existing resolver to continue.', 'error'); await resumeEditor(); return;
+      }
+      if (review.record.text !== initialState.expectedText) await runEnsRecordStep(review);
+      else if (review.publishedHandle === review.normalized.handle) {
+        setStatus('@' + review.normalized.handle + ' is already verified for this exact project deployment.', 'success');
+        await resumeEditor();
+      } else if (review.publishQueued) {
+        setStatus(review.publishQueueUnknown
+          ? 'The saved Safe proposal could not be ruled out within the bounded queue page. Check it in Safe before retrying.'
+          : 'The exact publish transaction is still queued in Safe. Execute it, then use this same button to check again.', 'pending');
+        await resumeEditor();
+      } else await runPublishStep(review);
+    })().catch(async function (error) {
+      setStatus(errMessage(error, 'Could not continue the project-handle flow.'), 'error'); await resumeEditor();
+    });
+  });
+}
+
 function appendPendingSafeTxsCard(section, safe, chains, homeChainId, contextLabel) {
   if (!safe) return null;
   var safeCard = renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel);
@@ -13917,17 +15722,140 @@ function appendPendingSafeTxsCard(section, safe, chains, homeChainId, contextLab
   return safeCard;
 }
 
+async function verifyPendingSafeAuthority(safe, chain) {
+  if (!chain || !chain.authorityRole) return true;
+  if (chain.authorityRole === 'admin') {
+    var admin = await read(chain.id, 'JBDirectory', ADMIN_OWNER_ABI, 'owner', []);
+    if (!admin || !sameAddr(admin, safe)) throw new Error('The protocol admin changed on ' + chainNameOf(chain.id) + '. Reload this tab.');
+    return true;
+  }
+  if (!Number.isSafeInteger(Number(chain.projectId)) || Number(chain.projectId) < 1) throw new Error('Could not verify this project’s ID on ' + chainNameOf(chain.id) + '.');
+  var owner = await read(chain.id, 'JBProjects', ownerOfAbi, 'ownerOf', [BigInt(chain.projectId)]);
+  if (chain.authorityRole === 'owner') {
+    if (!owner || !sameAddr(owner, safe)) throw new Error('The project owner changed on ' + chainNameOf(chain.id) + '. Reload this tab.');
+    return true;
+  }
+  var revOwner = getAddress('REVOwner', chain.id);
+  if (!revOwner || !sameAddr(owner, revOwner) || !await isLiveRevnetOperator(chain.id, chain.projectId, safe)) {
+    throw new Error('The revnet operator changed on ' + chainNameOf(chain.id) + '. Reload this tab.');
+  }
+  return true;
+}
+
+// A queued handle transaction is governed by the tuple encoded in its calldata, not by whichever Ethereum
+// sibling happened to render the Safe card. JBProjectHandles is permissionless, so a stale former L2 authority
+// can otherwise publish a claim even when the card's ordinary Ethereum project check still passes. ENS setText
+// proposals likewise re-check the exact Registry resolver and the Safe's live resolver authorization.
+export async function verifyQueuedProjectHandleTransaction(safe, queueChainId, tx, readers) {
+  readers = readers || {};
+  var call = { target: tx && tx.to, data: tx && tx.data, value: tx && tx.value, operation: tx && tx.operation };
+  var handleWrite = decodeSetProjectHandleCall(call);
+  if (handleWrite) {
+    if (Number(queueChainId) !== 1) throw new Error('JBProjectHandles writes must be queued on Ethereum.');
+    var authority = await (readers.authorityOf
+      ? readers.authorityOf({ chainId: handleWrite.chainId, projectId: handleWrite.projectId })
+      : projectHandleAuthorityOf(handleWrite.chainId, handleWrite.projectId));
+    if (!authority || !sameAddr(authority.address, safe)) {
+      throw new Error('The live project ' + ((authority && authority.kind) || 'authority') + ' changed for ' + chainNameOf(handleWrite.chainId) + ' #' + handleWrite.projectId + '.');
+    }
+    var record = await (readers.ensRecord
+      ? readers.ensRecord(handleWrite.ensName)
+      : exactEnsProjectRecord(handleWrite.ensName));
+    if (!record || !record.resolver || record.text !== handleWrite.expectedText) {
+      throw new Error('The exact ENS record no longer points to ' + handleWrite.expectedText + '.');
+    }
+    return { kind: 'handle', binding: handleWrite, authority: authority, record: record };
+  }
+
+  var ensWrite = decodeSetEnsProjectRecordCall(call);
+  if (!ensWrite) return null;
+  if (Number(queueChainId) !== 1) throw new Error('ENS project-record writes must be queued on Ethereum.');
+  // ENS write authority is resolver-specific and may intentionally be a different EOA/Safe from the project
+  // owner/operator. Bind this queue item to its exact tuple/node/resolver and re-simulate from this Safe; the
+  // later JBProjectHandles transaction independently requires the tuple's current live project authority.
+  var ethereumClient = readers.client || clientFor(1);
+  var resolver = await (readers.resolverOf
+    ? readers.resolverOf(ensWrite.node)
+    : readExactEnsResolverForNode(ethereumClient, ensWrite.node));
+  if (!resolver || !sameAddr(resolver, ensWrite.target)) throw new Error('The exact ENS resolver changed after this transaction was queued.');
+  var findAuthority = readers.findAuthority || findEnsRecordWriteAuthority;
+  var authorized = await findAuthority(ethereumClient, [safe], { target: ensWrite.target, data: ensWrite.data });
+  if (!authorized || !sameAddr(authorized, safe)) throw new Error('The ENS resolver no longer authorizes this Safe.');
+  return { kind: 'ens', binding: ensWrite, resolver: resolver };
+}
+
+export async function verifyCompletedQueuedProjectHandleTransaction(safe, queueChainId, tx, readers) {
+  readers = readers || {};
+  var call = { target: tx && tx.to, data: tx && tx.data, value: tx && tx.value, operation: tx && tx.operation };
+  var handleWrite = decodeSetProjectHandleCall(call);
+  if (handleWrite) {
+    if (Number(queueChainId) !== 1) throw new Error('JBProjectHandles writes must execute on Ethereum.');
+    var handleAuthority = await (readers.authorityOf
+      ? readers.authorityOf({ chainId: handleWrite.chainId, projectId: handleWrite.projectId })
+      : projectHandleAuthorityOf(handleWrite.chainId, handleWrite.projectId));
+    if (!handleAuthority || !sameAddr(handleAuthority.address, safe)) throw new Error('The project authority changed before the handle completed.');
+    var record = await (readers.ensRecord
+      ? readers.ensRecord(handleWrite.ensName)
+      : exactEnsProjectRecord(handleWrite.ensName));
+    if (!record || !record.resolver || record.text !== handleWrite.expectedText) throw new Error('The exact ENS project record changed before the handle completed.');
+    var rawHandle = await (readers.handleOf
+      ? readers.handleOf({ chainId: handleWrite.chainId, projectId: handleWrite.projectId }, safe)
+      : rawProjectHandleOf(handleWrite, safe));
+    if (canonicalProjectHandle(rawHandle) !== handleWrite.handle) throw new Error('JBProjectHandles did not publish the exact reviewed handle.');
+    return { kind: 'handle', binding: handleWrite, authority: handleAuthority, record: record };
+  }
+  var ensWrite = decodeSetEnsProjectRecordCall(call);
+  if (!ensWrite) return null;
+  if (Number(queueChainId) !== 1) throw new Error('ENS project-record writes must execute on Ethereum.');
+  var ensRecord = await (readers.ensNodeRecord
+    ? readers.ensNodeRecord(ensWrite.node)
+    : readExactEnsTextForNode(clientFor(1), ensWrite.node, PROJECT_HANDLE_TEXT_KEY));
+  if (!ensRecord || !ensRecord.resolver || !sameAddr(ensRecord.resolver, ensWrite.target) || ensRecord.text !== ensWrite.text) {
+    throw new Error('The exact ENS project record does not match the completed transaction.');
+  }
+  return { kind: 'ens', binding: ensWrite, record: ensRecord };
+}
+
+async function verifyPendingSafeTransactionAuthority(safe, chain, tx) {
+  var specialized = await verifyQueuedProjectHandleTransaction(safe, chain.id, tx);
+  if (specialized) {
+    if (chain && chain.handleQueueOnly && !queuedHandleBindingMatchesTargets(specialized, chain.handleQueueTargets)) {
+      throw new Error('This queued handle write belongs to a different project deployment.');
+    }
+    return specialized;
+  }
+  if (chain && chain.handleQueueOnly) throw new Error('This Ethereum queue row accepts only verified project-handle transactions.');
+  return verifyPendingSafeAuthority(safe, chain);
+}
+
+export function queuedHandleBindingMatchesTargets(verified, targets) {
+  var binding = verified && verified.binding;
+  if (!binding || !Number.isSafeInteger(Number(binding.chainId)) || !Number.isSafeInteger(Number(binding.projectId))) return false;
+  return (targets || []).some(function (target) {
+    return Number(target.chainId) === Number(binding.chainId) && Number(target.projectId) === Number(binding.projectId);
+  });
+}
+
+export function queuedProjectHandleCallMatchesTargets(tx, targets) {
+  var call = { target: tx && tx.to, data: tx && tx.data, value: tx && tx.value, operation: tx && tx.operation };
+  var binding = decodeSetProjectHandleCall(call) || decodeSetEnsProjectRecordCall(call);
+  return !!binding && queuedHandleBindingMatchesTargets({ binding: binding }, targets);
+}
+
 function safeQueueNonce(tx) {
   var n = Number(tx && tx.nonce);
   return Number.isFinite(n) ? n : null;
 }
 
-export function safeQueueExecutionPlan(txs, readyFlags) {
+export function safeQueueExecutionPlan(txs, readyFlags, liveNonce) {
   txs = txs || [];
   readyFlags = readyFlags || [];
   var nonces = txs.map(safeQueueNonce);
   var finite = nonces.filter(function (n) { return n != null; });
-  var frontNonce = finite.length ? Math.min.apply(null, finite) : null;
+  var parsedLiveNonce = Number(liveNonce);
+  var frontNonce = Number.isSafeInteger(parsedLiveNonce) && parsedLiveNonce >= 0
+    ? parsedLiveNonce
+    : (finite.length ? Math.min.apply(null, finite) : null);
   var byNonce = {}, counts = {};
   nonces.forEach(function (n, i) {
     if (n == null) return;
@@ -13957,26 +15885,46 @@ export function safeQueueExecutionPlan(txs, readyFlags) {
 function renderRevnetPendingSafeTxs(project, mount) {
   fetchOperatorsPerChain(project).then(function (res) {
     if (!mount.isConnected) return;
-    var byOp = {}, groups = [];
-    res.rows.forEach(function (r) {
-      if (!r.owner) return;
-      var key = r.owner.toLowerCase();
-      var g = byOp[key];
-      if (!g) { g = byOp[key] = { owner: r.owner, chains: [] }; groups.push(g); }
-      g.chains.push({ id: r.chainId, name: r.name });
-    });
-    groups.forEach(function (g) {
-      appendPendingSafeTxsCard(mount, g.owner, g.chains, g.chains[0].id, 'Operator');
+    projectAuthoritySafeQueueGroups(res.rows, 'operator').forEach(function (group) {
+      appendPendingSafeTxsCard(mount, group.owner, group.chains, group.homeChainId, 'Operator');
     });
   }).catch(function () {});
 }
 
+function renderOwnerPendingSafeTxs(project, mount) {
+  fetchOwnersPerChain(project).then(function (res) {
+    if (!mount.isConnected) return;
+    projectAuthoritySafeQueueGroups(res.rows, 'owner').forEach(function (group) {
+      appendPendingSafeTxsCard(mount, group.owner, group.chains, group.homeChainId, 'Owner');
+    });
+  }).catch(function () {});
+}
+
+export function projectAuthoritySafeQueueGroups(rows, authorityRole) {
+  var byOwner = {}, groups = [];
+  (rows || []).forEach(function (row) {
+    if (!row || !row.owner) return;
+    var chainId = Number(row.chainId == null ? row.id : row.chainId);
+    var projectId = Number(row.projectId);
+    if (!Number.isSafeInteger(chainId) || !Number.isSafeInteger(projectId) || projectId < 1) return;
+    var key = row.owner.toLowerCase();
+    var group = byOwner[key];
+    if (!group) { group = byOwner[key] = { owner: row.owner, chains: [] }; groups.push(group); }
+    group.chains.push({ id: chainId, name: row.name || chainNameOf(chainId), projectId: projectId, authorityRole: authorityRole });
+  });
+  return groups.map(function (group) {
+    var homeChainId = group.chains[0].id;
+    return { owner: group.owner, chains: projectSafeQueueChains(group.chains), homeChainId: homeChainId };
+  });
+}
+
 function renderBackOfficeSection(project) {
   var section = el('div', 'detail-section');
-  var safe = projectAuthorityAddress(project);
-  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   // Account card: who owns the project on each chain + what kind of account it is.
   section.appendChild(renderAccountCard(project));
+  // One human-readable ENS alias for the exact deployment selected in the URL. The card writes only Ethereum's
+  // JBProjectHandles entry for that chainId:projectId; it never fans one ENS record across sibling deployments.
+  section.appendChild(renderProjectHandleCard(project));
   // The Safe queue/sign card is only meaningful when the controlling account is a Safe — an EOA controller
   // executes directly via relayr (no queue to sign). Render it optimistically, then drop it if the authority
   // isn't a Safe. Skipped entirely when the operator can't be resolved (indexer down → `safe` is null).
@@ -13984,8 +15932,10 @@ function renderBackOfficeSection(project) {
     var safeMount = el('div', 'operator-safe-groups');
     section.appendChild(safeMount);
     renderRevnetPendingSafeTxs(project, safeMount);
-  } else if (safe) {
-    appendPendingSafeTxsCard(section, safe, chains, project.chainId, 'Owner');
+  } else {
+    var ownerSafeMount = el('div', 'owner-safe-groups');
+    section.appendChild(ownerSafeMount);
+    renderOwnerPendingSafeTxs(project, ownerSafeMount);
   }
 
   // Powers / Permissions. Revnet: the controlling account is an OPERATOR with a fixed granted permission set
@@ -14006,19 +15956,36 @@ function renderBackOfficeSection(project) {
 
 // Reusable "Pending Multisig Transactions" card: lists each chain's Safe queue for `safe`, lets signers Sign /
 // Execute per tx and Execute-all ready txs in one Relayr payment. Used by the project Owner/Operator tab and the
-// protocol Admin tab. `homeChainId` is the chain used to read the Safe's signers/threshold; `contextLabel` =
-// 'Owner' | 'Operator' | 'Admin' for the intro copy. Assumes the same Safe address across `chains` (the norm).
+// protocol Admin tab. Every target chain authenticates the Safe and reads its own live governance; a same-address
+// deployment is never assumed to share the home chain's owners/threshold. `contextLabel` = Owner/Operator/Admin.
 function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Pending Multisig Transactions'; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro'); card.appendChild(intro);
   var body = el('div'); body.appendChild(skel('100%', '60px')); card.appendChild(body);
+  var safeRelayrScope = 'safe-queue:' + String(safe).toLowerCase();
+  var recoveryRunning = false;
 
-  function loadQueues(info) {
+  function loadQueues() {
     body.innerHTML = '';
     var acc = getEffectiveAccount();
-    var isSigner = acc && info.owners.some(function (o) { return o.toLowerCase() === acc.toLowerCase(); });
     var batchBar = el('div', 'backoffice-batch'); body.appendChild(batchBar);
+    var pendingSafeSession = loadRelayrPendingSession(safeRelayrScope);
+    if (pendingSafeSession) {
+      var recoveryStatus = el('div', 'modal-status pending'); body.appendChild(recoveryStatus);
+      var setRecoveryStatus = makeStatusSetter(recoveryStatus, 'modal-status');
+      setRecoveryStatus('Found a previously paid Safe bundle. Verifying its exact destination receipts and Safe results before another batch can start…', 'pending');
+      if (!recoveryRunning) {
+        recoveryRunning = true;
+        monitorRelayrSession(pendingSafeSession, setRecoveryStatus, {
+          pendingScope: safeRelayrScope,
+          initialTimeoutMs: 60 * 1000,
+        }).then(function () {
+          recoveryRunning = false;
+          if (card.isConnected) loadQueues();
+        }).catch(function () { recoveryRunning = false; });
+      }
+    }
     var ready = []; // { cid, chain, tx } across all chains
     var readyAlternativesExcluded = 0;
     var readyBlockedExcluded = 0;
@@ -14037,18 +16004,51 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
         var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — no offchain queue here. A second signer completes a pending tx by re-running the same operator action (e.g. Buyback & swap router → Set buyback hook): it reads the onchain approvals and lets them approve + execute.';
         list.appendChild(nos); return Promise.resolve();
       }
-      return listPendingSafeTxs(c.id, safe).then(function (txs) {
+      return Promise.all([
+        requireFreshSafeGovernance(safe, c.id),
+        readSafeUintBounded(clientFor(c.id), safe, 'nonce'),
+        listPendingSafeTxs(c.id, safe),
+      ]).then(async function (loaded) {
+        var info = loaded[0];
+        var currentBig = BigInt(loaded[1]);
+        if (currentBig < 0n || currentBig > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Invalid live Safe nonce.');
+        var currentNonce = Number(currentBig);
+        var txs = (loaded[2] || []).filter(function (tx) {
+          var nonce = Number(tx.nonce);
+          return Number.isSafeInteger(nonce) && nonce >= currentNonce;
+        });
+        txs = await Promise.all(txs.map(function (tx) {
+          return safeTxWithVerifiedOwnerConfirmations(c.id, safe, tx, info.owners);
+        }));
+        // A synthetic Ethereum row exists solely to resume handle writes for projects with no Ethereum sibling.
+        // Filter unrelated Safe traffic out of that row; malformed/unauthorized handle-shaped calls still reject
+        // the load. Real project/admin chain rows keep their ordinary live-authority verification.
+        if (c.handleQueueOnly) {
+          var specialized = await Promise.all(txs.map(async function (tx) {
+            // Scope before any live authority/resolver reads so a valid handle proposal for another project in
+            // the same Safe cannot make this card fail (or consume RPC work). Calls shaped like malformed writes
+            // to the canonical Handles target still throw from the strict decoder and fail closed.
+            if (!queuedProjectHandleCallMatchesTargets(tx, c.handleQueueTargets)) return null;
+            var verified = await verifyQueuedProjectHandleTransaction(safe, c.id, tx);
+            return verified && queuedHandleBindingMatchesTargets(verified, c.handleQueueTargets) ? tx : null;
+          }));
+          txs = specialized.filter(Boolean);
+        } else if (txs.length) {
+          await Promise.all(txs.map(function (tx) { return verifyPendingSafeTransactionAuthority(safe, c, tx); }));
+        } else await verifyPendingSafeAuthority(safe, c);
+        var isSigner = acc && info.owners.some(function (o) { return sameAddr(o, acc); });
         list.innerHTML = '';
         if (!txs.length) {
           var none = el('div', 'backoffice-none'); none.textContent = 'No pending transactions.';
           list.appendChild(none); return;
         }
         var txStates = txs.map(function (tx) {
-          var nconf = safeUsableConfirmationCount(tx), need = tx.confirmationsRequired || info.threshold;
+          var nconf = safeUsableConfirmationCount(tx, info.owners), need = info.threshold;
           return { nconf: nconf, need: need, ready: nconf >= need };
         });
-        var execPlan = safeQueueExecutionPlan(txs, txStates.map(function (s) { return s.ready; }));
+        var execPlan = safeQueueExecutionPlan(txs, txStates.map(function (s) { return s.ready; }), currentNonce);
         txs.forEach(function (tx, txIdx) {
+          var verifyAuthority = function () { return verifyPendingSafeTransactionAuthority(safe, c, tx); };
           var txState = txStates[txIdx];
           var nconf = txState.nconf, need = txState.need;
           var row = el('div', 'backoffice-row');
@@ -14100,12 +16100,19 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           if (isSigner && !signed && nconf < need) {
             var signBtn = el('button', 'detail-check-btn'); signBtn.textContent = 'Sign';
             signBtn.addEventListener('click', function () {
-              reviewQueuedSafeTx(c.id, c.name, tx, 'Sign').then(function (ok) {
+              (async function () {
+                var signerAccount = (getAccount && getAccount()) || null;
+                if (!signerAccount) { await connect(); signerAccount = (getAccount && getAccount()) || null; }
+                if (!signerAccount) throw new Error('Connect a Safe owner to sign.');
+                var before = await freshQueuedSafeTx(safe, c.id, tx, { signer: signerAccount, verifyAuthority: verifyAuthority });
+                var ok = await reviewQueuedSafeTx(c.id, c.name, before.tx, 'Sign');
                 if (!ok) return;
                 signBtn.disabled = true; signBtn.textContent = 'Signing…';
-                confirmSafeTx(c.id, safe, tx, acc).then(function () { signBtn.textContent = 'Signed'; setTimeout(function () { loadQueues(info); }, 1200); })
-                  .catch(function (e) { signBtn.disabled = false; signBtn.textContent = 'Sign'; alert((e && e.message) || e); });
-              });
+                await confirmSafeTx(c.id, safe, before.tx, signerAccount, function () {
+                  return freshQueuedSafeTx(safe, c.id, before.tx, { signer: signerAccount, expectedGovernance: before.info, verifyAuthority: verifyAuthority });
+                });
+                signBtn.textContent = 'Signed'; setTimeout(function () { loadQueues(); }, 1200);
+              })().catch(function (e) { signBtn.disabled = false; signBtn.textContent = 'Sign'; alert((e && e.message) || e); });
             });
             actions.appendChild(signBtn);
           } else if (signed) {
@@ -14115,7 +16122,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           // strict, but same-nonce proposals are alternatives: executing either current-nonce tx consumes the nonce and
           // replaces the rest. Higher nonces stay gated until the current nonce lands.
           if (nconf >= need) {
-            if (execPlan.batchByIndex[txIdx]) ready.push({ cid: c.id, chain: c.name, tx: tx });
+            if (execPlan.batchByIndex[txIdx]) ready.push({ cid: c.id, chain: c.name, safe: safe, tx: tx, verifyAuthority: verifyAuthority });
             else if (execPlan.duplicateNonceByIndex[txIdx]) readyAlternativesExcluded += 1;
             else readyBlockedExcluded += 1;
             var execBtn = el('button', 'detail-check-btn'); execBtn.textContent = 'Execute';
@@ -14123,12 +16130,19 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
               if (execPlan.duplicateNonceByIndex[txIdx]) execBtn.title = 'Executes this nonce and replaces the other #' + tx.nonce + ' alternatives';
               execBtn.addEventListener('click', function () {
                 if (!(getAccount && getAccount())) { connect(); return; }
-                reviewQueuedSafeTx(c.id, c.name, tx, 'Execute').then(function (ok) {
+                (async function () {
+                  var before = await freshQueuedSafeTx(safe, c.id, tx, { requireThreshold: true, requireCurrent: true, verifyAuthority: verifyAuthority });
+                  var ok = await reviewQueuedSafeTx(c.id, c.name, before.tx, 'Execute');
                   if (!ok) return;
                   execBtn.disabled = true; execBtn.textContent = 'Executing…';
-                  executeSafeTx(c.id, safe, tx).then(function () { execBtn.textContent = 'Sent'; setTimeout(function () { loadQueues(info); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }, 2000); })
-                    .catch(function (e) { execBtn.disabled = false; execBtn.textContent = 'Execute'; alert((e && (e.shortMessage || e.message)) || e); });
-                });
+                  await executeSafeTx(c.id, safe, before.tx, function () {
+                    return freshQueuedSafeTx(safe, c.id, before.tx, {
+                      requireThreshold: true, requireCurrent: true, expectedGovernance: before.info, verifyAuthority: verifyAuthority,
+                    });
+                  });
+                  await verifyCompletedQueuedProjectHandleTransaction(safe, c.id, before.tx);
+                  execBtn.textContent = 'Sent'; setTimeout(function () { loadQueues(); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }, 2000);
+                })().catch(function (e) { execBtn.disabled = false; execBtn.textContent = 'Execute'; alert((e && (e.shortMessage || e.message)) || e); });
               });
             } else {
               execBtn.disabled = true;
@@ -14161,6 +16175,12 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
     // only an explicit per-row Execute click can choose which tx should consume that nonce.
     Promise.all(chainLoads).then(function () {
       batchBar.innerHTML = '';
+      if (pendingSafeSession) {
+        var recovering = el('span', 'backoffice-batch-note');
+        recovering.textContent = 'A paid Safe batch is still being verified. No second Relayr payment can start for this Safe.';
+        batchBar.appendChild(recovering);
+        return;
+      }
       if (ready.length < 2) {
         if (readyAlternativesExcluded || readyBlockedExcluded) {
           var solo = el('span', 'backoffice-batch-note');
@@ -14178,8 +16198,13 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       var allBtn = el('button', 'detail-check-btn'); allBtn.textContent = 'Execute all';
       allBtn.addEventListener('click', function () {
         if (!(getAccount && getAccount())) { connect(); return; }
+        if (allBtn.disabled) return;
+        allBtn.disabled = true; allBtn.textContent = 'Checking…';
         executeReadySafeTransactions(ready, { title: 'Execute ' + ready.length + ' transaction' + (ready.length > 1 ? 's' : '') }).then(function (res) {
-          if (res && res.done) loadQueues(info);
+          if (res && res.done) loadQueues();
+          else { allBtn.disabled = false; allBtn.textContent = 'Execute all'; }
+        }).catch(function (error) {
+          allBtn.disabled = false; allBtn.textContent = 'Execute all'; alert((error && error.message) || error);
         });
       });
       batchBar.appendChild(allBtn);
@@ -14187,10 +16212,10 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
   }
 
   function startLoad() {
-    fetchSafeInfo(safe, homeChainId).then(function (info) {
+    fetchSafeInfoFresh(safe, homeChainId).then(function (info) {
       if (!info) { intro.textContent = 'This account isn’t a Safe — there’s no multisig queue.'; body.innerHTML = ''; return; }
       intro.textContent = contextLabel + '-only actions are proposed here per chain; signers confirm + execute.';
-      loadQueues(info);
+      loadQueues();
     }).catch(function () { intro.textContent = 'Could not read the Safe.'; body.innerHTML = ''; });
   }
   // Only hit the rate-limited Safe Transaction Service when this card is actually ON SCREEN — i.e. the user is
@@ -14208,11 +16233,11 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
   // Refresh when an action queues a new tx from a modal — but only for a card that's been viewed + is connected.
   document.addEventListener('jb:safe-queued', function () {
     if (!loaded || !card.isConnected) return;
-    fetchSafeInfo(safe, homeChainId).then(function (info) { if (info) loadQueues(info); }).catch(function () {});
+    loadQueues();
   });
   onEffectiveAccountChange(function () {
     if (!loaded || !card.isConnected) return;
-    fetchSafeInfo(safe, homeChainId).then(function (info) { if (info) loadQueues(info); }).catch(function () {});
+    loadQueues();
   });
   return card;
 }
@@ -14338,7 +16363,9 @@ export function renderAdminTab() {
 
   var home = chains[0];
   read(home.id, 'JBDirectory', ADMIN_OWNER_ABI, 'owner', []).then(function (admin) {
-    if (admin) lazy.appendChild(renderPendingSafeTxsCard(admin, chains, home.id, 'Admin'));
+    if (admin) lazy.appendChild(renderPendingSafeTxsCard(admin, chains.map(function (chain) {
+      return Object.assign({}, chain, { authorityRole: 'admin' });
+    }), home.id, 'Admin'));
     lazy.appendChild(renderAdminPowersCard(admin || null, chains, home.id));
   }).catch(function () { lazy.appendChild(renderAdminPowersCard(null, chains, chains[0].id)); });
 }
@@ -16388,7 +18415,12 @@ function buildFundsTokenBlock(project, kind, showHead, onBalance) {
 
   function rulesetLink(text) {
     var a = el('button', 'rf-ruleset-link'); a.textContent = text;
-    a.addEventListener('click', function (e) { e.preventDefault(); if (_activeDetail && _activeDetail.showTab) { _activeDetail.showTab('Rulesets'); routerSetHash(projectHash(project, 'Rulesets')); } });
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (_activeDetail && _activeDetail.showTab) {
+        navigateProjectSection(project, 'Rulesets', null, function () { _activeDetail.showTab('Rulesets'); });
+      }
+    });
     return a;
   }
 
@@ -17943,14 +19975,15 @@ function renderOwnersSection(project, opts) {
     // Reflect the nested subtab in the URL so a refresh restores it (e.g. #…/tokens/settlement).
     if (_activeDetail && (opts.tabName ? _activeDetail.current === opts.tabName : true)) {
       _activeDetail.subtab = name;
-      routerSetHash(projectHash(project, opts.tabName || _activeDetail.current, name));
     }
   }
   order.forEach(function (name) {
     var btn = document.createElement('button');
     btn.className = 'owners-subtab';
     btn.textContent = name;
-    btn.addEventListener('click', function () { show(name); });
+    btn.addEventListener('click', function () {
+      navigateProjectSection(project, opts.tabName || (_activeDetail && _activeDetail.current), name, function () { show(name); });
+    });
     subRow.appendChild(btn);
   });
   // Token card (name / symbol / address per chain + operator Edit) sits above the subtabs — for both
@@ -17959,7 +19992,9 @@ function renderOwnersSection(project, opts) {
   section.appendChild(subRow);
   section.appendChild(content);
   // Inner content (e.g. the owners table's "Market" row) can request a subtab switch via this event.
-  section.addEventListener('jb:goto-subtab', function (e) { if (e.detail) show(e.detail); });
+  section.addEventListener('jb:goto-subtab', function (e) {
+    if (e.detail) navigateProjectSection(project, opts.tabName || (_activeDetail && _activeDetail.current), e.detail, function () { show(e.detail); });
+  });
   // Expose subtab switching so a route change (#…/tab/subtab) can drive it; pick the routed subtab if given.
   if (_activeDetail) _activeDetail.showSubTab = show;
   var initial = 'Accounts';
@@ -17986,8 +20021,10 @@ export var BENDYSTRAW_PROJECT_QUERY = 'query($projectId: Float!, $chainId: Float
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
 var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($id: String!) { '
   + 'suckerGroup(id: $id) { volume volumeUsd paymentsCount contributorsCount balance tokenSupply } }';
-var BENDYSTRAW_PROJECT_OPERATOR_QUERY = 'query($chainId: Int!, $projectId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
-  + 'permissionHolders(where: { chainId: $chainId, projectId: $projectId, version: $version, isRevnetOperator: true }, limit: $limit, offset: $offset) { '
+// Handle authority lookup is scoped to the canonical REVOwner permission account rather than an eventually
+// consistent isRevnetOperator marker. Live REVOwner.isOperatorOf checks still decide the one trusted candidate.
+export var BENDYSTRAW_PROJECT_HANDLE_OPERATOR_QUERY = 'query($account: String!, $chainId: Int!, $projectId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'permissionHolders(where: { account: $account, chainId: $chainId, projectId: $projectId, version: $version }, limit: $limit, offset: $offset) { '
   + 'totalCount items { operator permissions } } }';
 // Every operator that holds permissions on this project, across all chains (drives the Permissions card).
 var BENDYSTRAW_PERMISSION_HOLDERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '

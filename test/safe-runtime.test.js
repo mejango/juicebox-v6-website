@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { decodeFunctionData, encodeFunctionResult } from 'viem';
 
 const safeState = vi.hoisted(() => ({
   account: null,
@@ -18,17 +19,21 @@ vi.mock('../src/component-base.js', () => ({
 }));
 
 import {
+  confirmSafeTx,
   executeSafeTx,
   getSafeNextNonce,
   listPendingSafeTxs,
   proposeSafeTx,
+  SAFE_EXEC_ABI,
   safeApprovalsOf,
+  SAFE_EXECUTION_SUCCESS_TOPIC,
   safeExecRelayrTx,
   safeHomeLink,
   safeOnChainContext,
   safeQueueLink,
   safeServiceChainIds,
   safeTxLink,
+  safeTxHashForQueuedTx,
 } from '../src/safe.js';
 import { isTestnetChain } from '../src/chain.js';
 
@@ -38,6 +43,22 @@ const OTHER = '0x3333333333333333333333333333333333333333';
 const TARGET = '0x4444444444444444444444444444444444444444';
 const HASH = `0x${'ab'.repeat(32)}`;
 const SIGNATURE = `0x${'12'.repeat(65)}`;
+const SAFE_VIEW_ABI = [
+  { type: 'function', name: 'nonce', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'getThreshold', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'getOwners', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
+  { type: 'function', name: 'approvedHashes', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'bytes32' }], outputs: [{ type: 'uint256' }] },
+];
+
+function rawSafeViews(resolver) {
+  return vi.fn(({ method, params }) => {
+    if (method !== 'eth_call') return Promise.reject(new Error('unexpected method'));
+    var decoded = decodeFunctionData({ abi: SAFE_VIEW_ABI, data: params[0].data });
+    return Promise.resolve(resolver(decoded.functionName, decoded.args || [])).then(function (result) {
+      return encodeFunctionResult({ abi: SAFE_VIEW_ABI, functionName: decoded.functionName, result: result });
+    });
+  });
+}
 
 function queuedTx(overrides = {}) {
   return {
@@ -94,18 +115,26 @@ describe('Safe runtime fail-closed boundaries', () => {
     });
   });
 
+  it('never serializes a service null confirmation without a proven approvedHashes marker', () => {
+    const unproven = safeExecRelayrTx(1, SAFE, queuedTx({ confirmations: [{ owner: OWNER, signature: null }] }));
+    const proven = safeExecRelayrTx(1, SAFE, queuedTx({ confirmations: [{ owner: OWNER, signature: null, approvedHash: true }] }));
+    const unprovenArgs = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: unproven.data }).args;
+    const provenArgs = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: proven.data }).args;
+    const prevalidated = '0x' + OWNER.slice(2).padStart(64, '0') + '0'.repeat(64) + '01';
+    expect(unprovenArgs[9]).toBe('0x');
+    expect(provenArgs[9].toLowerCase()).toBe(prevalidated.toLowerCase());
+  });
+
   it('falls back from an unavailable nonce service to canonical on-chain state', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('service offline'));
-    safeState.publicClient = { readContract: vi.fn().mockResolvedValue(9n) };
+    safeState.publicClient = { request: rawSafeViews(function () { return 9n; }) };
 
     await expect(getSafeNextNonce(1, SAFE)).resolves.toBe(9);
-    expect(safeState.publicClient.readContract).toHaveBeenCalledWith(expect.objectContaining({
-      address: SAFE,
-      functionName: 'nonce',
-      args: [],
+    expect(safeState.publicClient.request).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'eth_call', params: [expect.objectContaining({ to: SAFE, gas: '0x493e0' }), 'latest'],
     }));
 
-    safeState.publicClient.readContract.mockRejectedValue(new Error('RPC offline'));
+    safeState.publicClient.request.mockRejectedValue(new Error('RPC offline'));
     await expect(getSafeNextNonce(1, OTHER)).resolves.toBeNull();
   });
 
@@ -123,53 +152,78 @@ describe('Safe runtime fail-closed boundaries', () => {
     await expect(listPendingSafeTxs(421614, SAFE)).resolves.toEqual([]);
   });
 
-  it('reads on-chain owners/threshold and treats failed approval reads as unapproved', async () => {
-    const reads = vi.fn(({ functionName, args }) => {
+  it('reads on-chain owners/threshold and rejects when any approval read fails', async () => {
+    const reads = rawSafeViews((functionName, args) => {
       if (functionName === 'nonce') return Promise.resolve(7n);
       if (functionName === 'getThreshold') return Promise.resolve(2n);
       if (functionName === 'getOwners') return Promise.resolve([OWNER, OTHER]);
       if (functionName === 'approvedHashes' && args[0] === OWNER) return Promise.resolve(1n);
       return Promise.reject(new Error('unknown owner/read failure'));
     });
-    safeState.publicClient = { readContract: reads };
+    safeState.publicClient = { request: reads };
 
     await expect(safeOnChainContext(421614, SAFE)).resolves.toEqual({
       nonce: 7,
       threshold: 2,
       owners: [OWNER, OTHER],
     });
-    await expect(safeApprovalsOf(421614, SAFE, HASH, [OWNER, OTHER])).resolves.toEqual([OWNER]);
+    await expect(safeApprovalsOf(421614, SAFE, HASH, [OWNER, OTHER]))
+      .rejects.toThrow(/unknown owner\/read failure/i);
+    var approvalCall = reads.mock.calls.map(function (call) {
+      return decodeFunctionData({ abi: SAFE_VIEW_ABI, data: call[0].params[0].data });
+    }).find(function (decoded) { return decoded.functionName === 'approvedHashes'; });
+    expect(approvalCall.args).toEqual([OWNER, HASH]);
   });
 
   it('refuses account changes and false/reverted simulations before reporting execution success', async () => {
     const writeContract = vi.fn().mockResolvedValue(HASH);
     safeState.wallet = { getChainId: vi.fn().mockResolvedValue(1), writeContract };
+    const encodedExecResult = result => encodeFunctionResult({
+      abi: SAFE_EXEC_ABI,
+      functionName: 'execTransaction',
+      result,
+    });
     safeState.publicClient = {
-      simulateContract: vi.fn().mockImplementation(async () => {
+      request: vi.fn().mockImplementation(async () => {
         safeState.account = OTHER;
-        return { result: true, request: { address: SAFE } };
+        return encodedExecResult(true);
       }),
       getBlock: vi.fn().mockResolvedValue({ baseFeePerGas: 1n }),
-      estimateContractGas: vi.fn().mockResolvedValue(100000n),
       waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success' }),
     };
     await expect(executeSafeTx(1, SAFE, queuedTx())).rejects.toThrow(/account changed/i);
     expect(writeContract).not.toHaveBeenCalled();
 
     safeState.account = OWNER;
-    safeState.publicClient.simulateContract.mockResolvedValue({ result: false, request: { address: SAFE } });
+    safeState.publicClient.request.mockResolvedValue(encodedExecResult(false));
     await expect(executeSafeTx(1, SAFE, queuedTx())).rejects.toThrow(/simulation reported.*fail/i);
     expect(writeContract).not.toHaveBeenCalled();
 
-    safeState.publicClient.simulateContract.mockResolvedValue({ result: true, request: { address: SAFE } });
+    safeState.publicClient.request.mockResolvedValue(encodedExecResult(true));
     safeState.publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted' });
     await expect(executeSafeTx(1, SAFE, queuedTx())).rejects.toThrow(/reverted onchain/i);
 
-    safeState.publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success' });
+    safeState.publicClient.waitForTransactionReceipt.mockRejectedValue(new Error('receipt RPC unavailable'));
+    await expect(executeSafeTx(1, SAFE, queuedTx())).rejects.toMatchObject({
+      code: 'SAFE_TX_SUBMITTED', hash: HASH,
+    });
+
+    safeState.publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success', transactionHash: HASH, logs: [] });
+    await expect(executeSafeTx(1, SAFE, queuedTx())).rejects.toThrow(/without ExecutionSuccess/i);
+
+    const expectedSafeTxHash = safeTxHashForQueuedTx(1, SAFE, queuedTx());
+    safeState.publicClient.waitForTransactionReceipt.mockResolvedValue({
+      status: 'success', transactionHash: HASH,
+      logs: [{ address: SAFE, topics: [SAFE_EXECUTION_SUCCESS_TOPIC, expectedSafeTxHash], data: `0x${'0'.repeat(64)}` }],
+    });
     await expect(executeSafeTx(1, SAFE, queuedTx())).resolves.toBe(HASH);
+    expect(safeState.publicClient.request).toHaveBeenLastCalledWith({
+      method: 'eth_call',
+      params: [expect.objectContaining({ from: OWNER, to: SAFE, gas: '0x4c4b40' }), 'latest'],
+    });
     expect(writeContract).toHaveBeenLastCalledWith(expect.objectContaining({
       account: OWNER,
-      gas: 200000n,
+      gas: 5000000n,
       maxFeePerGas: 1000000000n,
       maxPriorityFeePerGas: 50000000n,
     }));
@@ -214,5 +268,35 @@ describe('Safe runtime fail-closed boundaries', () => {
     await expect(proposeSafeTx({
       chainId: 1, safe: SAFE, to: TARGET, data: '0x', signer: OWNER, nonce: 12,
     })).rejects.toThrow(/account changed/i);
+  });
+
+  it('reverifies proposal and confirmation authority after signing but before service writes', async () => {
+    safeState.wallet = {
+      getChainId: vi.fn().mockResolvedValue(1),
+      signTypedData: vi.fn().mockResolvedValue(SIGNATURE),
+    };
+    vi.mocked(fetch).mockResolvedValue({ ok: true, status: 201 });
+    const proposalReverify = vi.fn().mockRejectedValue(new Error('proposal policy changed'));
+
+    await expect(proposeSafeTx({
+      chainId: 1,
+      safe: SAFE,
+      to: TARGET,
+      data: '0x1234',
+      signer: OWNER,
+      nonce: 13,
+      reverify: proposalReverify,
+    })).rejects.toThrow(/proposal policy changed/i);
+    expect(safeState.wallet.signTypedData).toHaveBeenCalledOnce();
+    expect(proposalReverify).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+
+    safeState.wallet.signTypedData.mockClear();
+    const confirmationReverify = vi.fn().mockRejectedValue(new Error('confirmation policy changed'));
+    await expect(confirmSafeTx(1, SAFE, queuedTx({ safeTxHash: HASH }), OWNER, confirmationReverify))
+      .rejects.toThrow(/confirmation policy changed/i);
+    expect(safeState.wallet.signTypedData).toHaveBeenCalledOnce();
+    expect(confirmationReverify).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

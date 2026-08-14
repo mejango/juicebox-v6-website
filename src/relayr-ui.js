@@ -8,9 +8,11 @@ import { el, truncAddr, txExplorerUrl } from './component-base.js';
 import { relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrDestinationHash } from './relayr.js';
 
 // Default per-chain state label: Confirmed / Failed / the raw Relayr state while pending.
-export function relayrReceiptStateLabel(record) {
+export function relayrReceiptStateLabel(record, verifiedOnchain) {
   var state = String(record && record.status && record.status.state || '');
-  if (relayrStateIsSuccess(state)) return { text: 'Confirmed', kind: 'ok' };
+  if (relayrStateIsSuccess(state)) return verifiedOnchain
+    ? { text: 'Confirmed', kind: 'ok' }
+    : { text: 'Relayr reported success — verifying', kind: 'pending' };
   if (relayrStateIsFailed(state)) return { text: 'Failed', kind: 'err' };
   return { text: state || 'Waiting for Relayr', kind: 'pending' };
 }
@@ -25,7 +27,7 @@ export function renderRelayrReceiptInto(panel, session, opts) {
   var head = el('div', 'relayr-pending-head');
   var title = el('strong'); title.textContent = 'Paid Relayr request'; head.appendChild(title);
   var count = el('span', 'relayr-pending-count' + (progress.failed ? ' err' : ''));
-  count.textContent = progress.confirmed + '/' + progress.total + ' confirmed'; head.appendChild(count);
+  count.textContent = progress.confirmed + '/' + progress.total + (opts.verifiedOnchain ? ' confirmed' : ' reported complete'); head.appendChild(count);
   panel.appendChild(head);
   var bundle = el('div', 'relayr-pending-meta'); bundle.appendChild(document.createTextNode('Bundle '));
   var bundleId = document.createElement('code'); bundleId.textContent = session.bundleUuid; bundle.appendChild(bundleId);
@@ -42,7 +44,7 @@ export function renderRelayrReceiptInto(panel, session, opts) {
   var rows = el('div', 'relayr-pending-chains');
   var chains = session.chains || [], records = session.records || [];
   var rowCount = Math.max(Number(session.expectedCount) || 0, chains.length, records.length);
-  var stateLabel = opts.stateLabel || relayrReceiptStateLabel;
+  var stateLabel = opts.stateLabel || function (record) { return relayrReceiptStateLabel(record, opts.verifiedOnchain); };
   for (var i = 0; i < rowCount; i++) {
     var row = el('div', 'relayr-pending-chain');
     var chain = chains[i]; var name = el('span');

@@ -7,8 +7,8 @@ describe('Relayr paid-receipt UI', () => {
   });
 
   it('normalizes terminal and pending states without treating unknown states as success', () => {
-    expect(relayrReceiptStateLabel({ status: { state: 'Success' } })).toEqual({ text: 'Confirmed', kind: 'ok' });
-    expect(relayrReceiptStateLabel({ status: { state: 'Completed' } })).toEqual({ text: 'Confirmed', kind: 'ok' });
+    expect(relayrReceiptStateLabel({ status: { state: 'Success' } })).toEqual({ text: 'Relayr reported success — verifying', kind: 'pending' });
+    expect(relayrReceiptStateLabel({ status: { state: 'Completed' } }, true)).toEqual({ text: 'Confirmed', kind: 'ok' });
     expect(relayrReceiptStateLabel({ status: { state: 'Failed' } })).toEqual({ text: 'Failed', kind: 'err' });
     expect(relayrReceiptStateLabel({ status: { state: 'Included' } })).toEqual({ text: 'Included', kind: 'pending' });
     expect(relayrReceiptStateLabel(null)).toEqual({ text: 'Waiting for Relayr', kind: 'pending' });
@@ -37,7 +37,7 @@ describe('Relayr paid-receipt UI', () => {
     });
 
     expect(progress).toEqual({ confirmed: 1, failed: 1, pending: 1, total: 3, allFailed: false });
-    expect(panel.querySelector('.relayr-pending-count').textContent).toBe('1/3 confirmed');
+    expect(panel.querySelector('.relayr-pending-count').textContent).toBe('1/3 reported complete');
     expect(panel.querySelectorAll('.relayr-pending-chain')).toHaveLength(3);
     expect([...panel.querySelectorAll('.relayr-pending-chain > span:first-child')].map(node => node.textContent))
       .toEqual(['Base', 'Chain 10', 'Chain 3']);

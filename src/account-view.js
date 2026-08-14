@@ -12,11 +12,12 @@ import { bendystrawQuery } from './bendystraw-client.js';
 import {
   ensAddressOf, addressNode, identGradient, activityRowFromEvent, renderActivityRow,
   permissionLabel, permissionDesc, slugForChain, fetchSafeInfo, activeDiscoverChains,
+  verifyPersistedRelayrHandlePostconditions,
   BENDYSTRAW_ACTIVITY_OR, BENDYSTRAW_ACTIVITY_ITEM_FIELDS,
 } from './discover.js';
 import { isEnsName } from './create-flow.js';
 import { safesForOwner, hasSafeService } from './safe.js';
-import { listRelayrPendingScopes, loadRelayrPendingSession, saveRelayrPendingSession, relayrPoll, relayrProgress } from './relayr.js';
+import { listRelayrPendingScopes, loadRelayrPendingSession, saveRelayrPendingSession, clearRelayrPendingSession, relayrPoll, relayrProgress, verifyRelayrDestinationRecords } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 
 var VERSION = 6;
@@ -711,11 +712,24 @@ function renderPendingRelayrSection() {
     var session = loadRelayrPendingSession(scope);
     if (!session) return;
     var panel = el('div', 'relayr-pending-panel');
+    var verified = false;
     var note = 'Saved on this device' + (scope ? ' (' + scope + ')' : '') + '. Status is checked against Relayr by bundle ID — nothing is ever re-submitted.';
     function paint() {
-      renderRelayrReceiptInto(panel, session, { noteText: note });
+      var displaySession = session;
+      if (!verified && relayrProgress(session.records, session.expectedCount).confirmed > 0) {
+        displaySession = Object.assign({}, session, {
+          records: (session.records || []).map(function (record) {
+            if (!record || !record.status || !/^(success|completed)$/i.test(String(record.status.state || ''))) return record;
+            return Object.assign({}, record, { status: Object.assign({}, record.status, { state: 'Verifying onchain' }) });
+          }),
+        });
+      }
+      renderRelayrReceiptInto(panel, displaySession, {
+        verifiedOnchain: verified,
+        noteText: verified ? note + ' Exact destination receipts and saved postconditions verified.' : note + ' Relayr status alone is not treated as confirmation; verify it onchain below.',
+      });
       var progress = relayrProgress(session.records, session.expectedCount);
-      if (progress.pending > 0) {
+      if (!verified) {
         var btn = el('button', 'account-viewas-go account-pending-check');
         btn.type = 'button';
         btn.textContent = 'Check status';
@@ -724,9 +738,17 @@ function renderPendingRelayrSection() {
           btn.textContent = 'Checking…';
           // Retry = resume polling the already-paid bundle by its uuid.
           relayrPoll(session.bundleUuid, function (records) {
+            // Persist progress, but do not render API-reported success as confirmed until its exact onchain proof
+            // and any handle/ENS postcondition have both passed below.
             session.records = records;
             saveRelayrPendingSession(scope, session);
-          }, 2500, 15000).catch(function () {}).then(function () {
+          }, 2500, 15000, session.expectedCount, session.expectedTransactions).then(async function (records) {
+            await verifyRelayrDestinationRecords(session.expectedTransactions, records);
+            await verifyPersistedRelayrHandlePostconditions(session.expectedTransactions, records);
+            session.records = records; verified = true;
+            if (/^safe-queue:0x[0-9a-f]{40}$/i.test(scope)) clearRelayrPendingSession(scope);
+            else saveRelayrPendingSession(scope, session);
+          }).catch(function () {}).then(function () {
             if (panel.isConnected) paint();
           });
         });

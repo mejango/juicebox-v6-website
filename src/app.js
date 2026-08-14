@@ -9,7 +9,7 @@ import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
 import { buildEmbedUrl, getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
-import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet } from './discover.js';
+import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet } from './discover.js';
 import { getViewAs, setViewAs, clearViewAs, onViewAsChange } from './view-as.js';
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
@@ -47,14 +47,14 @@ var REDIRECTING_FROM_BLOCKING_GATEWAY = redirectBlockingPathGateway();
 // while an HTTP host can render project-specific Open Graph metadata.
 function projectRouteFromHash() {
   var raw = (location.hash || '').replace(/^#\/?/, '').split('/')[0];
-  return /^([a-z]+|\d+):[1-9]\d*$/i.test(raw) ? raw : null;
+  return /^([a-z]+|\d+):[1-9]\d*$/i.test(raw) || /^@[^/?#]+$/u.test(raw) ? raw : null;
 }
 
 function restoreProjectHashFromQuery() {
   if (location.hash) return;
   try {
     var route = new URL(location.href).searchParams.get('project');
-    if (!/^([a-z]+|\d+):[1-9]\d*$/i.test(route || '')) return;
+    if (!(/^([a-z]+|\d+):[1-9]\d*$/i.test(route || '') || /^@[^/?#]+$/u.test(route || ''))) return;
     history.replaceState(null, '', location.pathname + location.search + '#' + route);
   } catch (_) {}
 }
@@ -451,13 +451,16 @@ function applyHash() {
   var raw = (location.hash || '').replace(/^#\/?/, '');
   var nav, projectRoute = null, sectionId = null, accountRoute = null;
   if (raw === '' || raw === 'discover') { nav = 'discover'; }
+  else if (/^@/.test(raw)) { nav = 'discover'; projectRoute = raw; } // @<verified-handle>[/tab]
   else if (raw.indexOf(':') !== -1) { nav = 'discover'; projectRoute = raw; } // <slug>:<id>[/tab]
   else if (/^account\//.test(raw)) { nav = 'account'; accountRoute = raw.slice('account/'.length); } // #account/<address-or-ens>[/tab]
   else if (/^(learn|build|why)-/.test(raw)) { nav = raw.split('-')[0]; sectionId = raw; } // guide section deep link
   else { nav = raw.split('/')[0]; }
-  activateNavTab(NAV_TO_TAB[nav] || 'discover');
+  var activeTab = NAV_TO_TAB[nav] || 'discover';
+  if (activeTab !== 'discover') cancelDiscoverRoute();
+  activateNavTab(activeTab);
   if (accountRoute != null) renderAccountView(accountRoute);
-  else if ((NAV_TO_TAB[nav] || 'discover') === 'discover') applyDiscoverRoute(projectRoute);
+  else if (activeTab === 'discover') applyDiscoverRoute(projectRoute);
   // Scroll to a deep-linked guide section once the tab's content has rendered (copy-link buttons emit these).
   else if (sectionId) setTimeout(function () { var t = document.getElementById(sectionId); if (t) t.scrollIntoView({ block: 'start' }); }, 60);
 }
@@ -466,6 +469,16 @@ function onHashChange() {
   syncProjectPreviewQuery();
   // Programmatic hash updates (card open, detail tab, back-to-grid) set this flag so we don't re-render.
   if (window.__suppressHash) { window.__suppressHash = false; return; }
+  applyHash();
+}
+
+function onPageShow(event) {
+  // A BFCache restore can repaint an old verified alias without firing hashchange. Re-run the full mutable-handle
+  // route on persisted restores so ENS, live authority, and JBProjectHandles are checked before that detail stays.
+  var raw = (location.hash || '').replace(/^#\/?/, '');
+  if (!event || !event.persisted || raw.charAt(0) !== '@') return;
+  window.__suppressHash = false;
+  syncProjectPreviewQuery();
   applyHash();
 }
 
@@ -1276,6 +1289,7 @@ function init() {
     applyHash(); // re-render the active route so every "your …" read reflects the new effective account
   });
   window.addEventListener('hashchange', onHashChange);
+  window.addEventListener('pageshow', onPageShow);
   applyHash(); // restore the nav tab / deep-linked project from the URL on load
 }
 

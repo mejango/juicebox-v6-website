@@ -3,9 +3,11 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const budgets = {
-  // Stage-level 721 transfer controls and the reviewed owner-mint flow add a
-  // small amount of deliberate wallet UI to the monolithic client bundle.
-  'dist/app.js': { raw: 8_600_000, gzip: 1_210_000 },
+  // Verified ENS-handle routing, the resumable two-transaction editor, indexer-independent authority lookup,
+  // strict Safe/queue lifecycle checks, and authenticated Relayr payments add to the monolithic bundle
+  // (3fcb1da: 1,209,174 B; handle review: 1,226,879 B; queue-bound handle verifier: 1,239,966 B;
+  // persisted exact Relayr/Safe completion proof: 8,667,995 B raw / 1,246,408 B gzip).
+  'dist/app.js': { raw: 8_680_000, gzip: 1_250_000 },
   'dist/style.css': { raw: 240_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },

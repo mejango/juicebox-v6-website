@@ -26,7 +26,7 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
@@ -3797,22 +3797,16 @@ async function monitorCreateRelayr(state, session, resumed) {
         return { chainId: state.deployChains[i], status: relayrChainStatus(t) };
       });
       var progress = relayrProgress(txList, expected);
-      if (state.statusLines.length) state.statusLines[state.statusLines.length - 1] = { text: 'Relayr is deploying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (session.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'The paid receipt is saved.') };
+      if (state.statusLines.length) state.statusLines[state.statusLines.length - 1] = { text: 'Relayr reports ' + progress.confirmed + '/' + progress.total + ' complete; exact destination receipts are still being verified. ' + (session.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'The paid receipt is saved.') };
       if (state._render) state._render();
-    }, 2500, resumed ? 60 * 1000 : undefined);
-    clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
-    state._relayrPending = null;
+    }, 2500, resumed ? 60 * 1000 : undefined, expected, session.expectedTransactions);
+    await verifyRelayrDestinationRecords(session.expectedTransactions, records);
     state.deployProgress = null;
     return records;
   } catch (error) {
     if (error && error.code === 'RELAYR_PAYMENT_EXPIRED') session.paymentState = 'expired';
     if (error && error.records) persist(error.records);
-    if (relayrProgress(session.records, expected).allFailed) {
-      clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
-      state._relayrPending = null;
-      state.deployProgress = null;
-      error.message += ' No chains confirmed, so you can review and launch a new request.';
-    } else if (error.code !== 'RELAYR_NOT_FOUND') {
+    if (error.code !== 'RELAYR_NOT_FOUND') {
       // A bundle Relayr does not recognize cannot be inspected by "Check Relayr status"; pointing at it there
       // would contradict the error's own copy. The receipt is kept either way so the bundle ID survives.
       error.message += ' Use “Check Relayr status” to inspect this same paid bundle; do not launch again.';
@@ -3927,6 +3921,8 @@ async function runDeploy(state, owner) {
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
     push('Reading the deployed project…');
     await captureDeployed(state, restoredChain, relayrDestinationHash(restoredTxs[0]));
+    clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
+    state._relayrPending = null;
     return;
   }
   // 1) Pin metadata (best-effort).
@@ -4080,13 +4076,14 @@ async function runDeploy(state, owner) {
     paymentHash: null,
     paymentChainId: Number(pay.chain),
     expectedCount: plans.length,
+    expectedTransactions: quote.expected_transactions,
     chains: plans.map(function (p) { return { id: p.chainId, name: chainName(p.chainId) }; }),
     records: [],
   };
   var payHash = await relayrPay(pay, signer, function (hash) {
     paidSession.paymentHash = hash;
     state._relayrPending = saveRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession) || paidSession;
-  });
+  }, quote.bundle_uuid);
   paidSession.paymentHash = payHash;
   push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');
   // Relayr's per-tx records don't carry a chain field, but they come back in submission order — map by
@@ -4095,6 +4092,8 @@ async function runDeploy(state, owner) {
   var finalRelayrTxs = await monitorCreateRelayr(state, paidSession, false);
   push('Reading the new project…');
   await captureDeployed(state, plans[0].chainId, relayrDestinationHash(finalRelayrTxs[0]));
+  clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
+  state._relayrPending = null;
 }
 
 // Gas for the inner launch call (the forwarder forwards this much). Estimate the direct call + buffer;

@@ -30,6 +30,8 @@ Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg a
 | Borrow | `REVLoans.borrowFrom` | `buildBorrowArgs` | **U** (+ slippage floor wired) |
 | Repay | `REVLoans.repayLoan` | `buildRepayArgs` | **U** |
 | Move between chains | `JBSucker.prepare` → `toRemote` | `buildSuckerPrepareArgs` / `buildSuckerToRemoteArgs` | **U** |
+| Set ENS project record | exact resolver `setText(node,"juicebox","chainId:projectId")` | `buildSetEnsProjectRecordCall` | **U** (exact Registry resolver only; no resolver replacement; live tuple authority + resolver authorization rechecked at Safe queue boundaries; direct/Safe postcondition) |
+| Publish project handle | `JBProjectHandles.setEnsNamePartsFor` | `buildSetProjectHandleCall` | **U** (canonical reversed labels; encoded tuple’s current owner/operator + exact ENS record rechecked at Safe queue boundaries; direct/Safe postcondition) |
 
 ## Structural wallet boundary inventory
 
@@ -43,10 +45,11 @@ one cannot silently enter the app.
 | Reviewed direct write boundary | `executeTransaction` | Exact review payload, account/chain rechecks, simulation, receipt status, approval ordering, and Safe routing are unit-tested. |
 | Reviewed single-chain direct write | `discover.js` direct dispatcher | One-chain management calls use the exact review modal, recheck the account and chain, simulate the raw call, submit directly, and require a successful receipt. Relayr is reserved for bundles spanning multiple chains. |
 | Generic ABI contract write | `form.js` reviewed write | Displays target/function/arguments/calldata/value, rechecks account and chain, simulates, then requires a successful receipt. |
-| Relayr forwarded bundle / payment | `relayrPostBundle` / `relayrPay` | Canonical forward request, signer/account identity, quote/payment state, persistence, polling, and partial-chain failure are unit-tested. |
-| Safe proposal / confirmation / execution | Safe App and Safe service boundaries | Proposal hashes remain distinct from execution; exact `execTransaction` tuples, signatures, nonce, confirmation, and receipt status are tested. |
+| Relayr forwarded bundle / payment | `relayrPostBundle` / `relayrPay` | Canonical forward request, signer/account identity, quote/payment state, persistence, polling, expected bundle cardinality, and partial-chain failure are unit-tested. The prepaid native-payment target, selector, runtime hash, token, bundle UUID, and deadline are pinned and decoded client-side; the exact target/value/calldata receive a separate mandatory review before a bounded raw simulation and wallet send. |
+| Safe proposal / confirmation / execution | Safe App and Safe service boundaries | Proposal hashes remain distinct from execution; canonical Safe proxy/singleton identity, bounded CCIP-off reads, exact `execTransaction` tuples, current owners/threshold/nonce/confirmations, raw bounded simulation, post-review freshness, and receipt status are tested. |
 | Permit2 and direct approvals | reviewed approval helpers | Canonical Permit2 domain/spender, amount/deadline/nonce, account rechecks, simulations, post-receipt allowance checks, valid-allowance reuse, and typed-signature fallback to an approval-block-anchored on-chain authorization are tested. |
 | Project management actions | `discover.js` reviewed action handlers | Individual ABI builders are tracked above; all submission paths must remain behind the shared review, Safe, or Relayr boundaries. |
+| Bounded exact ENS / handle reads | `project-handles.js` raw `eth_call` | Exact-node resolver and handle reads use explicit gas, pin Registry + resolver reads where applicable, supply `JBProjectHandles` as caller, bound returndata, reject noncanonical handles, and bypass CCIP redirects. |
 | Wallet connection / network request | EIP-1193 provider requests | Only account permission, account enumeration, chain switching, and the chain-gated `eth_getTransactionReceipt` poll are allowed here; all write/sign APIs are inventoried separately. |
 
 Plus create-flow encoding invariants (**U**): custom-token currency id consistency, `splitState` per recipient

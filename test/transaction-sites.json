@@ -55,9 +55,9 @@
         "approveSafeHashOnChain": 1,
         "confirmSafeTx": 1,
         "executeSafeTx": 3,
-        "executeTransaction": 21,
+        "executeTransaction": 22,
         "proposeSafeTx": 1,
-        "providerRequest": 2,
+        "providerRequest": 5,
         "relayrPay": 3,
         "relayrPostBundle": 3,
         "sendTransaction": 1,
@@ -69,7 +69,9 @@
         "Reviewed single-chain direct write",
         "Relayr forwarded bundle / payment",
         "Safe proposal / confirmation / execution",
-        "Permit2 and direct approvals"
+        "Permit2 and direct approvals",
+        "Set ENS project record",
+        "Publish project handle"
       ]
     },
     "src/form.js": {
@@ -120,6 +122,14 @@
         "Set permissions"
       ]
     },
+    "src/project-handles.js": {
+      "counts": {
+        "providerRequest": 2
+      },
+      "actions": [
+        "Bounded exact ENS / handle reads"
+      ]
+    },
     "src/queue-ruleset-component.js": {
       "counts": {
         "executeTransaction": 1
@@ -130,6 +140,7 @@
     },
     "src/relayr.js": {
       "counts": {
+        "providerRequest": 2,
         "relayrPay": 2,
         "relayrPostBundle": 2,
         "sendTransaction": 1,
@@ -162,6 +173,7 @@
         "confirmSafeTx": 1,
         "executeSafeTx": 1,
         "proposeSafeTx": 1,
+        "providerRequest": 2,
         "signTypedData": 1,
         "writeContract": 1
       },

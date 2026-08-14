@@ -4127,6 +4127,14 @@ input[type="checkbox"].field {
 .account-signers { font-weight: normal; }
 .account-signers .address-link, .account-signers strong { font-weight: bold; }
 .account-actions { margin-top: 8px; }
+.project-handle-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.project-handle-actions .operator-cta:disabled { opacity: 0.45; cursor: wait; }
+.project-handle-card .powers-label a { color: inherit; text-decoration: none; }
+.project-handle-card .powers-label a:hover { color: var(--c-teal); }
+.project-handle-record {
+  margin-top: 12px; padding: 10px 12px; border: 1px solid var(--muted-4); background: var(--bg);
+}
+.project-handle-record .operator-cta + .operator-cta { margin-left: 14px; }
 /* Instant full-address tooltip on hover (no native-title delay). */
 /* Compact single-line Token card atop the holders view — labeled value segments. */
 .token-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 13px; color: var(--text); }

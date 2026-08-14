@@ -228,12 +228,15 @@ describe('Safe — GnosisSafe.execTransaction', () => {
     const tx = {
       confirmations: [
         { owner: ownerB, signature: '0x' + ownerBSig },
-        { owner: ownerA, signature: null },
+        { owner: ownerA, signature: null, approvedHash: true },
         { signature: '0x' + 'bb'.repeat(65) },
         { owner: null, signature: null },
       ],
     };
     expect(safeUsableConfirmationCount(tx)).toBe(2);
     expect(safeExecSignatures(tx)).toBe('0x' + prevalidatedA + ownerBSig);
+    const unproven = { confirmations: [{ owner: ownerA, signature: null }, { owner: ownerB, signature: '0x' + ownerBSig }] };
+    expect(safeUsableConfirmationCount(unproven)).toBe(1);
+    expect(safeExecSignatures(unproven)).toBe('0x' + ownerBSig);
   });
 });
