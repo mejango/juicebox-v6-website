@@ -53,7 +53,7 @@
     "src/discover.js": {
       "counts": {
         "approveSafeHashOnChain": 1,
-        "confirmSafeTx": 1,
+        "confirmSafeTx": 2,
         "executeSafeTx": 3,
         "executeTransaction": 22,
         "proposeSafeTx": 1,

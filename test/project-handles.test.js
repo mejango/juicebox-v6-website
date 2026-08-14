@@ -16,6 +16,7 @@ import {
   parseProjectHandleText,
   projectHandleEditorStep,
   projectHandleLocationMessage,
+  projectHandleLocationUrl,
   PROJECT_HANDLE_TEXT_KEY,
   projectHandlesAbi,
   readExactEnsController,
@@ -47,15 +48,30 @@ describe('JBProjectHandles helpers', () => {
     expect(PROJECT_HANDLE_TEXT_KEY).toBe('juicebox');
   });
 
-  it('describes the public project URL with the normalized current or draft handle', () => {
-    expect(projectHandleLocationMessage('https://juicescan.io', '@Design.Juicebox.eth')).toBe(
-      'You’ll be able to find your project at https://juicescan.io/@design.juicebox',
+  it('describes the hash-routed project URL from the current static app base', () => {
+    expect(projectHandleLocationMessage('https://juicescan.io/#discover', '@Design.Juicebox.eth')).toBe(
+      'You’ll be able to find your project at https://juicescan.io/#@design.juicebox',
     );
-    expect(projectHandleLocationMessage('https://juicescan.io/', 'banny.eth')).toBe(
-      'You’ll be able to find your project at https://juicescan.io/@banny',
+    expect(projectHandleLocationUrl('https://bafy.example.ipfs.dweb.link/#owner', 'banny.eth')).toBe(
+      'https://bafy.example.ipfs.dweb.link/#@banny',
     );
-    expect(projectHandleLocationMessage('https://juicescan.io', '')).toBe(
-      'You’ll be able to find your project at https://juicescan.io/@<handle>',
+    expect(projectHandleLocationUrl('https://ipfs.io/ipfs/bafyexample/#base:10', 'banny.eth')).toBe(
+      'https://ipfs.io/ipfs/bafyexample/#@banny',
+    );
+    expect(projectHandleLocationUrl('https://ipfs.io/ipfs/bafyexample#base:10', 'banny.eth')).toBe(
+      'https://ipfs.io/ipfs/bafyexample#@banny',
+    );
+    expect(projectHandleLocationUrl('https://ipfs.io/ipfs/bafyexample/index.html?project=base:10#base:10', 'banny.eth')).toBe(
+      'https://ipfs.io/ipfs/bafyexample/index.html#@banny',
+    );
+    expect(projectHandleLocationUrl('https://juicescan.io/app?theme=dark&project=base:10#base:10', 'banny.eth')).toBe(
+      'https://juicescan.io/app?theme=dark#@banny',
+    );
+    expect(projectHandleLocationUrl('https://juicescan.io/nested/app/#discover', 'éxample.eth')).toBe(
+      'https://juicescan.io/nested/app/#@%C3%A9xample',
+    );
+    expect(projectHandleLocationMessage('https://juicescan.io/#discover', '')).toBe(
+      'You’ll be able to find your project at https://juicescan.io/#@<handle>',
     );
   });
 

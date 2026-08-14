@@ -50,6 +50,7 @@ const PROXY_CODE = '0x608060405273ffffffffffffffffffffffffffffffffffffffff600054
 const SINGLETON_CODE = '0x6001';
 const HANDLER_CODE = '0x6002';
 const FACTORY_CODE = '0x6003';
+const EIP_7702_CODE = '0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b';
 const SAFE_VIEW_ABI = [
   { type: 'function', name: 'getThreshold', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'getOwners', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
@@ -175,6 +176,8 @@ function sourceClient(governance = { threshold: 2n, owners: [OWNER_B, OWNER_A] }
       if (lower === fallbackHandler.toLowerCase() && fallbackHandler !== '0x0000000000000000000000000000000000000000') {
         return Promise.resolve(configured(governance, 'fallbackHandlerCode', HANDLER_CODE));
       }
+      if ((governance.delegatedOwners || []).some(owner => owner.toLowerCase() === lower)) return Promise.resolve(EIP_7702_CODE);
+      if ((governance.prefixedContractOwners || []).some(owner => owner.toLowerCase() === lower)) return Promise.resolve(EIP_7702_CODE + '00');
       if ((governance.contractOwners || []).some(owner => owner.toLowerCase() === lower)) return Promise.resolve('0x6004');
       return Promise.resolve(undefined);
     }),
@@ -210,6 +213,8 @@ function targetClient(governance = { threshold: 2n, owners: [OWNER_A, OWNER_B] }
       if (lower === fallbackHandler.toLowerCase() && fallbackHandler !== '0x0000000000000000000000000000000000000000') {
         return Promise.resolve(configured(governance, 'fallbackHandlerCode', HANDLER_CODE));
       }
+      if ((governance.delegatedOwners || []).some(owner => owner.toLowerCase() === lower)) return Promise.resolve(EIP_7702_CODE);
+      if ((governance.prefixedContractOwners || []).some(owner => owner.toLowerCase() === lower)) return Promise.resolve(EIP_7702_CODE + '00');
       if ((governance.contractOwners || []).some(owner => owner.toLowerCase() === lower)) return Promise.resolve('0x6004');
       return Promise.resolve(undefined);
     }),
@@ -353,6 +358,18 @@ describe('same-address Safe deployment governance hardening', () => {
       .toBeLessThan(deployState.wallet.writeContract.mock.invocationCallOrder[0]);
   });
 
+  it('accepts exact EIP-7702-delegated Safe owners on both chains', async () => {
+    deployState.clients.set(SOURCE_CHAIN, sourceClient({
+      threshold: 2n, owners: [OWNER_A, OWNER_B], delegatedOwners: [OWNER_A],
+    }));
+    deployState.clients.set(TARGET_CHAIN, targetClient({
+      threshold: 2n, owners: [OWNER_A, OWNER_B], delegatedOwners: [OWNER_B],
+    }));
+
+    await expect(deploySafeSameAddress(TARGET_CHAIN, creation(), SAFE)).resolves.toBe(HASH);
+    expect(deployState.wallet.writeContract).toHaveBeenCalledTimes(1);
+  });
+
   it('stops before sending when current source governance no longer matches creation', async () => {
     deployState.clients.set(SOURCE_CHAIN, sourceClient({ threshold: 1n, owners: [OWNER_A, OWNER_B] }));
     const target = targetClient();
@@ -385,7 +402,9 @@ describe('same-address Safe deployment governance hardening', () => {
     ['a mismatched VERSION', { version: '9.9.9' }, /VERSION.*official singleton/i],
     ['unreadable singleton code', { singletonCode: '0x' }, /singleton bytecode/i],
     ['unreadable fallback-handler code', { fallbackHandlerCode: '0x' }, /fallback handler bytecode/i],
+    ['a delegated fallback handler', { fallbackHandlerCode: EIP_7702_CODE }, /delegated fallback handler/i],
     ['a contract owner', { contractOwners: [OWNER_A] }, /contract owner/i],
+    ['a prefixed non-7702 contract owner', { prefixedContractOwners: [OWNER_A] }, /contract owner/i],
   ])('stops before sending when the source Safe has %s', async (_label, policy, error) => {
     deployState.clients.set(SOURCE_CHAIN, sourceClient({
       threshold: 2n, owners: [OWNER_A, OWNER_B], ...policy,
@@ -433,7 +452,9 @@ describe('same-address Safe deployment governance hardening', () => {
     ['missing official factory code', { factoryCode: '0x' }, /official Safe proxy factory.*bytecode/i],
     ['different singleton code', { destinationSingletonCode: '0x6009' }, /singleton bytecode does not match/i],
     ['different fallback-handler code', { destinationFallbackHandlerCode: '0x6009' }, /fallback handler bytecode does not match/i],
+    ['a delegated fallback handler', { destinationFallbackHandlerCode: EIP_7702_CODE }, /delegated fallback handler/i],
     ['a contract owner', { contractOwners: [OWNER_A] }, /owner is a contract on the target chain/i],
+    ['a prefixed non-7702 contract owner', { prefixedContractOwners: [OWNER_A] }, /owner is a contract on the target chain/i],
     ['an occupied Safe address', { occupied: true }, /already occupied/i],
     ['an unreadable Safe address', { targetAddressCode: null }, /malformed bytecode/i],
   ])('stops before simulation/write when the target has %s', async (_label, policy, error) => {

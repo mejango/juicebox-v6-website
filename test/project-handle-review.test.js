@@ -14,6 +14,7 @@ const SINGLETON_SLOT = '0x' + '0'.repeat(64);
 const GUARD_SLOT = '0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8';
 const FALLBACK_SLOT = '0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5';
 const SAFE_PROXY_CODE = '0x608060405273ffffffffffffffffffffffffffffffffffffffff600054167fa619486e0000000000000000000000000000000000000000000000000000000060003514156050578060005260206000f35b3660008037600080366000845af43d6000803e60008114156070573d6000fd5b3d6000f3fea264697066735822122003d1488ee65e08fa41e58e888a9865554c535f2c77126a82cb4c0f917f31441364736f6c63430007060033';
+const EIP_7702_CODE = '0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b';
 const SAFE_VIEW_ABI = [
   { type: 'function', name: 'getThreshold', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'getOwners', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
@@ -29,11 +30,16 @@ function safeIdentityClient(opts = {}) {
   var singleton = opts.singleton || SINGLETON;
   var fallback = opts.fallback || FALLBACK;
   var contractOwners = (opts.contractOwners || []).map(function (owner) { return owner.toLowerCase(); });
+  var delegatedOwners = (opts.delegatedOwners || []).map(function (owner) { return owner.toLowerCase(); });
+  var prefixedContractOwners = (opts.prefixedContractOwners || []).map(function (owner) { return owner.toLowerCase(); });
   return {
     getCode: vi.fn(async function ({ address }) {
       var lower = address.toLowerCase();
       if (lower === SAFE.toLowerCase()) return SAFE_PROXY_CODE;
-      if (lower === singleton.toLowerCase() || lower === fallback.toLowerCase() || contractOwners.includes(lower)) return '0x1234';
+      if (lower === singleton.toLowerCase() || contractOwners.includes(lower)) return '0x1234';
+      if (lower === fallback.toLowerCase()) return opts.fallbackCode || '0x1234';
+      if (delegatedOwners.includes(lower)) return EIP_7702_CODE;
+      if (prefixedContractOwners.includes(lower)) return EIP_7702_CODE + '00';
       return undefined;
     }),
     getStorageAt: vi.fn(async function ({ slot }) {
@@ -68,8 +74,9 @@ describe('project-handle route lifecycle', () => {
     var start = source.indexOf('function renderProjectHandleCard');
     var end = source.indexOf('function openProjectHandleModal', start);
     var card = source.slice(start, end);
-    expect(card).toContain("projectHandleLocationMessage(window.location.origin, '')");
-    expect(card).toContain('projectHandleLocationMessage(window.location.origin, state.handle || state.stored)');
+    expect(card).toContain("renderProjectHandleLocation(intro, '')");
+    expect(card).toContain('renderProjectHandleLocation(intro, state.handle || state.stored)');
+    expect(card).toContain('var pageUrl = window.location.href');
     expect(card).not.toContain('Use any .eth name you control');
     expect(card).not.toContain('No shared namespace is required');
   });
@@ -80,11 +87,20 @@ describe('project-handle route lifecycle', () => {
     var end = source.indexOf('function appendPendingSafeTxsCard', start);
     var editor = source.slice(start, end);
     expect(editor).toContain("input.placeholder = 'banny.eth'");
-    expect(editor).toContain('projectHandleLocationMessage(window.location.origin, input.value)');
-    expect(editor).toContain('projectHandleLocationMessage(window.location.origin, normalized.handle)');
+    expect(editor).toContain('renderProjectHandleLocation(scope, input.value)');
+    expect(editor).toContain('renderProjectHandleLocation(scope, normalized.handle)');
     expect(editor).not.toContain('Enter any .eth name you control.');
+    expect(editor).not.toContain('Required ENS text record:');
     expect(editor).not.toContain("normalizedHint.textContent = 'URL: @'");
+    expect(editor).toContain("el('div', 'operator-edit-across project-handle-location')");
+    expect(editor).toContain('var handleSequence = buildTransactionSequence([');
+    expect(editor).toContain('ENS setText on Ethereum');
+    expect(editor).toContain('JBProjectHandles.setEnsNamePartsFor on Ethereum');
+    expect(editor).toContain('Verified steps skip; queued Safe steps resume without duplicates.');
+    expect(editor).toContain("if (next.kind === 'done') handleSequence.setActive(2, true)");
+    expect(editor).toContain("else if (next.kind === 'publish' || next.kind === 'publish-pending') handleSequence.setActive(1, false)");
     expect(editor).toContain("var primary = el('button', 'operator-cta operator-edit-submit')");
+    expect(editor).toContain("canClose: function () { return !busy; }");
     expect(editor).not.toContain("textContent = '1. Set ENS record'");
     expect(editor).not.toContain("textContent = '2. Publish handle'");
     expect(editor).toContain("'jb-project-handle-draft:' + target.chainId + ':' + target.projectId");
@@ -99,6 +115,30 @@ describe('project-handle route lifecycle', () => {
     expect(editor).toContain("gas: 300000n");
     expect(editor).toContain("gas: 1500000n");
     expect(editor).toContain('result.relayr || result.executedReady || Number(result.executed) > 0');
+  });
+
+  it('reuses the Approve + Pay transaction sequence primitive for the handle progress modal', () => {
+    var source = readFileSync('src/discover.js', 'utf8');
+    var primitiveStart = source.indexOf('function buildTransactionSequence');
+    var payStart = source.indexOf('function openTxConfirm', primitiveStart);
+    var payEnd = source.indexOf('function openPayConfirm', payStart);
+    expect(primitiveStart).toBeGreaterThan(-1);
+    expect(source.slice(primitiveStart, payStart)).toContain("el('div', 'pay-confirm-sequence')");
+    expect(source.slice(primitiveStart, payStart)).toContain("item.classList.toggle('complete', complete)");
+    expect(source.slice(payStart, payEnd)).toContain('sequenceUi = buildTransactionSequence(opts.sequenceSteps)');
+  });
+
+  it('locks nested Safe review work and reuses an exact pending call', () => {
+    var source = readFileSync('src/discover.js', 'utf8');
+    var start = source.indexOf('function proposeSafeAcrossChains');
+    var end = source.indexOf('// A label-over-value cell', start);
+    var safeFlow = source.slice(start, end);
+    expect(safeFlow).toContain('canClose: function () { return !inFlight; }');
+    expect(safeFlow).toContain('onClose: function () {');
+    expect(safeFlow).toContain('function exactQueuedServiceCall');
+    expect(safeFlow).toContain('exact call already queued at #');
+    expect(safeFlow).toContain('confirmSafeTx(r.cid, safe, existing, acct');
+    expect(source).toContain('openDialog(titleText, { canClose: opts.canClose, onClose: opts.onClose })');
   });
 
   it('routes only by exact ENS forward tuple, live authority, and the matching canonical reverse claim', () => {
@@ -247,6 +287,29 @@ describe('cross-chain project-handle authority identity', () => {
     await expect(verifyProjectHandleAuthorityIdentity(8453, SAFE, clients)).rejects.toThrow(/EOA.*contract|contract.*EOA/i);
   });
 
+  it('treats only exact EIP-7702 delegation designators as delegated EOAs', async () => {
+    for (var pair of [
+      [EIP_7702_CODE, '0x'],
+      ['0x', EIP_7702_CODE],
+      [EIP_7702_CODE, '0xef01002222222222222222222222222222222222222222'],
+    ]) {
+      await expect(verifyProjectHandleAuthorityIdentity(8453, SAFE, function (chainId) {
+        return { getCode: vi.fn().mockResolvedValue(chainId === 8453 ? pair[0] : pair[1]) };
+      })).resolves.toMatchObject({ kind: 'eoa' });
+    }
+
+    for (var malformed of [
+      '0xef0100',
+      EIP_7702_CODE + '00',
+      '0xef0101' + EIP_7702_CODE.slice(8),
+      '0xef0100' + 'zz'.repeat(20),
+    ]) {
+      await expect(verifyProjectHandleAuthorityIdentity(8453, SAFE, function (chainId) {
+        return { getCode: vi.fn().mockResolvedValue(chainId === 8453 ? malformed : '0x') };
+      })).rejects.toThrow(/supported official Safe proxy|verify.*both/i);
+    }
+  });
+
   it('accepts only plain Safes with exact singleton, fallback handler, owners, and threshold parity', async () => {
     var source = safeIdentityClient();
     var mainnet = safeIdentityClient();
@@ -263,6 +326,10 @@ describe('cross-chain project-handle authority identity', () => {
     await expect(verifyProjectHandleAuthorityIdentity(8453, SAFE, function (chainId) {
       return chainId === 8453 ? source : differentSingleton;
     })).rejects.toThrow(/different singleton or fallback handler/i);
+
+    await expect(verifyProjectHandleAuthorityIdentity(8453, SAFE, function (chainId) {
+      return chainId === 8453 ? source : { getCode: vi.fn().mockResolvedValue(EIP_7702_CODE) };
+    })).rejects.toThrow(/contract.*EIP-7702 delegated EOA/i);
   });
 
   it('rejects guards, modules, contract owners, and unverifiable Safe storage', async () => {
@@ -271,11 +338,19 @@ describe('cross-chain project-handle authority identity', () => {
       safeIdentityClient({ guard: OWNER }),
       safeIdentityClient({ modules: [OWNER] }),
       safeIdentityClient({ contractOwners: [OWNER] }),
+      safeIdentityClient({ prefixedContractOwners: [OWNER] }),
+      safeIdentityClient({ fallbackCode: EIP_7702_CODE }),
     ]) {
       await expect(verifyProjectHandleAuthorityIdentity(8453, SAFE, function (chainId) {
         return chainId === 8453 ? source : unsafe;
-      })).rejects.toThrow(/guard|modules|owners are EOAs/i);
+      })).rejects.toThrow(/guard|modules|owners are EOAs|delegated Safe fallback handler/i);
     }
+
+    await expect(verifyProjectHandleAuthorityIdentity(8453, SAFE, function (chainId) {
+      return chainId === 8453
+        ? safeIdentityClient({ delegatedOwners: [OWNER] })
+        : safeIdentityClient({ delegatedOwners: [OWNER] });
+    })).resolves.toMatchObject({ kind: 'safe' });
     var unreadable = safeIdentityClient(); unreadable.getStorageAt.mockRejectedValue(new Error('RPC down'));
     await expect(verifyProjectHandleAuthorityIdentity(8453, SAFE, function (chainId) {
       return chainId === 8453 ? source : unreadable;

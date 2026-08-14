@@ -2918,6 +2918,8 @@ input[type="checkbox"].field {
 .operator-edit-json { white-space: pre; overflow-x: auto; tab-size: 2; }
 .operator-edit-json:disabled { color: var(--muted-2); cursor: progress; }
 .operator-edit-across { font-size: 11px; color: var(--muted-2); margin-top: 8px; line-height: 1.4; }
+.project-handle-location { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.project-handle-location a { color: inherit; text-decoration: underline; }
 .operator-edit-hint { color: var(--muted-2); font-weight: normal; }
 .operator-edit-hint a { text-decoration: underline; }
 .operator-edit-jwt {
@@ -5983,6 +5985,7 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .pay-confirm-sequence-intro { color: var(--muted-2); line-height: 1.45; }
 .pay-confirm-sequence-list { list-style: none; margin: 9px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .pay-confirm-sequence-step { display: flex; align-items: center; gap: 8px; }
+.pay-confirm-sequence-step > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .pay-confirm-sequence-step.active { color: var(--c-black); font-weight: bold; }
 .pay-confirm-sequence-step.complete { color: var(--muted-2); }
 .pay-confirm-sequence-number {

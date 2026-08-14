@@ -263,7 +263,9 @@ export async function confirmSafeTx(chainId, safe, tx, signer, reverify) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
     throw new Error('Safe service ' + res.status + (detail ? ': ' + detail.slice(0, 200) : ''));
   }
-  return true;
+  // Returning the exact signature lets a resumable caller update its in-memory view immediately after the
+  // service accepts the confirmation, without relying on eventually-consistent queue indexing.
+  return signature;
 }
 
 // Execute a queued tx that has enough confirmations, straight from the dapp (no Safe app needed).
@@ -655,6 +657,12 @@ function normalizedRuntimeCode(code, required, label) {
   return code.toLowerCase();
 }
 
+// EIP-7702-delegated accounts remain key-controlled EOAs. Only the protocol's exact 23-byte designator is
+// EOA-like; a normal runtime which happens to share the prefix must continue to fail the contract-owner gate.
+function isEip7702DelegatedEoaRuntime(code) {
+  return typeof code === 'string' && /^0xef0100[0-9a-f]{40}$/i.test(code);
+}
+
 function normalizedSafeGovernance(governance, label) {
   var owners = governance && governance.owners;
   if (!Array.isArray(owners) || !owners.length || owners.length > SAFE_MAX_OWNERS) throw new Error((label || 'Safe') + ' has no readable owners.');
@@ -802,7 +810,8 @@ export function verifyRecognizedSafeDeploymentPolicy(policy, label) {
     throw new Error('Could not verify every ' + which.toLowerCase() + ' owner as an EOA.');
   }
   ownerCodes.forEach(function (code) {
-    if (normalizedRuntimeCode(code, false, which + ' owner')) {
+    var ownerCode = normalizedRuntimeCode(code, false, which + ' owner');
+    if (ownerCode && !isEip7702DelegatedEoaRuntime(ownerCode)) {
       throw new Error(which + ' has a contract owner; automatic same-address deployment supports EOA owners only.');
     }
   });
@@ -813,6 +822,11 @@ export function verifyRecognizedSafeDeploymentPolicy(policy, label) {
     }
   } else {
     fallbackHandlerCode = normalizedRuntimeCode(policy.fallbackHandlerCode, true, which + ' fallback handler');
+    // Unlike an owner key, a fallback handler contributes executable Safe behavior. The 7702 marker alone does
+    // not bind the delegated implementation runtime across chains, so automatic replay must fail closed here.
+    if (isEip7702DelegatedEoaRuntime(fallbackHandlerCode)) {
+      throw new Error(which + ' uses an EIP-7702 delegated fallback handler; automatic same-address deployment is unsupported.');
+    }
   }
   return {
     owners: governance.owners, threshold: governance.threshold, proxyCode: proxyCode, proxyCodeHash: proxyCodeHash,
@@ -887,12 +901,16 @@ async function verifySafeDeploymentDestination(client, creation, expectedSafe, s
   var targetSingletonCode = normalizedRuntimeCode(codes[2], true, 'The target Safe singleton');
   if (targetSingletonCode !== source.singletonCode) throw new Error('The target Safe singleton bytecode does not match the source chain.');
   codes.slice(3, 3 + source.owners.length).forEach(function (code) {
-    if (normalizedRuntimeCode(code, false, 'A target Safe owner')) {
+    var ownerCode = normalizedRuntimeCode(code, false, 'A target Safe owner');
+    if (ownerCode && !isEip7702DelegatedEoaRuntime(ownerCode)) {
       throw new Error('A Safe owner is a contract on the target chain; automatic same-address deployment was stopped.');
     }
   });
   if (source.fallbackHandler !== ZERO.toLowerCase()) {
     var targetFallbackCode = normalizedRuntimeCode(codes[codes.length - 1], true, 'The target Safe fallback handler');
+    if (isEip7702DelegatedEoaRuntime(targetFallbackCode)) {
+      throw new Error('The target Safe uses an EIP-7702 delegated fallback handler; automatic same-address deployment was stopped.');
+    }
     if (targetFallbackCode !== source.fallbackHandlerCode) throw new Error('The target Safe fallback handler bytecode does not match the source chain.');
   }
   return true;

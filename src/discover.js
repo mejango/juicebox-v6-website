@@ -26,7 +26,7 @@ import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPaye
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
 import { contractGasWithHeadroom } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
-import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationMessage, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
+import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
@@ -6875,6 +6875,11 @@ async function readSafeAuthorityIdentity(client, address) {
     if (!SUPPORTED_SAFE_FALLBACK_HANDLERS[fallbackHandler.toLowerCase()]) throw new Error('The Safe uses an unsupported fallback handler.');
     fallbackCode = normalizedAuthorityCode(await codeAt(client, fallbackHandler));
     if (!fallbackCode) throw new Error('Could not verify the Safe fallback handler.');
+    // A 7702 marker authenticates the fallback account's key, not the runtime it delegates to on this chain.
+    // Comparing only that 23-byte marker across chains could therefore certify different fallback behavior.
+    if (isEip7702DelegatedEoaCode(fallbackCode)) {
+      throw new Error('Project-handle aliases do not support an EIP-7702 delegated Safe fallback handler.');
+    }
   }
   return {
     owners: owners, threshold: threshold,
@@ -6895,6 +6900,17 @@ function normalizedAuthorityCode(code) {
     throw new Error('The RPC returned malformed authority bytecode.');
   }
   return code.toLowerCase();
+}
+
+// EIP-7702 keeps the authority as the same key-controlled EOA while assigning it an exact 23-byte
+// delegation designator (0xef0100 || implementation). Do not broaden this to a prefix check: an ordinary
+// contract whose runtime merely starts with 0xef0100 is still contract code and must take the Safe-only path.
+function isEip7702DelegatedEoaCode(code) {
+  return typeof code === 'string' && /^0xef0100[0-9a-f]{40}$/i.test(code);
+}
+
+function isEoaAuthorityCode(code) {
+  return !code || isEip7702DelegatedEoaCode(code);
 }
 
 async function readRecognizedSafeGovernance(client, address) {
@@ -6942,10 +6958,15 @@ export async function inspectProjectHandleAuthorityIdentity(chainId, address, cl
     codes = rawCodes.map(normalizedAuthorityCode);
   }
   catch (_) { throw new Error('Could not verify the project authority on both its project chain and Ethereum.'); }
-  var sourceContract = !!codes[0];
-  var mainnetContract = !!codes[1];
-  if (!sourceContract && !mainnetContract) return { kind: 'eoa', status: 'verified' };
-  if (!sourceContract && mainnetContract) throw new Error('The project authority is an EOA on its project chain but a contract at that address on Ethereum.');
+  var sourceEoa = isEoaAuthorityCode(codes[0]);
+  var mainnetEoa = isEoaAuthorityCode(codes[1]);
+  var sourceContract = !sourceEoa;
+  var mainnetContract = !mainnetEoa;
+  if (sourceEoa && mainnetEoa) return { kind: 'eoa', status: 'verified' };
+  if (sourceEoa && mainnetContract) throw new Error('The project authority is an EOA on its project chain but a contract at that address on Ethereum.');
+  if (sourceContract && isEip7702DelegatedEoaCode(codes[1])) {
+    throw new Error('The project authority is a contract on its project chain but an EIP-7702 delegated EOA at that address on Ethereum.');
+  }
   if (!SUPPORTED_SAFE_PROXY_CODE_HASHES[keccak256(codes[0])]) {
     throw new Error('The project authority contract is not a supported official Safe proxy.');
   }
@@ -6963,13 +6984,13 @@ export async function inspectProjectHandleAuthorityIdentity(chainId, address, cl
       });
     }));
   } catch (_) { throw new Error('Could not verify every Safe owner on both chains.'); }
-  if (ownerCodes.some(function (pair) { return !!pair[0] || !!pair[1]; })) {
+  if (ownerCodes.some(function (pair) { return !isEoaAuthorityCode(pair[0]) || !isEoaAuthorityCode(pair[1]); })) {
     throw new Error('Project-handle aliases support only Safes whose owners are EOAs on both chains.');
   }
 
   // This is the only repairable mismatch. Both getCode calls succeeded, Ethereum is demonstrably empty, and the
   // project-chain address has already passed the full official/plain-Safe and EOA-owner policy above.
-  if (!mainnetContract) {
+  if (!codes[1]) {
     return { kind: 'safe-missing-mainnet', status: 'safe-missing-mainnet', source: sourceIdentity };
   }
   if (!SUPPORTED_SAFE_PROXY_CODE_HASHES[keccak256(codes[1])] || codes[0] !== codes[1]) {
@@ -12133,10 +12154,17 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
     var btn = el('button', 'modal-submit'); btn.textContent = 'Sign & queue';
     foot.appendChild(cancel); foot.appendChild(btn); wrap.appendChild(foot);
-    var modal = openModal(opts.title || 'Queue on Safe', wrap);
+    var done = false, inFlight = false, mode = 'sign', lastResult = null, readyExecs = [];
+    var modal = openModal(opts.title || 'Queue on Safe', wrap, {
+      canClose: function () { return !inFlight; },
+      onClose: function () {
+        if (done) return;
+        done = true;
+        resolve(lastResult || { queued: 0, skipped: [], cancelled: true });
+      },
+    });
     // Replace the input modal rather than stacking a second one over it — the review reads as the "next page".
     if (opts.replaces && opts.replaces.close) { try { opts.replaces.close(); } catch (_) {} }
-    var done = false, mode = 'sign', lastResult = null, readyExecs = [];
     function finish(res) { if (done) return; done = true; modal.close(); resolve(res); }
 
     var rows = [];
@@ -12154,6 +12182,19 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         return String(Number(tx && tx.nonce)) + ':' + String(hash || '').toLowerCase();
       }).sort().join('|');
     }
+    function exactQueuedServiceCall(txs, rec) {
+      var matches = (txs || []).filter(function (tx) {
+        if (!tx || !tx.to || !sameAddr(tx.to, rec.to)
+            || String(tx.data || '0x').toLowerCase() !== String(rec.data || '0x').toLowerCase()
+            || Number(tx.operation || 0) !== 0 || !hasCanonicalSafeRefundFields(tx)) return false;
+        try {
+          if (BigInt(tx.value || 0) !== 0n) return false;
+          var advertised = queuedSafeTxHash(tx);
+          return !!advertised && safeTxHashForQueuedTx(rec.cid, safe, tx).toLowerCase() === advertised;
+        } catch (_) { return false; }
+      }).sort(function (left, right) { return Number(left.nonce) - Number(right.nonce); });
+      return matches[0] || null;
+    }
     function initializeSafeRow(rec, info) {
       rec.deployed = true; rec.ready = false; rec.state = 'checking'; rec.threshold = info.threshold; rec.owners = info.owners;
       if (hasSafeService(rec.cid)) {
@@ -12166,17 +12207,28 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         })]).then(function (rr) {
           var next = Number(rr[0]);
           if (!Number.isSafeInteger(next) || next < 0) throw new Error('could not read a valid Safe nonce');
-          var queuedNonces = (rr[1] || []).map(function (t) { return Number(t.nonce); })
+          var pendingTxs = rr[1] || [];
+          var existingTx = exactQueuedServiceCall(pendingTxs, rec);
+          // The Safe service endpoint is deliberately bounded. If it is saturated, absence is ambiguous: the
+          // same call may be on a later page. Fail closed instead of selecting a fresh nonce and duplicating it.
+          if (!existingTx && pendingTxs.length >= 50) {
+            throw new Error('The Safe pending queue is too large to prove this exact call is absent. Open the Safe app and clear or inspect the queue before retrying.');
+          }
+          var queuedNonces = pendingTxs.map(function (t) { return Number(t.nonce); })
             .filter(function (v, i, a) { return Number.isSafeInteger(v) && v >= 0 && a.indexOf(v) === i; })
             .sort(function (a, b) { return a - b; });
-          var def = queuedNonces.length ? Math.max(next, queuedNonces[queuedNonces.length - 1] + 1) : next;
+          var def = existingTx ? Number(existingTx.nonce)
+            : (queuedNonces.length ? Math.max(next, queuedNonces[queuedNonces.length - 1] + 1) : next);
           if (!Number.isSafeInteger(def) || def < 0) throw new Error('the next Safe nonce is outside the supported range');
           var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
           var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
-          var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.value = String(def); nrow.appendChild(nInput);
-          var nhint = el('span', 'safe-propose-hint'); nhint.textContent = queuedNonces.length ? (' next ' + def + ' | queued #' + queuedNonces.join(', #') + ' — reuse one to replace it') : ' next nonce'; nrow.appendChild(nhint);
+          var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.value = String(def); nInput.disabled = !!existingTx; nrow.appendChild(nInput);
+          var nhint = el('span', 'safe-propose-hint'); nhint.textContent = existingTx
+            ? ' exact call already queued at #' + def + ' — it will be reused'
+            : (queuedNonces.length ? (' next ' + def + ' | queued #' + queuedNonces.join(', #') + ' — reuse one to replace it') : ' next nonce'); nrow.appendChild(nhint);
           rec.block.appendChild(nrow); rec.nInput = nInput; rec.serviceNext = next;
-          rec.queuedNonces = queuedNonces; rec.queueSnapshot = serviceQueueSnapshot(rr[1]);
+          rec.queuedNonces = queuedNonces; rec.queueSnapshot = serviceQueueSnapshot(pendingTxs);
+          rec.existingTx = existingTx; rec.existingHash = queuedSafeTxHash(existingTx);
           rec.ready = true; rec.state = 'ready';
         });
       }
@@ -12190,7 +12242,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       // binds the replay to the project's current governance; service metadata is not authority evidence.
       var dep = el('button', 'operator-cta'); dep.textContent = 'deploy it here (same address)';
       dep.addEventListener('click', function (e) {
-        e.preventDefault(); rec.initialized = false; rec.ready = false; rec.state = 'deploying'; updateProposalReadiness();
+        e.preventDefault(); inFlight = true; cancel.disabled = true; rec.initialized = false; rec.ready = false; rec.state = 'deploying'; updateProposalReadiness();
         st.innerHTML = ''; st.appendChild(document.createTextNode('Reading the Safe’s deployment config…'));
         fetchSafeCreation(safe).then(function (creation) {
           if (!creation) throw new Error('couldn’t read the Safe’s creation config (needs a chain where it already exists + a Safe service)');
@@ -12203,11 +12255,11 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             return initializeSafeRow(rec, info2);
           });
         }).then(function () {
-          rec.initialized = true; updateProposalReadiness();
+          rec.initialized = true; inFlight = rows.some(function (row) { return row.state === 'deploying'; }); cancel.disabled = inFlight; updateProposalReadiness();
         }).catch(function (err) {
           rec.deployed = false; rec.ready = false; rec.state = 'unknown'; rec.initialized = true;
           st.innerHTML = ''; st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — ' + ((err && (err.shortMessage || err.message)) || String(err))));
-          updateProposalReadiness();
+          inFlight = rows.some(function (row) { return row.state === 'deploying'; }); cancel.disabled = inFlight; updateProposalReadiness();
         });
       });
       st.appendChild(dep);
@@ -12308,6 +12360,13 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           || serviceQueueSnapshot(rr[1]) !== rec.queueSnapshot) {
         throw new Error('The Safe nonce or pending queue changed on ' + rec.chain + '. Reopen this review before signing.');
       }
+      if (rec.existingHash) {
+        var existing = exactQueuedServiceCall(rr[1], rec);
+        if (!existing || queuedSafeTxHash(existing) !== rec.existingHash) {
+          throw new Error('The exact queued Safe call changed on ' + rec.chain + '. Reopen this review.');
+        }
+        rec.existingTx = existing;
+      }
       var chosen = Number(rec.nInput && rec.nInput.value);
       if (!Number.isSafeInteger(chosen) || chosen < next) throw new Error('Choose an unused or replaceable Safe nonce of at least ' + next + ' on ' + rec.chain + '.');
       if (expectedNonce != null && chosen !== Number(expectedNonce)) throw new Error('The selected nonce changed while signing on ' + rec.chain + '. Review the transaction again.');
@@ -12315,7 +12374,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     }
 
     function setProposalNonceInputsDisabled(disabled) {
-      rows.forEach(function (row) { if (row.nInput) row.nInput.disabled = !!disabled; });
+      rows.forEach(function (row) { if (row.nInput) row.nInput.disabled = !!disabled || !!row.existingTx; });
     }
 
     var setStatus = makeStatusSetter(status);
@@ -12326,7 +12385,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     btn.addEventListener('click', function () {
       if (mode === 'executeReady') {
         if (!readyExecs.length) return;
-        btn.disabled = true; cancel.disabled = true; setProposalNonceInputsDisabled(true);
+        inFlight = true; btn.disabled = true; cancel.disabled = true; setProposalNonceInputsDisabled(true);
         setStatus('Preparing execution…', 'pending');
         Promise.resolve(opts.reverify ? opts.reverify() : null).then(function () {
           return Promise.all(readyExecs.map(function (ready) {
@@ -12344,11 +12403,11 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             setStatus('Executed on ' + readyExecs.length + ' chain' + (readyExecs.length === 1 ? '' : 's') + '.', 'success');
             setTimeout(function () { finish(lastResult || { queued: 0, executedReady: readyExecs.length, skipped: [], cancelled: false }); }, 1400);
           } else {
-            btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
+            inFlight = false; btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
             setStatus('Cancelled — queued transactions are still available in the ' + queueTabName + ' tab or Safe app.', '');
           }
         }).catch(function (e) {
-          btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
+          inFlight = false; btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
           setStatus(errMessage(e, 'Could not execute the transactions.'), 'error');
         });
         return;
@@ -12364,7 +12423,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       var skipped = rows.filter(function (r) { return r.state === 'missing'; }).map(function (r) { return r.chain; });
       if (!live.length) { setStatus('The Safe isn’t deployed (or readable) on any selected chain. Add it on those chains in the Safe app first.', 'error'); return; }
       if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
-      btn.disabled = true; cancel.disabled = true; setProposalNonceInputsDisabled(true);
+      inFlight = true; btn.disabled = true; cancel.disabled = true; setProposalNonceInputsDisabled(true);
       (async function () {
         var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, pendingExec = 0, staleNonce = 0;
         var queuedSafeTxHashes = [];
@@ -12404,14 +12463,34 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             r.threshold = liveSafeInfo.threshold; r.owners = liveSafeInfo.owners;
             if (!r.onChain) {
               var nonce = await verifyServiceQueueSnapshot(r, actionSnapshot.nonce);
-              setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
-              var proposed = await proposeSafeTx({
-                chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce,
-                reverify: async function () {
-                  await verifySafeRowAction(r, acct, liveSafeInfo);
-                  await verifyServiceQueueSnapshot(r, nonce);
-                },
-              });
+              var proposed;
+              if (r.existingTx) {
+                var existing = await safeTxWithVerifiedOwnerConfirmations(r.cid, safe, r.existingTx, liveSafeInfo.owners);
+                var alreadySigned = (existing.confirmations || []).some(function (confirmation) {
+                  return confirmation && confirmation.owner && sameAddr(confirmation.owner, acct)
+                    && (!!String(confirmation.signature || '').replace(/^0x/, '') || confirmation.approvedHash === true);
+                });
+                if (!alreadySigned) {
+                  setStatus('Adding your signature to the existing exact call on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ')…', 'pending');
+                  var signature = await confirmSafeTx(r.cid, safe, existing, acct, async function () {
+                    await verifySafeRowAction(r, acct, liveSafeInfo);
+                    await verifyServiceQueueSnapshot(r, nonce);
+                  });
+                  existing = Object.assign({}, existing, {
+                    confirmations: (existing.confirmations || []).concat([{ owner: acct, signature: signature }]),
+                  });
+                }
+                proposed = { safeTxHash: r.existingHash, tx: existing, reused: true };
+              } else {
+                setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
+                proposed = await proposeSafeTx({
+                  chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce,
+                  reverify: async function () {
+                    await verifySafeRowAction(r, acct, liveSafeInfo);
+                    await verifyServiceQueueSnapshot(r, nonce);
+                  },
+                });
+              }
               r.done = true; queued++;
               var qtx = Object.assign({}, proposed.tx || {}, { confirmationsRequired: r.threshold });
               if (proposed.safeTxHash) queuedSafeTxHashes.push(proposed.safeTxHash);
@@ -12476,7 +12555,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           }
           document.dispatchEvent(new CustomEvent('jb:safe-queued'));
           document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
-          btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
+          inFlight = false; btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
           var summary = [];
           if (executed) summary.push('executed on ' + executed);
           if (queued) summary.push('queued on ' + queued);
@@ -12511,7 +12590,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           }
         } catch (e) {
           if (typeof console !== 'undefined') console.error('[safe-apply]', e);
-          btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
+          inFlight = false; btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
           var msg = (e && (e.shortMessage || e.message)) || String(e);
           // A wallet SUBMISSION-RPC failure (HTTP/internal error while broadcasting), NOT a contract revert or fee
           // problem — maxFeePerGas is already over-capped. Point the signer at the real fix (switch the chain's RPC in
@@ -15087,6 +15166,7 @@ function classifyOwner(chainId, addr) {
     if (!client) return { type: 'Unknown', safe: null };
     return client.getCode({ address: addr }).then(function (code) {
       if (!code || code === '0x') return { type: 'EOA', safe: null };
+      if (isEip7702DelegatedEoaCode(code)) return { type: 'EOA (EIP-7702 delegated)', safe: null };
       var name = resolveContractName(addr, chainId);
       return { type: name ? ('Known contract (' + name + ')') : 'Unknown contract', safe: null };
     }).catch(function () { return { type: 'Unknown — could not read code', safe: null }; });
@@ -15256,8 +15336,8 @@ async function readProjectHandleState(project) {
 function renderProjectHandleCard(project) {
   var card = el('div', 'detail-card project-handle-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Project handle'; card.appendChild(title);
-  var intro = el('div', 'detail-card-body backoffice-intro');
-  intro.textContent = projectHandleLocationMessage(window.location.origin, '');
+  var intro = el('div', 'detail-card-body backoffice-intro project-handle-location');
+  renderProjectHandleLocation(intro, '');
   card.appendChild(intro);
   var body = el('div'); body.appendChild(skel('100%', '44px')); card.appendChild(body);
   var actions = el('div', 'project-handle-actions');
@@ -15270,7 +15350,7 @@ function renderProjectHandleCard(project) {
     readProjectHandleState(project).then(function (next) {
       if (!body.isConnected) return;
       state = next; body.innerHTML = ''; setBtn.disabled = false;
-      intro.textContent = projectHandleLocationMessage(window.location.origin, state.handle || state.stored);
+      renderProjectHandleLocation(intro, state.handle || state.stored);
       var row = el('div', 'powers-row');
       var head = el('div', 'powers-head');
       var label = el('span', 'powers-label');
@@ -15318,12 +15398,23 @@ function renderProjectHandleCard(project) {
   return card;
 }
 
+function renderProjectHandleLocation(node, value) {
+  var pageUrl = window.location.href;
+  var url = projectHandleLocationUrl(pageUrl, value);
+  var message = 'You’ll be able to find your project at ' + url;
+  node.textContent = message;
+  try { normalizeProjectHandle(value); } catch (_) { return; }
+  node.textContent = message.slice(0, -url.length);
+  var link = document.createElement('a'); link.href = url; link.textContent = url;
+  node.appendChild(link);
+}
+
 function openProjectHandleModal(project, initialState, onSaved) {
   var target = { chainId: initialState.chainId, projectId: initialState.projectId };
   var authority = initialState.authority;
   var content = el('div', 'modal-body operator-edit project-handle-modal');
   content.appendChild(operatorGateNode(authority.kind, authority.address, 'for publishing this project handle on Ethereum.', target.chainId));
-  var scope = el('div', 'operator-edit-across');
+  var scope = el('div', 'operator-edit-across project-handle-location');
   content.appendChild(scope);
 
   // A Safe authority discovered on the project chain may not exist at the same address on Ethereum yet. Surface
@@ -15390,14 +15481,16 @@ function openProjectHandleModal(project, initialState, onSaved) {
   var label = el('div', 'operator-edit-label'); label.style.marginTop = '12px'; label.textContent = 'Your .eth name'; content.appendChild(label);
   var input = el('input', 'operator-edit-jwt'); input.type = 'text'; input.placeholder = 'banny.eth';
   input.value = (draft && draft.handle) || initialState.handle || initialState.stored || '';
-  scope.textContent = projectHandleLocationMessage(window.location.origin, input.value);
+  renderProjectHandleLocation(scope, input.value);
   content.appendChild(input);
   var normalizedHint = el('div', 'operator-edit-cur'); content.appendChild(normalizedHint);
+  var handleSequence = buildTransactionSequence([
+    'ENS setText on Ethereum — ' + PROJECT_HANDLE_TEXT_KEY + ' = ' + initialState.expectedText + ' (ENS-authorized account)',
+    'JBProjectHandles.setEnsNamePartsFor on Ethereum — live ' + chainNameOf(target.chainId) + ' ' + authority.kind + ' ' + authority.address,
+  ], 'Two transactions publish this handle. Verified steps skip; queued Safe steps resume without duplicates. Switch signers between steps as needed.');
+  content.appendChild(handleSequence.node);
 
   var recordBox = el('div', 'project-handle-record');
-  var expected = el('div', 'powers-desc');
-  expected.textContent = 'Required ENS text record: ' + PROJECT_HANDLE_TEXT_KEY + ' = ' + initialState.expectedText;
-  recordBox.appendChild(expected);
   var copy = el('button', 'operator-cta powers-act'); copy.type = 'button'; copy.textContent = 'Copy record';
   copy.addEventListener('click', function (event) {
     event.preventDefault();
@@ -15414,7 +15507,9 @@ function openProjectHandleModal(project, initialState, onSaved) {
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
   var primary = el('button', 'operator-cta operator-edit-submit'); primary.type = 'button'; primary.textContent = 'Continue'; primary.disabled = true; actions.appendChild(primary); content.appendChild(actions);
-  var modal = openModal('Set project handle', content);
+  var modal = openModal('Set project handle', content, {
+    canClose: function () { return !busy; },
+  });
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var checkSeq = 0, checked = null, busy = false;
 
@@ -15474,15 +15569,17 @@ function openProjectHandleModal(project, initialState, onSaved) {
     var normalized;
     try { normalized = normalizeProjectHandle(input.value); }
     catch (error) {
-      scope.textContent = projectHandleLocationMessage(window.location.origin, input.value);
+      handleSequence.setActive(0, false);
+      renderProjectHandleLocation(scope, input.value);
       normalizedHint.textContent = error.message || String(error); recordStatus.textContent = '';
       primary.textContent = 'Continue'; primary.disabled = true; primary.dataset.projectHandleStep = ''; return null;
     }
     var ensQueuedForSelected = ensQueuedHandle === normalized.handle;
     var publishQueuedForSelected = publishQueuedHandle === normalized.handle;
+    handleSequence.setActive(0, false);
     input.disabled = busy || ensQueuedForSelected || publishQueuedForSelected;
     saveDraft(normalized.handle);
-    scope.textContent = projectHandleLocationMessage(window.location.origin, normalized.handle);
+    renderProjectHandleLocation(scope, normalized.handle);
     normalizedHint.textContent = '';
     manager.href = 'https://app.ens.domains/' + encodeURIComponent(normalized.ensName);
     recordStatus.textContent = 'Checking the exact ENS resolver…';
@@ -15495,6 +15592,7 @@ function openProjectHandleModal(project, initialState, onSaved) {
       var record = pair[0], controller = pair[1];
       var publishedHandle = null, liveAuthority = null, publishQueueUnknown = false;
       if (record.text === initialState.expectedText) {
+        handleSequence.setActive(1, false);
         if (ensQueuedForSelected) {
           ensQueuedHandle = null; ensPendingHash = null; ensPendingSafe = null; ensQueuedForSelected = false; saveDraft(normalized.handle);
         }
@@ -15529,6 +15627,9 @@ function openProjectHandleModal(project, initialState, onSaved) {
       primary.dataset.projectHandleStep = next.kind;
       primary.textContent = next.label;
       primary.disabled = busy || !next.enabled;
+      if (next.kind === 'done') handleSequence.setActive(2, true);
+      else if (next.kind === 'publish' || next.kind === 'publish-pending') handleSequence.setActive(1, false);
+      else handleSequence.setActive(0, false);
       input.disabled = busy || (!!record.resolver && (ensQueuedForSelected || publishQueuedForSelected));
       if (!record.resolver) {
         recordStatus.textContent = 'No resolver is set on this exact ENS node. Set one in ENS Manager first; this app will not replace it.';
@@ -15562,11 +15663,13 @@ function openProjectHandleModal(project, initialState, onSaved) {
   }
 
   async function runEnsRecordStep(review) {
+      handleSequence.setActive(0, false);
       if (!review || !review.record.resolver) {
         setStatus('This exact ENS node needs an existing resolver before its text record can be set.', 'error'); await resumeEditor(); return;
       }
       if (review.record.text === initialState.expectedText) {
         ensQueuedHandle = null; ensPendingHash = null; ensPendingSafe = null; saveDraft(review.normalized.handle);
+        handleSequence.setActive(1, false);
         setStatus('ENS already has the correct project record. Continue to publish the handle.', 'success'); await resumeEditor(); return;
       }
       if (ensQueuedHandle === review.normalized.handle) {
@@ -15629,6 +15732,7 @@ function openProjectHandleModal(project, initialState, onSaved) {
           await resumeEditor(); return;
         }
         ensQueuedHandle = null; ensPendingHash = null; ensPendingSafe = null; saveDraft(review.normalized.handle);
+        handleSequence.setActive(1, false);
         setStatus('ENS record set and verified. Use the same button to publish from the live project ' + authority.kind + '.', 'success');
         if (onSaved) onSaved(); await resumeEditor(); return;
       }
@@ -15641,6 +15745,7 @@ function openProjectHandleModal(project, initialState, onSaved) {
   }
 
   async function runPublishStep(review) {
+      handleSequence.setActive(1, false);
       if (!review || !review.record.resolver || review.record.text !== initialState.expectedText) {
         setStatus('Set and verify the exact ENS text record before publishing the handle.', 'error'); await resumeEditor(); return;
       }
@@ -15681,6 +15786,7 @@ function openProjectHandleModal(project, initialState, onSaved) {
           await resumeEditor(); return;
         }
         clearDraft();
+        handleSequence.setActive(2, true);
         setStatus('Handle published and verified: @' + review.normalized.handle + '.', 'success');
         if (onSaved) onSaved();
         setTimeout(function () { modal.close(); }, 1600);
@@ -24907,7 +25013,7 @@ function attachCardPromptLinks(contentArea) {
 // dismissal while a send is in flight.
 export function openModal(titleText, contentNode, opts) {
   opts = opts || {};
-  var modal = openDialog(titleText, { canClose: opts.canClose });
+  var modal = openDialog(titleText, { canClose: opts.canClose, onClose: opts.onClose });
   modal.panel.appendChild(contentNode);
   // Every action modal/form is a recreatable component — give it an LLM prompt link. Skip transient
   // pre-sign confirmations (opts.noPrompt), which aren't features to rebuild.
@@ -24916,26 +25022,42 @@ export function openModal(titleText, contentNode, opts) {
   return { close: modal.close };
 }
 
+function buildTransactionSequence(steps, introText) {
+  var sequence = el('div', 'pay-confirm-sequence');
+  var sequenceIntro = el('div', 'pay-confirm-sequence-intro');
+  sequenceIntro.textContent = introText || ((steps.length === 1 ? 'Your wallet will ask for one action.' : 'Your wallet may ask for up to ' + steps.length + ' actions, depending on existing approvals.') + ' This dialog stays open and advances through each one.');
+  sequence.appendChild(sequenceIntro);
+  var sequenceList = el('ol', 'pay-confirm-sequence-list');
+  var items = [];
+  steps.forEach(function (step, index) {
+    var item = el('li', 'pay-confirm-sequence-step');
+    var number = el('span', 'pay-confirm-sequence-number'); number.textContent = String(index + 1); item.appendChild(number);
+    var label = el('span'); label.textContent = step; item.appendChild(label);
+    items.push(item);
+    sequenceList.appendChild(item);
+  });
+  sequence.appendChild(sequenceList);
+  function setActive(index, allComplete) {
+    items.forEach(function (item, itemIndex) {
+      var complete = !!allComplete || itemIndex < index;
+      item.classList.toggle('complete', complete);
+      item.classList.toggle('active', !allComplete && itemIndex === index);
+      var number = item.querySelector('.pay-confirm-sequence-number');
+      if (number) number.textContent = complete ? '✓' : String(itemIndex + 1);
+    });
+  }
+  setActive(0, false);
+  return { node: sequence, items: items, setActive: setActive };
+}
+
 // Pre-sign confirmation: shows the exact transaction payload as JSON and only sends on explicit confirm.
 function openTxConfirm(payload, onConfirm, opts) {
   opts = opts || {};
   var content = el('div', 'pay-confirm');
-  var sequenceItems = [];
+  var sequenceUi = null;
   if (opts.sequenceSteps && opts.sequenceSteps.length) {
-    var sequence = el('div', 'pay-confirm-sequence');
-    var sequenceIntro = el('div', 'pay-confirm-sequence-intro');
-    sequenceIntro.textContent = (opts.sequenceSteps.length === 1 ? 'Your wallet will ask for one action.' : 'Your wallet may ask for up to ' + opts.sequenceSteps.length + ' actions, depending on existing approvals.') + ' This dialog stays open and advances through each one.';
-    sequence.appendChild(sequenceIntro);
-    var sequenceList = el('ol', 'pay-confirm-sequence-list');
-    opts.sequenceSteps.forEach(function (step, index) {
-      var item = el('li', 'pay-confirm-sequence-step');
-      var number = el('span', 'pay-confirm-sequence-number'); number.textContent = String(index + 1); item.appendChild(number);
-      var label = el('span'); label.textContent = step; item.appendChild(label);
-      sequenceItems.push(item);
-      sequenceList.appendChild(item);
-    });
-    sequence.appendChild(sequenceList);
-    content.appendChild(sequence);
+    sequenceUi = buildTransactionSequence(opts.sequenceSteps);
+    content.appendChild(sequenceUi.node);
   }
   var reviewHost = el('div', 'pay-confirm-current-action');
   content.appendChild(reviewHost);
@@ -24960,19 +25082,11 @@ function openTxConfirm(payload, onConfirm, opts) {
     canClose: function () { return !(confirm.disabled && cancel.disabled); },
   });
   cancel.addEventListener('click', modal.close);
-  function setSequenceActive(index, allComplete) {
-    sequenceItems.forEach(function (item, itemIndex) {
-      var complete = !!allComplete || itemIndex < index;
-      item.classList.toggle('complete', complete);
-      item.classList.toggle('active', !allComplete && itemIndex === index);
-      var number = item.querySelector('.pay-confirm-sequence-number');
-      if (number) number.textContent = complete ? '✓' : String(itemIndex + 1);
-    });
-  }
+  function setSequenceActive(index, allComplete) { if (sequenceUi) sequenceUi.setActive(index, allComplete); }
   function updateSequenceFromStatus(message) {
-    if (!sequenceItems.length || !message) return;
+    if (!sequenceUi || !sequenceUi.items.length || !message) return;
     var text = String(message).toLowerCase();
-    var finalIndex = sequenceItems.length - 1;
+    var finalIndex = sequenceUi.items.length - 1;
     var authorizationIndex = (opts.sequenceSteps || []).findIndex(function (step) {
       return /authoriz|router|permit2/i.test(step);
     });
@@ -24980,7 +25094,6 @@ function openTxConfirm(payload, onConfirm, opts) {
     else if (/execut|simulat|wallet confirmation|confirming onchain|payment processing|adding to balance|transaction submitted|checking wallet network|switching to/.test(text)) setSequenceActive(finalIndex, false);
     else if (authorizationIndex >= 0 && /authoriz|router|permit2/.test(text)) setSequenceActive(authorizationIndex, false);
   }
-  setSequenceActive(0, false);
   function showStatus(message, kind, meta) {
     updateSequenceFromStatus(message);
     status.style.display = message ? '' : 'none';
@@ -24992,7 +25105,7 @@ function openTxConfirm(payload, onConfirm, opts) {
     }
   }
   function unlockWithResult(message, kind, meta) {
-    if (kind === 'success') setSequenceActive(sequenceItems.length, true);
+    if (kind === 'success' && sequenceUi) setSequenceActive(sequenceUi.items.length, true);
     showStatus(message, kind, meta);
     confirm.style.display = 'none';
     cancel.disabled = false;
@@ -28742,7 +28855,7 @@ async function prepareAddLiquidity(opts) {
 // signing rounds. EIP-7702-delegated EOAs (code 0xef0100…) still sign like EOAs. Unreadable code → EOA.
 function lpIsSmartWallet(chainId, acct) {
   return clientFor(chainId).getCode({ address: acct }).then(function (code) {
-    return !!(code && code !== '0x' && !String(code).toLowerCase().startsWith('0xef0100'));
+    return !!(code && code !== '0x' && !isEip7702DelegatedEoaCode(code));
   }).catch(function () { return false; });
 }
 

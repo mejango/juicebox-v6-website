@@ -94,11 +94,21 @@ export function normalizeProjectHandle(value) {
   return { handle: handle, ensName: ensName, parts: labels.slice().reverse() };
 }
 
-export function projectHandleLocationMessage(origin, value) {
-  var base = String(origin || '').replace(/\/+$/, '');
-  var handle = '<handle>';
-  try { handle = normalizeProjectHandle(value).handle; } catch (_) {}
-  return 'You’ll be able to find your project at ' + base + '/@' + handle;
+export function projectHandleLocationUrl(documentUrl, value) {
+  var base;
+  try {
+    var url = new URL(String(documentUrl || ''));
+    url.hash = '';
+    url.searchParams.delete('project');
+    base = url.href;
+  } catch (_) { base = String(documentUrl || '').replace(/#.*$/, ''); }
+  var routeHandle = '<handle>';
+  try { routeHandle = encodeURIComponent(normalizeProjectHandle(value).handle); } catch (_) {}
+  return base + '#@' + routeHandle;
+}
+
+export function projectHandleLocationMessage(documentUrl, value) {
+  return 'You’ll be able to find your project at ' + projectHandleLocationUrl(documentUrl, value);
 }
 
 // The Owner/Operator editor is one resumable flow with two separately reviewed Ethereum transactions. Pick the
