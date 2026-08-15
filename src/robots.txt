@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+# The app is hash-routed, so only `/` and `/?project=<chain>:<id>` carry distinct
+# server-rendered metadata. See /llms.txt for the route grammar and what is
+# readable without running JavaScript.

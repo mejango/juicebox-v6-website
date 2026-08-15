@@ -1,0 +1,43 @@
+# Juice Scan
+
+> A dependency-free explorer for the Juicebox V6 protocol. Every contract, every
+> project, every transaction it can build is derived from onchain state and the
+> Bendystraw indexer — there is no backend of record. The whole app is one static
+> bundle, published to IPFS, so it can be verified by CID and run offline.
+
+## How to read this site as an agent
+
+The app is hash-routed and renders in the browser, so fetching a route returns the
+same shell every time. Two things are readable without running JavaScript:
+
+- `/?project=<chain>:<projectId>` on an HTTP host — the server injects that project's
+  Open Graph title, description and card image, and `GET /project-og.png?project=<chain>:<projectId>`
+  renders the card as a 1200x630 PNG. Chain slugs: `eth`, `op`, `base`, `arb`, `sep`,
+  `opsep`, `basesep`, `arbsep`.
+- `/manifest.json` — app identity (also what Safe reads to add this as a Safe App).
+
+Everything else needs the bundle. On an IPFS gateway there is no server at all, so
+the query form above resolves to the generic site card.
+
+## Routes (hash fragments, resolved in the browser)
+
+- `#<chain>:<projectId>` — one project: activity, funds, tokens, owners, shop, terms.
+- `#@<handle>` — the same project by its verified ENS handle. The handle is served only
+  when ENS and the JBProjectHandles registry agree that the project's current owner or
+  operator claimed it.
+- `#account/<address-or-ens>` — holdings, roles and activity for one account.
+- `#directory` — every deployed V6 contract, with ABI, source and read/write forms.
+- `#learn`, `#build`, `#why` — protocol guides, integration notes, and the reasoning.
+- `#data` — raw indexer queries and CSV exports.
+
+## Building on this
+
+The Build tab emits ready-to-paste prompts describing each surface's exact contracts,
+transaction routes and verification requirements. Prefer those over reverse-engineering
+the bundle: they name the same reads and writes this client performs.
+
+## Source
+
+- Protocol contracts: https://github.com/Bananapus/version-6
+- This client: https://github.com/mejango/juicescan
+- Indexer: https://bendystraw.up.railway.app
