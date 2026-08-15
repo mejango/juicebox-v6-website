@@ -1518,7 +1518,9 @@ function renderShopSection(project, shop, cart) {
   var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; head.appendChild(title);
   // Top-right "+ Add items" for the owner/operator (shown once the 721 hook resolves; gated on submit).
   var headAdd = el('button', 'operator-cta shop-head-add'); headAdd.textContent = '+ Add items';
-  headAdd.title = 'Add NFT items for sale (revnet operator only)'; headAdd.style.display = 'none';
+  headAdd.title = 'Add items for sale — the ' + (project.isRevnet ? 'revnet operator' : 'project owner')
+    + ', or an operator granted "Adjust shop items" in the Owner tab’s Permissions card';
+  headAdd.style.display = 'none';
   head.appendChild(headAdd);
   card.appendChild(head);
   var body = el('div', 'shop-body'); card.appendChild(body);
@@ -3772,8 +3774,8 @@ var JB_PERMISSION_LABELS = {
   6: 'Migrate terminal', 7: 'Set project metadata', 8: 'Deploy ERC-20', 9: 'Set custom token', 10: 'Mint tokens',
   11: 'Burn tokens', 12: 'Claim tokens', 13: 'Transfer credits', 14: 'Set controller', 15: 'Set terminals',
   16: 'Add terminals', 17: 'Set primary terminal', 18: 'Use surplus allowance', 19: 'Set splits', 20: 'Add price feed',
-  21: 'Add accounting tokens', 22: 'Set token metadata', 23: 'Sign for ERC-20 (permit)', 24: 'Adjust NFT tiers',
-  25: 'Set NFT metadata', 26: 'Mint NFTs', 27: 'Set NFT discount', 28: 'Set buyback TWAP', 29: 'Set buyback pool',
+  21: 'Add accounting tokens', 22: 'Set token metadata', 23: 'Sign for ERC-20 (permit)', 24: 'Adjust shop items',
+  25: 'Set shop metadata', 26: 'Mint shop items', 27: 'Set shop discount', 28: 'Set buyback TWAP', 29: 'Set buyback pool',
   30: 'Set buyback hook', 31: 'Set router terminal', 32: 'Map sucker token', 33: 'Deploy suckers', 34: 'Set sucker peer',
   35: 'Sucker safety controls', 36: 'Set sucker deprecation', 37: 'Open loans', 38: 'Reallocate loans', 39: 'Repay loans',
 };
@@ -3803,10 +3805,10 @@ var JB_PERMISSION_DESCS = {
   21: 'Register new tokens the terminal accepts directly (e.g. an ERC-20 or USDC).',
   22: 'Set the project token’s name and symbol.',
   23: 'Sign permit (ERC-20 approval) messages on the project’s behalf.',
-  24: 'Add or remove the project’s NFT tiers.',
-  25: 'Update the NFT collection’s metadata.',
-  26: 'Mint the project’s NFTs without a payment.',
-  27: 'Set the discount applied to NFT prices.',
+  24: 'Add, remove, or change the project’s shop items (NFT tiers).',
+  25: 'Update the shop collection’s metadata.',
+  26: 'Mint the project’s shop items (NFTs) without a payment.',
+  27: 'Set the discount applied to shop item prices.',
   28: 'Set the buyback hook’s TWAP window.',
   29: 'Set the buyback hook’s Uniswap pool.',
   30: 'Set the project’s buyback hook.',
@@ -3820,6 +3822,16 @@ var JB_PERMISSION_DESCS = {
   38: 'Move collateral between the project’s loans.',
   39: 'Repay the project’s loans.',
 };
+// setPermissionsFor REPLACES an operator's whole set, so any id this build has no checkbox for — a permission a
+// newer extension defines — would be revoked by saving the form. Carry those through untouched.
+export function mergePermissionIds(checkedIds, existingIds) {
+  var ids = (checkedIds || []).slice();
+  (existingIds || []).forEach(function (id) {
+    if (id >= 1 && id <= JB_PERMISSION_MAX_ID) return;
+    if (ids.indexOf(id) === -1) ids.push(id);
+  });
+  return ids.sort(function (a, b) { return a - b; });
+}
 export function permissionLabel(id) { return JB_PERMISSION_LABELS[id] || ('Permission #' + id); }
 export function permissionDesc(id) { return JB_PERMISSION_DESCS[id] || ''; }
 // Decode a packed permissions bitmap (uint256/BigInt) → sorted array of granted permission ids.
@@ -10364,7 +10376,7 @@ function renderAboutCard(project) {
 
   var foot = el('div', 'detail-about-foot');
   var edit = el('button', 'operator-cta'); edit.textContent = 'Edit';
-  edit.title = 'Edit the project — logo, tagline, description, links (revnet operator only)';
+  edit.title = 'Edit the project — logo, tagline, description, links (' + (project.isRevnet ? 'revnet operator' : 'project owner') + ' only)';
   edit.addEventListener('click', function (e) { e.preventDefault(); openEditProjectModal(project); });
   foot.appendChild(edit);
   card.appendChild(foot);
@@ -17055,14 +17067,14 @@ function renderPermissionsCard(project) {
   var intro = el('div', 'detail-card-body backoffice-intro');
   intro.textContent = isRev
     ? 'What this revnet’s revnet operator is allowed to do. These powers come with the revnet operator role (the default revnet powers plus any NFT powers granted when the revnet was deployed).'
-    : 'Revnet operators the project owner has authorized to act on the project’s behalf, and what each one can do. The project owner can grant or revoke permissions at any time.';
+    : 'Operators the project owner has authorized to act on the project’s behalf, and what each one can do — this is where shop managers get their power to add, mint, or reprice items. The project owner can grant or revoke permissions at any time.';
   card.appendChild(intro);
   var body = el('div'); body.appendChild(skel('100%', '40px')); card.appendChild(body);
 
   fetchPermissionOperators(project).then(function (ops) {
     body.innerHTML = '';
     if (!ops.length) {
-      var empty = el('div', 'powers-desc'); empty.textContent = isRev ? 'No revnet operator permissions found.' : 'No revnet operators authorized yet.';
+      var empty = el('div', 'powers-desc'); empty.textContent = isRev ? 'No revnet operator permissions found.' : 'No operators authorized yet.';
       body.appendChild(empty);
     } else {
       ops.forEach(function (g) {
@@ -17088,7 +17100,7 @@ function renderPermissionsCard(project) {
       });
     }
     if (!isRev) {
-      var add = el('button', 'operator-cta powers-act'); add.textContent = '+ Add revnet operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
+      var add = el('button', 'operator-cta powers-act'); add.textContent = '+ Add operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
       add.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, null, []); });
       body.appendChild(add);
     }
@@ -17105,18 +17117,29 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var allChains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   var editing = !!existingOperator;
 
+  // Only a revnet's controlling account is a "revnet operator"; on a custom project the grantee is a plain
+  // operator the owner authorizes (a shop manager, a payout bot, a co-admin).
+  var grantee = project.isRevnet ? 'revnet operator' : 'operator';
+  var Grantee = grantee.charAt(0).toUpperCase() + grantee.slice(1);
+
   var content = el('div', 'modal-body operator-edit');
-  content.appendChild(operatorGateNode(authorityLabel, account, editing ? 'to change this revnet operator’s permissions.' : 'to authorize a new revnet operator.', project.chainId));
+  content.appendChild(operatorGateNode(authorityLabel, account, editing ? 'to change this ' + grantee + '’s permissions.' : 'to authorize a new ' + grantee + '.', project.chainId));
   var note = el('div', 'operator-edit-across');
-  note.textContent = 'Grants the checked permissions to the revnet operator. Setting permissions REPLACES the revnet operator’s current set on each selected chain — unchecking a box revokes that power, and clearing every box removes the revnet operator.';
+  note.textContent = 'Grants the checked permissions to the ' + grantee + '. Setting permissions REPLACES the ' + grantee + '’s current set on each selected chain — unchecking a box revokes that power, and clearing every box removes the ' + grantee + '.';
   content.appendChild(note);
 
-  var olbl = el('div', 'operator-edit-label'); olbl.style.marginTop = '12px'; olbl.textContent = 'Revnet operator'; content.appendChild(olbl);
-  var opInput = el('input', 'operator-edit-jwt'); opInput.type = 'text'; opInput.placeholder = '0x… revnet operator address';
+  var olbl = el('div', 'operator-edit-label'); olbl.style.marginTop = '12px'; olbl.textContent = Grantee; content.appendChild(olbl);
+  var opInput = el('input', 'operator-edit-jwt'); opInput.type = 'text'; opInput.placeholder = '0x… ' + grantee + ' address';
   if (editing) { opInput.value = existingOperator; opInput.disabled = true; }
   content.appendChild(opInput);
   var opHint = el('div', 'operator-edit-token-name'); content.appendChild(opHint);
-  var operatorValueOf = attachAddressRecognition(opInput, opHint, project.chainId, { label: 'Revnet operator' });
+  var operatorValueOf = attachAddressRecognition(opInput, opHint, project.chainId, { label: Grantee });
+  if (editing) {
+    // Permissions are stored per (operator, owner, project), so a different address is a different grant.
+    var swapHint = el('div', 'operator-edit-across');
+    swapHint.textContent = 'This address is fixed for this grant. To move these powers to a different address, add it as a new ' + grantee + ', then clear every box here to remove this one.';
+    content.appendChild(swapHint);
+  }
 
   var plbl = el('div', 'operator-edit-label'); plbl.style.marginTop = '14px'; plbl.textContent = 'Permissions'; content.appendChild(plbl);
   var have = {}; (existingPermIds || []).forEach(function (id) { have[id] = true; });
@@ -17134,6 +17157,14 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   }
   content.appendChild(listBox);
 
+  var carriedPermIds = mergePermissionIds([], existingPermIds);
+  if (carriedPermIds.length) {
+    var carried = el('div', 'operator-edit-across');
+    carried.textContent = 'This ' + grantee + ' also holds ' + carriedPermIds.map(function (id) { return '#' + id; }).join(', ')
+      + ', which this build has no description for. Saving keeps ' + (carriedPermIds.length === 1 ? 'it' : 'them') + ' unchanged.';
+    content.appendChild(carried);
+  }
+
   var chlbl = el('div', 'operator-edit-label'); chlbl.style.marginTop = '14px'; chlbl.textContent = 'Set on'; content.appendChild(chlbl);
   var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = true; });
   var chainBox = el('div', 'splits-edit-chains');
@@ -17148,7 +17179,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
   var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = editing ? 'Update permissions' : 'Add operator'; actions.appendChild(submit);
-  var gate = appendDangerGate(content, 'Granting permissions lets the revnet operator act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious revnet operator can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the revnet operator address and the permissions I’m granting.');
+  var gate = appendDangerGate(content, 'Granting permissions lets the ' + grantee + ' act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious ' + grantee + ' can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the ' + grantee + ' address and the permissions I’m granting.');
   content.appendChild(actions);
   var modal = openModal(editing ? 'Edit permissions' : 'Add operator', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
@@ -17160,7 +17191,8 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
     var operator;
     try { operator = editing ? existingOperator : operatorValueOf(); }
     catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
-    var ids = []; for (var i = 1; i <= JB_PERMISSION_MAX_ID; i++) if (checks[i].checked) ids.push(i);
+    var checked = []; for (var i = 1; i <= JB_PERMISSION_MAX_ID; i++) if (checks[i].checked) checked.push(i);
+    var ids = mergePermissionIds(checked, existingPermIds);
     busy = true;
     (async function () {
       var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });

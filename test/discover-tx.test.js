@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { accountingTokenUsdValueAtPrice, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, ownersChartTotalLabel, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
+import { accountingTokenUsdValueAtPrice, mergePermissionIds, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, ownersChartTotalLabel, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -347,5 +347,20 @@ describe('queue rulesets — JBController.queueRulesetsOf', () => {
     });
     const back = decodeFunctionData({ abi: queueRulesetsAbi, data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: tx.args }) });
     expect(back.args[1][0].weight).toBe(UINT112_MAX);
+  });
+});
+
+// setPermissionsFor replaces the operator's whole set, so ids the form cannot render must survive a save.
+describe('mergePermissionIds', () => {
+  it('keeps checked ids and carries ids outside the known range', () => {
+    expect(mergePermissionIds([26, 24], [24, 26, 41])).toEqual([24, 26, 41]);
+  });
+
+  it('drops known ids the owner unchecked', () => {
+    expect(mergePermissionIds([24], [24, 26])).toEqual([24]);
+  });
+
+  it('carries unknown ids even when every box is cleared', () => {
+    expect(mergePermissionIds([], [1, 40])).toEqual([40]);
   });
 });
