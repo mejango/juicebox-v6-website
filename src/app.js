@@ -9,7 +9,7 @@ import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
 import { buildEmbedUrl, getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
-import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet } from './discover.js';
+import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet, verifiedHandleProjectRoute } from './discover.js';
 import { getViewAs, setViewAs, clearViewAs, onViewAsChange } from './view-as.js';
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
@@ -47,7 +47,14 @@ var REDIRECTING_FROM_BLOCKING_GATEWAY = redirectBlockingPathGateway();
 // while an HTTP host can render project-specific Open Graph metadata.
 function projectRouteFromHash() {
   var raw = (location.hash || '').replace(/^#\/?/, '').split('/')[0];
-  return /^([a-z]+|\d+):[1-9]\d*$/i.test(raw) || /^@[^/?#]+$/u.test(raw) ? raw : null;
+  if (/^([a-z]+|\d+):[1-9]\d*$/i.test(raw)) return raw;
+  if (!/^@[^/?#]+$/u.test(raw)) return null;
+  // A crawler cannot resolve a handle: it has no ENS, no chain, and no JS. Mirror the numeric
+  // route once this session has verified it, so a copied @handle link previews the same project
+  // the page shows. Before that, the handle keeps the URL shareable.
+  var handle = '';
+  try { handle = decodeURIComponent(raw.slice(1)); } catch (_) { handle = raw.slice(1); }
+  return verifiedHandleProjectRoute(handle) || raw;
 }
 
 function restoreProjectHashFromQuery() {
@@ -1277,6 +1284,8 @@ function buildTransactionSection(getForm) {
 function init() {
   restoreProjectHashFromQuery();
   syncProjectPreviewQuery();
+  // Handle resolution finishes after the hash change that started it.
+  document.addEventListener('jbscan:handle-resolved', syncProjectPreviewQuery);
   applySavedFont(); // apply the saved monospace font before first paint to avoid a flash
   updateFooterIpfsCid();
   mountFontSelector();

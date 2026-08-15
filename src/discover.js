@@ -7646,6 +7646,14 @@ export function renderDiscoverTab() {
 
 var _discoverRouteSeq = 0;
 
+// The last handle this session resolved and verified end to end, with the numeric project route it names.
+var _verifiedHandleRoute = null;
+
+/** The verified `<slug>:<id>` route behind a handle, or null while it is unresolved or unverified. */
+export function verifiedHandleProjectRoute(handle) {
+  return _verifiedHandleRoute && _verifiedHandleRoute.handle === handle ? _verifiedHandleRoute.route : null;
+}
+
 // Top-level navigation calls this when Discover is no longer active so late ENS/indexer/RPC work cannot reopen it.
 export function cancelDiscoverRoute() { _discoverRouteSeq++; }
 
@@ -7836,6 +7844,11 @@ export function applyDiscoverRoute(route, routeContext) {
       if (resolved.authority && resolved.authority.kind === 'operator') {
         setVerifiedOperatorCache(resolved.target.projectId, resolved.target.chainId, resolved.authority.address);
       }
+      // A link-preview crawler cannot run this resolution, so publish the numeric identity it can
+      // render from. Only a fully verified route reaches here, so the mirrored preview names the
+      // same project the page will show.
+      _verifiedHandleRoute = { handle: parsed.handle, route: String(resolved.route).split('/')[0] };
+      try { document.dispatchEvent(new CustomEvent('jbscan:handle-resolved')); } catch (_) {}
       // Load through the exact numeric identity while leaving the verified alias in the address bar. The loaded
       // project carries the alias so changing tabs keeps producing #@handle[/tab] URLs.
       applyDiscoverRoute(resolved.route, { handle: parsed.handle, authority: resolved.authority });

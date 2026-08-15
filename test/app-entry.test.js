@@ -20,6 +20,7 @@ const entry = vi.hoisted(() => ({
   renderLearnTab: vi.fn(),
   renderWhyTab: vi.fn(),
   renderAccountView: vi.fn(),
+  verifiedHandleProjectRoute: vi.fn(() => null),
 }));
 
 const readThing = {
@@ -106,6 +107,7 @@ vi.mock('../src/discover.js', () => ({
     : { kind: 'text' },
   ensAddressOf: vi.fn().mockResolvedValue(null),
   identGradient: () => 'linear-gradient(135deg, #000, #fff)',
+  verifiedHandleProjectRoute: entry.verifiedHandleProjectRoute,
 }));
 vi.mock('../src/data-tab.js', () => ({ renderDataTab: entry.renderDataTab }));
 vi.mock('../src/account-view.js', () => ({ renderAccountView: entry.renderAccountView }));
@@ -225,6 +227,14 @@ describe('production app entry point', () => {
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(new URL(location.href).searchParams.get('project')).toBe('@design.juicebox');
     expect(entry.applyDiscoverRoute).toHaveBeenCalledWith('@design.juicebox/owner');
+
+    // Once the handle verifies, the preview query names the numeric project a crawler can render.
+    entry.verifiedHandleProjectRoute.mockReturnValue('base:6');
+    document.dispatchEvent(new CustomEvent('jbscan:handle-resolved'));
+    expect(entry.verifiedHandleProjectRoute).toHaveBeenCalledWith('design.juicebox');
+    expect(new URL(location.href).searchParams.get('project')).toBe('base:6');
+    expect(location.hash).toBe('#@design.juicebox/owner');
+    entry.verifiedHandleProjectRoute.mockReturnValue(null);
 
     entry.applyDiscoverRoute.mockClear();
     const restored = new Event('pageshow');

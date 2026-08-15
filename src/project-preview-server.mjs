@@ -284,7 +284,13 @@ async function safeLogoDataUrl(source) {
   }
   try {
     const normalized = await sharp(bytes, { limitInputPixels: 16_000_000 })
-      .resize(330, 330, { fit: 'contain', withoutEnlargement: true })
+      // `contain` letterboxes a non-square logo; sharp's default fill is opaque black, which
+      // reads as a broken image on the card. Keep the padding transparent instead.
+      .resize(330, 330, {
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+        fit: 'contain',
+        withoutEnlargement: true,
+      })
       .png()
       .toBuffer();
     return `data:image/png;base64,${normalized.toString('base64')}`;
