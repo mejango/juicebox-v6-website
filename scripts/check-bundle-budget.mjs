@@ -7,9 +7,10 @@ const budgets = {
   // strict Safe/queue lifecycle checks, and authenticated Relayr payments add to the monolithic bundle
   // (3fcb1da: 1,209,174 B; handle review: 1,226,879 B; queue-bound handle verifier: 1,239,966 B;
   // persisted exact Relayr/Safe completion proof: 8,667,995 B raw / 1,246,408 B gzip;
-  // EIP-7702 authority support + exact pending-Safe-call reuse: 8,684,397 B raw / 1,249,797 B gzip).
-  'dist/app.js': { raw: 8_690_000, gzip: 1_255_000 },
-  'dist/style.css': { raw: 240_000, gzip: 50_000 },
+  // EIP-7702 authority support + exact pending-Safe-call reuse: 8,684,397 B raw / 1,249,797 B gzip;
+  // complete Permissions card — owner row, wildcard-scope grants, per-chain sets: 8,695,219 B raw).
+  'dist/app.js': { raw: 8_700_000, gzip: 1_260_000 },
+  'dist/style.css': { raw: 241_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },
   'dist/pdf.worker.min.mjs': { raw: 1_350_000, gzip: 400_000 },

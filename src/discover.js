@@ -1522,6 +1522,16 @@ function renderShopSection(project, shop, cart) {
     + ', or an operator granted "Adjust shop items" in the Owner tab’s Permissions card';
   headAdd.style.display = 'none';
   head.appendChild(headAdd);
+  // Shop managers are granted in the Owner tab's Permissions card, which nobody finds from here.
+  if (!project.isRevnet) {
+    var mgr = el('button', 'operator-cta shop-head-add'); mgr.textContent = 'Managers';
+    mgr.title = 'Who else can add, mint, or reprice items — grant or revoke it in the Owner tab’s Permissions card';
+    mgr.addEventListener('click', function (e) {
+      e.preventDefault();
+      navigateProjectSection(project, 'Owner', undefined, function () { if (_activeDetail) _activeDetail.showTab('Owner'); });
+    });
+    head.appendChild(mgr);
+  }
   card.appendChild(head);
   var body = el('div', 'shop-body'); card.appendChild(body);
   wrap.appendChild(card);
@@ -11015,28 +11025,47 @@ function openEditProjectModal(project) {
   });
 }
 
-// Shared operator-gate banner: "You must be the operator (ens-or-0x…) <action>." Resolves the ENS
-// name asynchronously, falling back to the truncated address.
+// Shared operator-gate banner. LIVE against the connected account: "You must be the operator
+// (ens-or-0x…) <action>" when you aren't it, and a green "you're connected as it" when you are —
+// the static form read as a hard block to owners who were in fact authorized. Resolves the ENS name
+// asynchronously, falling back to the truncated address.
 function operatorGateNode(authorityLabel, operatorAddr, actionText, chainId) {
   var gate = el('div', 'operator-gate');
-  gate.appendChild(document.createTextNode('You must be the ' + authorityLabel + ' ('));
-  var addrSpan = el('span', 'operator-gate-addr'); addrSpan.textContent = operatorAddr ? truncAddr(operatorAddr) : '…';
-  if (operatorAddr) {
-    addrSpan.title = operatorAddr;
-    ensNameOf(operatorAddr).then(function (n) { if (n) addrSpan.textContent = n; }).catch(function () {});
+  var addrText = operatorAddr ? truncAddr(operatorAddr) : '…';
+  if (operatorAddr) ensNameOf(operatorAddr).then(function (n) { if (n) { addrText = n; paint(); } }).catch(function () {});
+
+  var safeInfo = null;
+  function paint() {
+    var acc = getEffectiveAccount();
+    gate.textContent = '';
+    // Safe owner: the action is QUEUED for the Safe, so a signer isn't blocked on holding the owner key.
+    if (safeInfo) {
+      var isSigner = acc && safeInfo.owners.some(function (o) { return sameAddr(o, acc); });
+      gate.className = 'operator-gate' + (isSigner ? ' ok' : '');
+      gate.textContent = isSigner
+        ? 'Project owner is a ' + safeInfo.threshold + '-of-' + safeInfo.owners.length + ' Safe — you’re a signer, so this is proposed to the Safe’s queue (approve + execute in the Owner tab).'
+        : 'Project owner is a ' + safeInfo.threshold + '-of-' + safeInfo.owners.length + ' Safe (' + truncAddr(operatorAddr) + '). Connect one of its signers to propose this.';
+      return;
+    }
+    if (acc && operatorAddr && sameAddr(acc, operatorAddr)) {
+      gate.className = 'operator-gate ok';
+      gate.textContent = 'Connected as the ' + authorityLabel + ' (' + addrText + ') — you can proceed ' + actionText;
+      return;
+    }
+    gate.className = 'operator-gate';
+    gate.appendChild(document.createTextNode('You must be the ' + authorityLabel + ' ('));
+    var addrSpan = el('span', 'operator-gate-addr'); addrSpan.textContent = addrText;
+    if (operatorAddr) addrSpan.title = operatorAddr;
+    gate.appendChild(addrSpan);
+    gate.appendChild(document.createTextNode(') ' + actionText));
   }
-  gate.appendChild(addrSpan);
-  gate.appendChild(document.createTextNode(') ' + actionText));
-  // Safe-aware: if the owner is a Safe, the action is QUEUED for the Safe (not blocked on a single wallet).
+  paint();
+  var stop = onEffectiveAccountChange(function () { if (gate.isConnected) paint(); else stop(); });
+
   if (operatorAddr && chainId) {
     fetchSafeInfo(operatorAddr, chainId).then(function (info) {
       if (!info || !gate.isConnected) return;
-      var acc = getEffectiveAccount();
-      var isSigner = acc && info.owners.some(function (o) { return o.toLowerCase() === acc.toLowerCase(); });
-      gate.className = 'operator-gate' + (isSigner ? ' ok' : '');
-      gate.textContent = isSigner
-        ? 'Project owner is a ' + info.threshold + '-of-' + info.owners.length + ' Safe — you’re a signer, so this is proposed to the Safe’s queue (approve + execute in the Owner tab).'
-        : 'Project owner is a ' + info.threshold + '-of-' + info.owners.length + ' Safe (' + truncAddr(operatorAddr) + '). Connect one of its signers to propose this.';
+      safeInfo = info; paint();
     }).catch(function () {});
   }
   return gate;
@@ -15441,7 +15470,7 @@ function openProjectHandleModal(project, initialState, onSaved) {
   var target = { chainId: initialState.chainId, projectId: initialState.projectId };
   var authority = initialState.authority;
   var content = el('div', 'modal-body operator-edit project-handle-modal');
-  content.appendChild(operatorGateNode(authority.kind, authority.address, 'for publishing this project handle on Ethereum.', target.chainId));
+  content.appendChild(operatorGateNode(authority.kind, authority.address, 'to publish this project handle on Ethereum.', target.chainId));
   var scope = el('div', 'operator-edit-across project-handle-location');
   content.appendChild(scope);
 
@@ -17025,36 +17054,82 @@ export function renderBuybackRouterCard(project) {
 }
 
 // Every operator the project has authorized, deduped across chains. Source is bendystraw (no onchain way to
-// ENUMERATE operators — only to check a known one). Stale empty grants (permissions cleared but row kept) are
-// dropped. Returns [{ operator, account, isRevnetOperator, chains:[id], permsUnion:[ids] }].
+// ENUMERATE operators — only to check a known one), so an empty result means "nothing indexed", not "nobody".
+// Covers BOTH scopes: grants on this project, and the owner's wildcard (projectId 0) grants, which apply here
+// too. Stale empty grants (permissions cleared but row kept) are dropped.
 async function fetchPermissionOperators(project) {
   var deployments = projectDeployments(project);
   if (!deployments.length) return [];
-  var pages = await Promise.all(deployments.map(function (deployment) {
+  var authority = projectAuthorityAddress(project);
+  var scoped = deployments.map(function (deployment) {
     return fetchBendystrawCollectionPages(BENDYSTRAW_PERMISSION_HOLDERS_QUERY, 'permissionHolders', {
       projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION,
-    }, 250);
-  }));
+    }, 250).then(function (page) { return { wildcard: false, items: page.items || [] }; });
+  });
+  // Without a resolved authority there's no grantor to scope the wildcard query to, so skip it rather than
+  // pulling every account's wildcards on the chain.
+  var wild = !authority ? [] : deployments.map(function (deployment) {
+    return fetchBendystrawCollectionPages(BENDYSTRAW_WILDCARD_PERMISSION_HOLDERS_QUERY, 'permissionHolders', {
+      account: authority, chainId: deployment.chainId, version: BENDYSTRAW_VERSION,
+    }, 250).then(function (page) { return { wildcard: true, items: page.items || [] }; })
+      .catch(function () { return { wildcard: true, items: [] }; });
+  });
+  var pages = await Promise.all(scoped.concat(wild));
   var items = [];
   pages.forEach(function (page) {
-    items = items.concat(page.items || []);
+    page.items.forEach(function (it) { items.push(Object.assign({}, it, { wildcard: page.wildcard })); });
   });
-  var byOp = {}, order = [];
-  items.forEach(function (it) {
+  return groupPermissionHolders(items, authority, projectChainIds(project).map(Number));
+}
+
+// Fold indexed permissionHolder rows into one entry per (operator, scope). Two rules the raw rows don't carry:
+//
+//   live — permissions are keyed by (operator, GRANTOR, project) and only bite while the grantor is still the
+//          project's authority. A grant written by a former owner survives the transfer as a row that confers
+//          nothing, so it's flagged rather than listed as a live authorization.
+//   byChain — the granted set is PER CHAIN. Collapsing to a union claims powers the operator may hold on only
+//          one chain, so the per-chain sets are kept and `differs` marks any operator whose grant isn't uniform
+//          across every chain the project is deployed on.
+//
+// Project-scoped and wildcard (projectId 0) grants stay SEPARATE entries: they're distinct grants with
+// different blast radius, and editing one is a different write from editing the other.
+export function groupPermissionHolders(items, authority, chainIds) {
+  var byKey = {}, order = [];
+  (items || []).forEach(function (it) {
     var perms = (it.permissions || []).map(Number).filter(function (n) { return n > 0; });
     if (!perms.length) return; // stale/cleared grant — the operator holds nothing
-    var key = (it.operator || '').toLowerCase(); if (!key) return;
-    var g = byOp[key];
-    if (!g) { g = byOp[key] = { operator: it.operator, account: it.account, isRevnetOperator: false, chains: [], union: {} }; order.push(g); }
+    var op = (it.operator || '').toLowerCase(); if (!op) return;
+    var wildcard = !!it.wildcard;
+    var key = op + '|' + (wildcard ? 'w' : 'p');
+    var g = byKey[key];
+    if (!g) { g = byKey[key] = { operator: it.operator, account: it.account, isRevnetOperator: false, live: false, wildcard: wildcard, chains: [], byChain: {}, union: {} }; order.push(g); }
+    var cid = Number(it.chainId);
     g.isRevnetOperator = g.isRevnetOperator || !!it.isRevnetOperator;
-    if (g.chains.indexOf(Number(it.chainId)) === -1) g.chains.push(Number(it.chainId));
-    perms.forEach(function (n) { g.union[n] = true; });
+    g.live = g.live || !authority || sameAddr(it.account, authority);
+    if (g.chains.indexOf(cid) === -1) g.chains.push(cid);
+    var set = g.byChain[cid] || (g.byChain[cid] = {});
+    perms.forEach(function (n) { set[n] = true; g.union[n] = true; });
   });
+  var allChains = (chainIds && chainIds.length) ? chainIds.map(Number) : null;
   return order.map(function (g) {
     g.permsUnion = Object.keys(g.union).map(Number).sort(function (a, b) { return a - b; });
     g.chains.sort(function (a, b) { return chainOrderIndex(a) - chainOrderIndex(b); });
+    Object.keys(g.byChain).forEach(function (cid) {
+      g.byChain[cid] = Object.keys(g.byChain[cid]).map(Number).sort(function (a, b) { return a - b; });
+    });
+    // Uniform means: granted on every chain the project lives on, with the same set each time.
+    var expected = allChains || g.chains;
+    g.differs = expected.some(function (cid) {
+      var set = g.byChain[cid];
+      return !set || set.length !== g.permsUnion.length;
+    });
     return g;
   });
+}
+
+// The ids an operator holds on one chain — the honest seed for an edit that writes that chain.
+export function permissionIdsOnChain(grant, chainId) {
+  return (grant && grant.byChain && grant.byChain[Number(chainId)]) || [];
 }
 
 // Permissions card (Owner/Operator tab, bottom). Revnet → read-only list of the operator's actual granted
@@ -17064,17 +17139,39 @@ function renderPermissionsCard(project) {
   var isRev = project.isRevnet;
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Permissions'; card.appendChild(title);
+  var authorityLabel = isRev ? 'Revnet operator' : 'Project owner';
+  var authority = projectAuthorityAddress(project);
+  var chainIds = projectChainIds(project).map(Number);
   var intro = el('div', 'detail-card-body backoffice-intro');
   intro.textContent = isRev
-    ? 'What this revnet’s revnet operator is allowed to do. These powers come with the revnet operator role (the default revnet powers plus any NFT powers granted when the revnet was deployed).'
-    : 'Operators the project owner has authorized to act on the project’s behalf, and what each one can do — this is where shop managers get their power to add, mint, or reprice items. The project owner can grant or revoke permissions at any time.';
+    ? 'Every account that can act on this revnet, and what each one can do. The revnet operator’s powers come with the role (the default revnet powers plus any NFT powers granted when the revnet was deployed).'
+    : 'Every account that can act on this project, and what each one can do — this is where shop managers get their power to add, mint, or reprice items. The project owner can grant or revoke an operator’s permissions at any time.';
   card.appendChild(intro);
+
+  // The owner never appears in the indexed grants: JBPermissioned._requirePermissionFrom passes on
+  // `sender == account` before consulting JBPermissions at all, so the most powerful account on the
+  // project holds every power with no grant to index. Listing delegates alone under-reports who can act.
+  var ownerRow = el('div', 'powers-row');
+  var ownerHead = el('div', 'powers-head');
+  var ownerLab = el('span', 'powers-label');
+  if (authority) ownerLab.appendChild(addressNode(authority, project.chainId));
+  else ownerLab.textContent = 'Not resolved';
+  ownerHead.appendChild(ownerLab);
+  var ownerChip = el('span', 'powers-state on'); ownerChip.textContent = authorityLabel; ownerHead.appendChild(ownerChip);
+  ownerRow.appendChild(ownerHead);
+  var ownerDesc = el('div', 'powers-desc');
+  ownerDesc.textContent = 'Every power. The ' + authorityLabel.toLowerCase() + ' acts directly and never needs a grant, so it holds all of the permissions below on every chain.';
+  ownerRow.appendChild(ownerDesc);
+  card.appendChild(ownerRow);
+
   var body = el('div'); body.appendChild(skel('100%', '40px')); card.appendChild(body);
 
   fetchPermissionOperators(project).then(function (ops) {
     body.innerHTML = '';
     if (!ops.length) {
-      var empty = el('div', 'powers-desc'); empty.textContent = isRev ? 'No revnet operator permissions found.' : 'No operators authorized yet.';
+      var empty = el('div', 'powers-desc');
+      empty.textContent = 'No other accounts have been granted permissions, according to the indexer. '
+        + 'Grants are read from the index, so one made very recently may not appear yet.';
       body.appendChild(empty);
     } else {
       ops.forEach(function (g) {
@@ -17082,18 +17179,43 @@ function renderPermissionsCard(project) {
         var head = el('div', 'powers-head');
         var lab = el('span', 'powers-label'); lab.appendChild(addressNode(g.operator, project.chainId)); head.appendChild(lab);
         if (g.isRevnetOperator) { var b = el('span', 'powers-state on'); b.textContent = 'Revnet operator'; head.appendChild(b); }
+        if (g.wildcard) {
+          var wc = el('span', 'powers-state'); wc.textContent = 'All projects';
+          wc.title = 'Granted on project 0 — the wildcard scope. This applies to EVERY project ' + truncAddr(g.account) + ' owns, not just this one.';
+          head.appendChild(wc);
+        }
+        if (g.differs && chainIds.length > 1) {
+          var df = el('span', 'powers-state'); df.textContent = 'Differs by chain';
+          df.title = 'This operator does not hold the same powers on every chain — see the chain badges below.';
+          head.appendChild(df);
+        }
+        if (!g.live) {
+          var dead = el('span', 'powers-state'); dead.textContent = 'Inactive';
+          dead.title = 'Granted by ' + truncAddr(g.account) + ', who is no longer the ' + authorityLabel.toLowerCase() + ' — these powers confer nothing. Re-grant them to make them effective.';
+          head.appendChild(dead);
+        }
         row.appendChild(head);
         var list = el('div', 'perm-list');
         g.permsUnion.forEach(function (id) {
           var it = el('div', 'perm-list-item');
           var nm = el('span', 'perm-list-name'); nm.textContent = permissionLabel(id); it.appendChild(nm);
           var ds = el('span', 'perm-list-desc'); ds.textContent = permissionDesc(id); it.appendChild(ds);
+          // Which chains actually carry this id. A union with no per-chain breakdown reads as
+          // "everywhere" for a power the operator may hold on exactly one chain.
+          if (chainIds.length > 1) {
+            var on = el('span', 'perm-list-chains'); on.title = 'Granted on';
+            g.chains.forEach(function (cid) {
+              if (permissionIdsOnChain(g, cid).indexOf(id) === -1) return;
+              on.appendChild(chainLogo(cid, chainNameOf(cid)));
+            });
+            it.appendChild(on);
+          }
           list.appendChild(it);
         });
         row.appendChild(list);
         if (!isRev) {
           var act = el('button', 'operator-cta powers-act'); act.textContent = 'Edit permissions';
-          act.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, g.operator, g.permsUnion); });
+          act.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, g); });
           row.appendChild(act);
         }
         body.appendChild(row);
@@ -17101,7 +17223,7 @@ function renderPermissionsCard(project) {
     }
     if (!isRev) {
       var add = el('button', 'operator-cta powers-act'); add.textContent = '+ Add operator'; add.style.display = 'inline-block'; add.style.marginTop = '12px';
-      add.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, null, []); });
+      add.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, null); });
       body.appendChild(add);
     }
   }).catch(function () { body.innerHTML = ''; body.textContent = 'Could not read permissions.'; });
@@ -17111,11 +17233,22 @@ function renderPermissionsCard(project) {
 // Grant/revoke an operator's permissions via JBPermissions.setPermissionsFor. setPermissionsFor REPLACES the
 // operator's full set on each chain (unchecking revokes; clearing all removes the operator). Routed by owner
 // type — Safe → proposed per chain; EOA → one relayr payment — via runAuthorityActionAcrossChains.
-function openSetPermissionsModal(project, existingOperator, existingPermIds) {
+function openSetPermissionsModal(project, grant) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Project owner').toLowerCase();
   var account = projectAuthorityAddress(project); // the grantor — for a custom project this is the owner
   var allChains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
-  var editing = !!existingOperator;
+  var editing = !!(grant && grant.operator);
+  var existingOperator = editing ? grant.operator : null;
+  var wildcard = !!(grant && grant.wildcard);
+  // The granted set is PER CHAIN. Seeding the form from the cross-chain union and writing it back to every
+  // chain silently widens the grant wherever it was narrower, so a non-uniform operator starts scoped to one
+  // chain, seeded from what that chain actually holds.
+  var perChain = editing && grant.differs && allChains.length > 1;
+  var seedChain = perChain ? project.chainId : null;
+  var seedIdsFor = function (cid) {
+    if (!editing) return [];
+    return cid == null ? grant.permsUnion : permissionIdsOnChain(grant, cid);
+  };
 
   // Only a revnet's controlling account is a "revnet operator"; on a custom project the grantee is a plain
   // operator the owner authorizes (a shop manager, a payout bot, a co-admin).
@@ -17127,6 +17260,13 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var note = el('div', 'operator-edit-across');
   note.textContent = 'Grants the checked permissions to the ' + grantee + '. Setting permissions REPLACES the ' + grantee + '’s current set on each selected chain — unchecking a box revokes that power, and clearing every box removes the ' + grantee + '.';
   content.appendChild(note);
+  if (wildcard) {
+    // JBPermissions.WILDCARD_PROJECT_ID: this grant is scoped to project 0, not to this project.
+    var wcNote = el('div', 'operator-edit-across danger');
+    wcNote.textContent = 'This is a wildcard grant on project 0 — it applies to EVERY project this ' + authorityLabel
+      + ' owns, not just this one. Editing it here changes the ' + grantee + '’s powers on all of them.';
+    content.appendChild(wcNote);
+  }
 
   var olbl = el('div', 'operator-edit-label'); olbl.style.marginTop = '12px'; olbl.textContent = Grantee; content.appendChild(olbl);
   var opInput = el('input', 'operator-edit-jwt'); opInput.type = 'text'; opInput.placeholder = '0x… ' + grantee + ' address';
@@ -17142,12 +17282,12 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   }
 
   var plbl = el('div', 'operator-edit-label'); plbl.style.marginTop = '14px'; plbl.textContent = 'Permissions'; content.appendChild(plbl);
-  var have = {}; (existingPermIds || []).forEach(function (id) { have[id] = true; });
+  var seedNote = el('div', 'operator-edit-across'); seedNote.style.display = 'none'; content.appendChild(seedNote);
   var checks = {};
   var listBox = el('div', 'perm-checklist');
   for (var id = 1; id <= JB_PERMISSION_MAX_ID; id++) {
     (function (id) {
-      var r = el('label', 'perm-check'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!have[id];
+      var r = el('label', 'perm-check'); var cb = document.createElement('input'); cb.type = 'checkbox';
       checks[id] = cb; r.appendChild(cb);
       var txt = el('span', 'perm-check-text');
       var nm = el('span', 'perm-check-name'); nm.textContent = permissionLabel(id) + ' #' + id; txt.appendChild(nm);
@@ -17156,25 +17296,43 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
     })(id);
   }
   content.appendChild(listBox);
+  var carried = el('div', 'operator-edit-across'); carried.style.display = 'none'; content.appendChild(carried);
 
-  var carriedPermIds = mergePermissionIds([], existingPermIds);
-  if (carriedPermIds.length) {
-    var carried = el('div', 'operator-edit-across');
-    carried.textContent = 'This ' + grantee + ' also holds ' + carriedPermIds.map(function (id) { return '#' + id; }).join(', ')
-      + ', which this build has no description for. Saving keeps ' + (carriedPermIds.length === 1 ? 'it' : 'them') + ' unchanged.';
-    content.appendChild(carried);
+  // Re-seed the boxes from whatever scope the current chain selection represents: one chain → that chain's
+  // real set; several → the union, which is now an explicit choice to level them up rather than a silent one.
+  function seedFrom(cid) {
+    seedChain = cid;
+    var ids = seedIdsFor(cid);
+    var have = {}; ids.forEach(function (n) { have[n] = true; });
+    for (var i = 1; i <= JB_PERMISSION_MAX_ID; i++) checks[i].checked = !!have[i];
+    var unknown = mergePermissionIds([], ids);
+    carried.style.display = unknown.length ? '' : 'none';
+    carried.textContent = !unknown.length ? '' : ('This ' + grantee + ' also holds ' + unknown.map(function (n) { return '#' + n; }).join(', ')
+      + ', which this build has no description for. Saving keeps ' + (unknown.length === 1 ? 'it' : 'them') + ' unchanged.');
+    seedNote.style.display = perChain ? '' : 'none';
+    if (perChain) {
+      seedNote.textContent = cid == null
+        ? 'Showing the union across the selected chains. Saving grants this same set on every one of them, including chains where the ' + grantee + ' currently holds less.'
+        : 'This ' + grantee + '’s powers differ by chain, so this shows what they hold on ' + chainNameOf(cid) + ' only. Select one chain at a time to edit each set on its own.';
+    }
   }
 
   var chlbl = el('div', 'operator-edit-label'); chlbl.style.marginTop = '14px'; chlbl.textContent = 'Set on'; content.appendChild(chlbl);
-  var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = true; });
+  var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = !perChain || Number(c.id) === Number(seedChain); });
   var chainBox = el('div', 'splits-edit-chains');
   allChains.forEach(function (c) {
-    var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
-    cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; });
+    var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = chainSelected[c.id] !== false;
+    cb.addEventListener('change', function () {
+      chainSelected[c.id] = cb.checked;
+      if (!perChain) return;
+      var on = allChains.filter(function (x) { return chainSelected[x.id] !== false; });
+      seedFrom(on.length === 1 ? Number(on[0].id) : null);
+    });
     r2.appendChild(cb); r2.appendChild(chainLogo(c.id, null)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
     chainBox.appendChild(r2);
   });
   content.appendChild(chainBox);
+  seedFrom(seedChain);
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
@@ -17192,7 +17350,6 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
     try { operator = editing ? existingOperator : operatorValueOf(); }
     catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
     var checked = []; for (var i = 1; i <= JB_PERMISSION_MAX_ID; i++) if (checks[i].checked) checked.push(i);
-    var ids = mergePermissionIds(checked, existingPermIds);
     busy = true;
     (async function () {
       var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
@@ -17200,7 +17357,11 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
       var buildCall = function (cid) {
         var to = getAddress('JBPermissions', cid);
         if (!to) throw new Error('No JBPermissions on ' + chainNameOf(cid));
-        return { to: to, data: encodeFunctionData({ abi: jbSetPermissionsAbi, functionName: 'setPermissionsFor', args: [account, { operator: operator, projectId: pidOn(project, cid), permissionIds: ids }] }) };
+        // setPermissionsFor REPLACES, and the form only renders 1..MAX — carry that CHAIN's out-of-range ids
+        // so an edit on one chain can't silently revoke an extension permission held on another.
+        var ids = mergePermissionIds(checked, seedIdsFor(cid));
+        var projectId = wildcard ? 0n : pidOn(project, cid);
+        return { to: to, data: encodeFunctionData({ abi: jbSetPermissionsAbi, functionName: 'setPermissionsFor', args: [account, { operator: operator, projectId: projectId, permissionIds: ids }] }) };
       };
       var shim = Object.assign({}, project, { chains: selected });
       var res = await runAuthorityActionAcrossChains(shim, selected, account, buildCall, { label: 'Set permissions', title: editing ? 'Edit permissions' : 'Add operator', gas: 200000n }, setStatus)
@@ -20186,6 +20347,13 @@ export var BENDYSTRAW_PROJECT_HANDLE_OPERATOR_QUERY = 'query($account: String!, 
 // Every operator that holds permissions on this project, across all chains (drives the Permissions card).
 var BENDYSTRAW_PERMISSION_HOLDERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'permissionHolders(where: { projectId: $projectId, version: $version, chainId: $chainId }, limit: $limit, offset: $offset) { '
+  + 'items { chainId account operator permissions isRevnetOperator } totalCount } }';
+// JBPermissions.WILDCARD_PROJECT_ID (0) grants act on EVERY project the account owns, and `hasPermission`
+// honors them (includeWildcardProjectId: true). They carry projectId 0, so a project-scoped query never sees
+// them — an operator holding ROOT this way controls the project while appearing nowhere. Scoped to the
+// project's own authority as the grantor: other accounts' wildcards confer nothing here.
+var BENDYSTRAW_WILDCARD_PERMISSION_HOLDERS_QUERY = 'query($account: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'permissionHolders(where: { projectId: 0, version: $version, chainId: $chainId, account: $account }, limit: $limit, offset: $offset) { '
   + 'items { chainId account operator permissions isRevnetOperator } totalCount } }';
 var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'projectPayers(where: { projectId: $projectId, version: $version, chainId: $chainId }, '

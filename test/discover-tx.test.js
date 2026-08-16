@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { accountingTokenUsdValueAtPrice, mergePermissionIds, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, ownersChartTotalLabel, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
+import { accountingTokenUsdValueAtPrice, groupPermissionHolders, permissionIdsOnChain, mergePermissionIds, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, ownersChartTotalLabel, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -362,5 +362,72 @@ describe('mergePermissionIds', () => {
 
   it('carries unknown ids even when every box is cleared', () => {
     expect(mergePermissionIds([], [1, 40])).toEqual([40]);
+  });
+});
+
+// The card has to answer "which accounts hold which permissions, where" honestly. Three things the raw
+// indexed rows don't say: whether the grantor is still the owner, that the set is PER CHAIN, and that a
+// wildcard (projectId 0) grant is a different grant with a wider blast radius than a project-scoped one.
+describe('groupPermissionHolders', () => {
+  const OWNER = '0x1111111111111111111111111111111111111111';
+  const FORMER = '0x9999999999999999999999999999999999999999';
+  const OP = '0x3333333333333333333333333333333333333333';
+  const CHAINS = [8453, 1];
+  const row = (account, permissions, chainId = 8453, extra = {}) => ({ chainId, account, operator: OP, permissions, ...extra });
+
+  it('unions an operator’s permissions across chains and marks a current-owner grant live', () => {
+    const [g] = groupPermissionHolders([row(OWNER, [24, 26]), row(OWNER, [26, 27], 1)], OWNER, CHAINS);
+    expect(g.permsUnion).toEqual([24, 26, 27]);
+    expect(g.chains.sort()).toEqual([1, 8453]);
+    expect(g.live).toBe(true);
+  });
+
+  it('flags a grant from a former owner as not live', () => {
+    const [g] = groupPermissionHolders([row(FORMER, [24, 26])], OWNER, CHAINS);
+    expect(g.live).toBe(false);
+    expect(g.account).toBe(FORMER);
+  });
+
+  it('stays live when any chain still carries the current owner’s grant', () => {
+    const [g] = groupPermissionHolders([row(FORMER, [24]), row(OWNER, [24], 1)], OWNER, CHAINS);
+    expect(g.live).toBe(true);
+  });
+
+  it('is case-insensitive on the grantor and drops cleared grants', () => {
+    expect(groupPermissionHolders([row(OWNER.toUpperCase(), [24])], OWNER, CHAINS)[0].live).toBe(true);
+    expect(groupPermissionHolders([row(OWNER, [])], OWNER, CHAINS)).toEqual([]);
+  });
+
+  it('assumes live when the authority could not be read, rather than crying wolf', () => {
+    expect(groupPermissionHolders([row(FORMER, [24])], null, CHAINS)[0].live).toBe(true);
+  });
+
+  // The union alone claims powers the operator may hold on exactly one chain.
+  it('keeps the granted set per chain so an edit cannot silently widen it', () => {
+    const [g] = groupPermissionHolders([row(OWNER, [24, 26]), row(OWNER, [24], 1)], OWNER, CHAINS);
+    expect(permissionIdsOnChain(g, 8453)).toEqual([24, 26]);
+    expect(permissionIdsOnChain(g, 1)).toEqual([24]);
+    expect(permissionIdsOnChain(g, 10)).toEqual([]);
+    expect(g.differs).toBe(true);
+  });
+
+  it('is uniform only when every deployed chain carries the same set', () => {
+    const both = groupPermissionHolders([row(OWNER, [24, 26]), row(OWNER, [26, 24], 1)], OWNER, CHAINS);
+    expect(both[0].differs).toBe(false);
+    // Granted on Base but the project also lives on mainnet — not uniform.
+    const one = groupPermissionHolders([row(OWNER, [24, 26])], OWNER, CHAINS);
+    expect(one[0].differs).toBe(true);
+  });
+
+  // A wildcard grant reaches every project the owner holds, so it can't be folded into the project row.
+  it('keeps wildcard grants separate from project-scoped ones for the same operator', () => {
+    const grants = groupPermissionHolders(
+      [row(OWNER, [24], 8453), row(OWNER, [1], 8453, { wildcard: true })],
+      OWNER,
+      [8453],
+    );
+    expect(grants).toHaveLength(2);
+    expect(grants.find((g) => g.wildcard).permsUnion).toEqual([1]);
+    expect(grants.find((g) => !g.wildcard).permsUnion).toEqual([24]);
   });
 });
