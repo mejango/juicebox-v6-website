@@ -4282,10 +4282,14 @@ input[type="checkbox"].field {
 }
 
 .activity-bullets li::before {
-  content: '•';
+  content: '';
   position: absolute;
   left: 0;
-  color: var(--text);
+  top: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
 }
 
 .activity-memo {
