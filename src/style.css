@@ -4212,10 +4212,12 @@ input[type="checkbox"].field {
 .activity-chain-link { display: inline-flex; opacity: 0.85; }
 .activity-chain-link:hover { opacity: 1; }
 
-/* The bold flow amount inside the leading "[in/out] amount" cluster. */
+/* The bold flow amount inside the leading "[in/out] amount" cluster. The
+   line-height matches the tag chip's box so the pair centers as one line. */
 .activity-amount-value {
   font-size: 12px;
   font-weight: 600;
+  line-height: 16px;
   color: var(--text);
 }
 
