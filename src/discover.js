@@ -13173,9 +13173,9 @@ export function renderActivityRow(row, project) {
     // No actor (synthesized from chain state, e.g. ruleset queueing) — the action stands alone.
     line.appendChild(document.createTextNode(row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')));
     main.appendChild(line);
-  } else if (row.actionParts && row.actionParts.length > 1) {
-    // A merged same-tx row: the actor stands alone, the memo (if any) is the
-    // headline, and each action reads as a fine-print bullet below it.
+  } else {
+    // One shape for every actor row: actor, memo headline, then the actions
+    // as fine-print bullets — a lone action is still a bullet.
     line.appendChild(addressNode(row.account || row.from));
     main.appendChild(line);
     if (row.memo) {
@@ -13183,20 +13183,19 @@ export function renderActivityRow(row, project) {
       groupedMemo.textContent = row.memo;
       main.appendChild(groupedMemo);
     }
+    var phrases = (row.actionParts && row.actionParts.length)
+      ? row.actionParts
+      : [row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')];
     var bullets = el('ul', 'activity-bullets');
-    row.actionParts.forEach(function (phrase) {
+    phrases.forEach(function (phrase) {
       var bullet = el('li', '');
       bullet.textContent = phrase;
       bullets.appendChild(bullet);
     });
     main.appendChild(bullets);
-  } else {
-    line.appendChild(addressNode(row.account || row.from));
-    line.appendChild(document.createTextNode(' ' + row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')));
-    main.appendChild(line);
   }
 
-  if (row.memo && !(row.actionParts && row.actionParts.length > 1)) {
+  if (row.memo && row.system) {
     var memo = el('div', 'activity-memo');
     memo.textContent = row.memo;
     main.appendChild(memo);
