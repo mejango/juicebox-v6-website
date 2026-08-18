@@ -4060,14 +4060,6 @@ input[type="checkbox"].field {
 
 .activity-row:last-child { border-bottom: none; }
 
-.activity-avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  flex: 0 0 24px;
-  margin-top: 2px;
-}
-
 .activity-main {
   flex: 1;
   min-width: 0;

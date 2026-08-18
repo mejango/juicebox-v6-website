@@ -13134,9 +13134,6 @@ export function renderActivityRow(row, project) {
   var chains = (row.chains && row.chains.length) ? row.chains : [{ chainId: row.chainId, txHash: row.txHash }];
   // Identity key for refresh diffing — all tx hashes in this (possibly merged) row.
   item.setAttribute('data-tx', chains.map(function (c) { return (c.txHash || '') + ':' + c.chainId; }).join(','));
-  var avatar = el('span', 'activity-avatar');
-  avatar.style.background = identGradient(row.account || row.from || row.txHash || String(row.timestamp || '0'));
-  item.appendChild(avatar);
 
   var main = el('div', 'activity-main');
   var meta = el('div', 'activity-meta');
