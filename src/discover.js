@@ -13215,6 +13215,9 @@ export function activityRowFromEvent(event, project) {
   if (event.payEvent) {
     var pay = event.payEvent;
     var minted = toBigInt(pay.newlyIssuedTokenCount);
+    // Acquisitions read "bought <amount> <token> <source>", matching the
+    // buyback fragment's shape. Until the ERC-20 deploys the tokens are credits.
+    var payUnit = sym + (project.tokenAddress ? '' : ' credits');
     return {
       type: 'pay',
       direction: 'in',
@@ -13224,8 +13227,10 @@ export function activityRowFromEvent(event, project) {
       account: pay.beneficiary || event.from || pay.from,
       from: pay.from || event.from,
       baseAmount: activityFlowAmount(project, pay.amount, pay.amountUsd),
-      tokenAmount: minted > 0n ? formatCompactTokenAmount(minted) : '',
-      action: minted > 0n ? 'got' : 'paid into ' + sym,
+      tokenAmount: '',
+      action: minted > 0n
+        ? 'bought ' + formatCompactTokenAmount(minted) + ' ' + payUnit + ' from issuance'
+        : 'paid into ' + sym,
       memo: pay.memo || '',
     };
   }
