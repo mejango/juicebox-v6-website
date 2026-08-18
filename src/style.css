@@ -4074,11 +4074,12 @@ input[type="checkbox"].field {
   color: var(--muted-3);
 }
 
-/* The actor on the meta line's left side (the time sits right). */
+/* The actor on the meta line's left side (the time sits right). The gap
+   matches the mono font's word space so the chip reads like the next word. */
 .activity-meta-left {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
 }
 
