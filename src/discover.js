@@ -13142,37 +13142,40 @@ export function renderActivityRow(row, project) {
   var metaLeft = el('span', 'activity-meta-left');
   if (!row.system) metaLeft.appendChild(addressNode(row.account || row.from));
   meta.appendChild(metaLeft);
+  // The right side reads "time on <chains>" — one chain bubble per chain this
+  // event fired on, each still linking to its own tx. Single chain: the time
+  // itself links to the tx too. Multiple: time is plain text.
   var side = el('span', 'activity-side');
-  // Single chain: the time itself links to the tx. Multiple: time is plain text (bubbles carry the links).
   if (chains.length === 1) {
     side.appendChild(renderExplorerTxLink(chains[0].chainId, chains[0].txHash, timeAgo(row.timestamp)));
   } else {
     var t = el('span', 'activity-time'); t.textContent = timeAgo(row.timestamp); side.appendChild(t);
   }
+  var on = el('span', 'activity-amount-on');
+  on.textContent = 'on';
+  side.appendChild(on);
+  var chainsWrap = el('span', 'activity-chains');
+  chains.forEach(function (c) { chainsWrap.appendChild(chainTxBubble(c.chainId, c.txHash)); });
+  side.appendChild(chainsWrap);
   meta.appendChild(side);
   main.appendChild(meta);
 
-  // The flow line reads "amount [in/out] on <chains>": bold amount, the tag only
-  // for fund flows (IN = inbound payments & fees, OUT = outbound funds), and one
-  // chain bubble per chain this event fired on — each still linking to its own tx.
-  var amountLine = el('div', 'activity-amount');
-  if (row.baseAmount) {
-    var amountValue = el('span', 'activity-amount-value');
-    amountValue.textContent = row.baseAmount;
-    amountLine.appendChild(amountValue);
+  // The flow line reads "[in/out] amount": the tag only for fund flows
+  // (IN = inbound payments & fees, OUT = outbound funds), then the bold amount.
+  if (row.baseAmount || row.direction === 'in' || row.direction === 'out') {
+    var amountLine = el('div', 'activity-amount');
+    if (row.direction === 'in' || row.direction === 'out') {
+      var tag = el('span', 'activity-tag activity-tag--' + row.direction);
+      tag.textContent = row.direction;
+      amountLine.appendChild(tag);
+    }
+    if (row.baseAmount) {
+      var amountValue = el('span', 'activity-amount-value');
+      amountValue.textContent = row.baseAmount;
+      amountLine.appendChild(amountValue);
+    }
+    main.appendChild(amountLine);
   }
-  if (row.direction === 'in' || row.direction === 'out') {
-    var tag = el('span', 'activity-tag activity-tag--' + row.direction);
-    tag.textContent = row.direction;
-    amountLine.appendChild(tag);
-  }
-  var on = el('span', 'activity-amount-on');
-  on.textContent = 'on';
-  amountLine.appendChild(on);
-  var chainsWrap = el('span', 'activity-chains');
-  chains.forEach(function (c) { chainsWrap.appendChild(chainTxBubble(c.chainId, c.txHash)); });
-  amountLine.appendChild(chainsWrap);
-  main.appendChild(amountLine);
 
   // Until the ERC-20 is deployed, the project's tokens are non-transferable credits — say so.
   var unit = (project.tokenSymbol || 'tokens') + (project.tokenAddress ? '' : ' credits');
