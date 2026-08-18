@@ -28208,6 +28208,79 @@ export function lpDefaultRange(poolPrice, floor, ceiling) {
   return { min: min, max: max, economic: economic };
 }
 
+// Turn "I have X project tokens and Y pair tokens" into a concrete price range, so depositors never
+// reverse-engineer concentrated-liquidity ratio math. Pin the floor at the cash-out price (below it,
+// cashing out beats selling) and solve the ceiling that consumes exactly the given amounts; when the
+// token side is too heavy for ANY ceiling, pin the ceiling at the issuance price (above it, paying
+// the project beats buying) and solve the floor instead. A zero on either side degrades to the
+// matching single-sided position, so every non-degenerate input yields a valid range.
+export function lpSolveRangeFromAmounts(inputs) {
+  var price = inputs.price, tokenAmount = inputs.tokenAmount, pairAmount = inputs.pairAmount;
+  if (!isFinite(price) || !(price > 0)) return null;
+  if (!isFinite(tokenAmount) || tokenAmount < 0) return null;
+  if (!isFinite(pairAmount) || pairAmount < 0) return null;
+  if (tokenAmount === 0 && pairAmount === 0) return null;
+
+  var floorHint = inputs.floorHint == null ? 0 : inputs.floorHint;
+  var ceilingHint = inputs.ceilingHint == null ? 0 : inputs.ceilingHint;
+  var floor = floorHint > 0 && floorHint < price ? floorHint : price / 2;
+  var ceiling = ceilingHint > price ? ceilingHint : price * 2;
+
+  var sp = Math.sqrt(price), sa = Math.sqrt(floor);
+
+  if (pairAmount > 0) {
+    // Floor pinned: L is fixed by the pair side, the ceiling absorbs the token side.
+    // amountTok = L·(1/√p − 1/√pb) caps at L/√p as pb → ∞.
+    var L = pairAmount / (sp - sa);
+    var invSb = 1 / sp - tokenAmount / L;
+    if (invSb > 0) {
+      var maxPrice = tokenAmount === 0 ? price : Math.pow(1 / invSb, 2);
+      return { minPrice: floor, maxPrice: maxPrice, anchor: 'floor' };
+    }
+  }
+
+  // Token side too heavy for the pinned floor (or no pair at all): pin the ceiling and solve the
+  // floor. Always solvable — the solved floor lands strictly between the pinned floor and spot.
+  var sb = Math.sqrt(ceiling);
+  var Lx = tokenAmount / (1 / sp - 1 / sb);
+  var floorSqrt = sp - pairAmount / Lx;
+  return {
+    minPrice: pairAmount === 0 ? price : Math.pow(floorSqrt, 2),
+    maxPrice: ceiling,
+    anchor: 'ceiling',
+  };
+}
+
+// A v2-style "full range" span: nine orders of magnitude either side of spot — beyond any price a
+// market can realistically reach, so the deposit ratio matches a classic v2 pool to within ~0.01%
+// while staying inside usable tick bounds at any pair decimals.
+export function lpFullRangeBounds(price) {
+  if (!isFinite(price) || !(price > 0)) return null;
+  return { minPrice: price / 1e9, maxPrice: price * 1e9 };
+}
+
+// Plain-language explanation of where the solved range landed and why.
+export function lpAmountsModeNote(inputs) {
+  var solved = inputs.solved, tokenSymbol = inputs.tokenSymbol, pairSymbol = inputs.pairSymbol;
+  if (!solved) return 'Enter what you want to deposit — the price range is set for you.';
+  if (inputs.tokenAmount === 0) {
+    return 'Only ' + pairSymbol + ': the position sits below the current price and buys ' +
+      tokenSymbol + ' as the price falls.';
+  }
+  if (inputs.pairAmount === 0) {
+    return 'Only ' + tokenSymbol + ': the position sits above the current price and sells into ' +
+      pairSymbol + ' as the price rises.';
+  }
+  if (solved.anchor === 'floor') {
+    return inputs.floorHint && solved.minPrice === inputs.floorHint
+      ? 'Floor anchored at the cash-out price — below it, cashing out beats selling.'
+      : 'Floor set to half the current price (no cash-out floor available).';
+  }
+  return inputs.ceilingHint && solved.maxPrice === inputs.ceilingHint
+    ? 'Your ' + tokenSymbol + ' side needs more room than the cash-out floor allows, so the ceiling is anchored at the issuance price instead.'
+    : 'Your ' + tokenSymbol + ' side needs more room than the cash-out floor allows, so the ceiling is set to twice the current price.';
+}
+
 // A compact number-line of the LP price range relative to the cash out floor, current pool price,
 // and issuance ceiling. All values are pair/base token per project token.
 function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
@@ -29716,7 +29789,7 @@ function buildAddLiquidityModal(project) {
   var ceilingBase = weight > 0 ? 1e18 / weight : 0;
   var ceiling = issuancePairUnitMismatch(project) ? 0 : ceilingBase;
   // ethBal holds the PAIR-token balance (native ETH or USDC); pair is the resolved accounting/pair token.
-  var state = { chainId: lpChains[0].id, poolP: 0, floor: 0, ceiling: ceiling, revBal: null, ethBal: null, driver: null, pair: null };
+  var state = { chainId: lpChains[0].id, poolP: 0, floor: 0, ceiling: ceiling, revBal: null, ethBal: null, driver: null, pair: null, mode: 'amounts' };
   if (ceilingBase > 0 && ceiling === 0) {
     readIssuancePairRate(project, state.chainId).then(function (rate) {
       if (!rate) return; // no feed — keep the widened default range
@@ -29765,6 +29838,16 @@ function buildAddLiquidityModal(project) {
   });
   graphWrap.addEventListener('mouseleave', function () { graphTip.style.display = 'none'; });
 
+  // Sizing mode: "By amounts" (default — type both deposits, the range is solved around them) or
+  // "By price range" (pick the range, the counterpart amount follows).
+  var modeRow = el('div', 'chain-pills-row'); modeRow.style.marginTop = '8px'; wrap.appendChild(modeRow);
+  var modeAmountsBtn = el('button', 'chain-pill'); modeAmountsBtn.type = 'button'; modeAmountsBtn.textContent = 'By amounts'; modeRow.appendChild(modeAmountsBtn);
+  var modeFullBtn = el('button', 'chain-pill'); modeFullBtn.type = 'button'; modeFullBtn.textContent = 'Full range'; modeRow.appendChild(modeFullBtn);
+  var modeRangeBtn = el('button', 'chain-pill'); modeRangeBtn.type = 'button'; modeRangeBtn.textContent = 'By price range'; modeRow.appendChild(modeRangeBtn);
+  modeAmountsBtn.addEventListener('click', function () { setMode('amounts'); });
+  modeFullBtn.addEventListener('click', function () { setMode('full'); });
+  modeRangeBtn.addEventListener('click', function () { setMode('range'); });
+
   var lblR = el('div', 'modal-label'); lblR.textContent = 'Price range (ETH per ' + sym + ')'; wrap.appendChild(lblR);
   var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash out floor to the issuance ceiling.'; wrap.appendChild(rnote);
   var rangeRow = el('div', 'ops-rangerow');
@@ -29776,6 +29859,7 @@ function buildAddLiquidityModal(project) {
   var maxInput = el('input', 'ops-amount'); maxInput.type = 'number'; maxInput.step = 'any'; maxInput.placeholder = 'Max'; maxField.appendChild(maxInput);
   rangeRow.appendChild(maxField);
   wrap.appendChild(rangeRow);
+  var rangeReadout = el('div', 'modal-balance'); rangeReadout.style.display = 'none'; wrap.appendChild(rangeReadout);
   minInput.addEventListener('input', onRangeChange);
   maxInput.addEventListener('input', onRangeChange);
 
@@ -29809,16 +29893,23 @@ function buildAddLiquidityModal(project) {
     lblR.textContent = 'Price range (' + ps + ' per ' + sym + ')';
     lbl2.textContent = ps + ' to add';
     eu.textContent = ps;
-    pairNote.textContent = 'Enter either amount; the other is calculated at the pool price. Near Min uses more '
-      + sym + '; near Max uses more ' + ps + '.';
+    if (state.mode !== 'amounts') {
+      pairNote.textContent = 'Enter either amount; the other is calculated at the pool price. Near Min uses more '
+        + sym + '; near Max uses more ' + ps + '.';
+    }
   }
   applyPairLabels();
 
-  tokAmt.addEventListener('input', function () { state.driver = 'tok'; autofill(); });
-  ethAmt.addEventListener('input', function () { state.driver = 'eth'; autofill(); });
+  function onAmountInput(side) {
+    if (state.mode === 'amounts') { solveAmounts(); return; }
+    state.driver = side;
+    autofill();
+  }
+  tokAmt.addEventListener('input', function () { onAmountInput('tok'); });
+  ethAmt.addEventListener('input', function () { onAmountInput('eth'); });
   tokMax.addEventListener('click', function () {
     if (state.revBal == null) { connect(); return; }
-    tokAmt.value = formatAmount(state.revBal, 18); state.driver = 'tok'; autofill();
+    tokAmt.value = formatAmount(state.revBal, 18); onAmountInput('tok');
   });
   ethMax.addEventListener('click', function () {
     if (!state.pair) { status.textContent = 'Accounting token is still loading.'; return; }
@@ -29826,8 +29917,67 @@ function buildAddLiquidityModal(project) {
     // Keep ~0.001 ETH for gas only when the pair IS native ETH; an ERC-20 pair (USDC) can go to the brim.
     var buf = state.pair.isNative ? 1000000000000000n : 0n;
     var v = state.ethBal > buf ? state.ethBal - buf : 0n;
-    ethAmt.value = formatAmount(v, pairDec()); state.driver = 'eth'; autofill();
+    ethAmt.value = formatAmount(v, pairDec()); onAmountInput('eth');
   });
+
+  // Amounts mode: both deposits are free-typed; the solved range feeds the same inputs, graph, and
+  // submit path the range mode uses.
+  function solveAmounts() {
+    var t = parseFloat(tokAmt.value); t = t > 0 ? t : 0;
+    var e = parseFloat(ethAmt.value); e = e > 0 ? e : 0;
+    var solved = state.poolP > 0
+      ? lpSolveRangeFromAmounts({ price: state.poolP, tokenAmount: t, pairAmount: e, floorHint: state.floor, ceilingHint: ceiling })
+      : null;
+    if (solved) {
+      minInput.value = lpTrimNum(solved.minPrice);
+      maxInput.value = lpTrimNum(solved.maxPrice);
+      rangeReadout.textContent = 'Price range: ' + formatPrice(solved.minPrice) + ' to ' + formatPrice(solved.maxPrice) + ' ' + pairSym() + ' per ' + sym + '.';
+    } else {
+      rangeReadout.textContent = '';
+    }
+    pairNote.textContent = lpAmountsModeNote({
+      tokenAmount: t, pairAmount: e, solved: solved,
+      floorHint: state.floor, ceilingHint: ceiling,
+      tokenSymbol: sym, pairSymbol: pairSym(),
+    });
+    drawGraph();
+  }
+
+  // Full-range mode presets bounds spanning the whole curve; the classic counterpart autofill over
+  // that span then couples the amounts at the v2 pool ratio.
+  function applyFullRange() {
+    var bounds = lpFullRangeBounds(state.poolP);
+    if (bounds) {
+      minInput.value = lpTrimNum(bounds.minPrice);
+      maxInput.value = lpTrimNum(bounds.maxPrice);
+    }
+    pairNote.textContent = 'Your liquidity works at every price, like a classic v2 pool. Enter either amount; the other follows at the pool price.';
+    autofill();
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    modeAmountsBtn.classList.toggle('selected', mode === 'amounts');
+    modeFullBtn.classList.toggle('selected', mode === 'full');
+    modeRangeBtn.classList.toggle('selected', mode === 'range');
+    var hideRange = mode !== 'range';
+    lblR.style.display = hideRange ? 'none' : '';
+    rnote.style.display = hideRange ? 'none' : '';
+    rangeRow.style.display = hideRange ? 'none' : '';
+    graphWrap.style.display = mode === 'full' ? 'none' : '';
+    rangeReadout.style.display = mode === 'amounts' ? '' : 'none';
+    if (mode === 'range') {
+      applyPairLabels();
+      onRangeChange();
+      return;
+    }
+    tokAmt.disabled = false; ethAmt.disabled = false;
+    tokCol.style.opacity = ''; ethCol.style.opacity = '';
+    tokMax.style.visibility = ''; ethMax.style.visibility = '';
+    sideNote.style.display = 'none'; sideNote.textContent = '';
+    if (mode === 'amounts') solveAmounts();
+    else applyFullRange();
+  }
 
   // Execution deadline: how long the signed/queued mint stays executable before it reverts as stale. Price
   // protection comes from the bounded max amounts, not from this — a long deadline only lets a queued tx wait.
@@ -29908,7 +30058,11 @@ function buildAddLiquidityModal(project) {
       if (e != null) ethAmt.value = lpTrimNum(e);
     }
   }
-  function onRangeChange() { drawGraph(); applySides(); autofill(); }
+  function onRangeChange() {
+    if (state.mode === 'amounts') { solveAmounts(); return; }
+    if (state.mode === 'full') { applyFullRange(); return; }
+    drawGraph(); applySides(); autofill();
+  }
 
   // Resolve the pair (accounting) token for the selected chain, then refresh labels, balances, and price.
   var pairSeq = 0;
@@ -29976,6 +30130,7 @@ function buildAddLiquidityModal(project) {
     });
   }
 
+  setMode(state.mode);
   refreshPair();
 
   btn.addEventListener('click', function () {
