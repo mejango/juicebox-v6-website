@@ -4246,7 +4246,7 @@ input[type="checkbox"].field {
 
 .activity-bullets {
   margin: 2px 0 0;
-  padding-left: 18px;
+  padding-left: 0;
   font-size: 11px;
   color: var(--muted);
   overflow-wrap: anywhere;
@@ -4254,7 +4254,8 @@ input[type="checkbox"].field {
 
 .activity-bullets li {
   margin-top: 2px;
-  list-style: disc;
+  /* Inside markers keep the dots flush with the text above the list. */
+  list-style: disc inside;
 }
 
 .activity-memo {
