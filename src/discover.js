@@ -13200,7 +13200,17 @@ export function renderActivityRow(row, project) {
     var bullets = el('ul', 'activity-bullets');
     phrases.forEach(function (phrase) {
       var bullet = el('li', '');
-      bullet.textContent = phrase;
+      // Token amounts read slightly emphasized: same color, heavier weight.
+      var re = /(\d[\d,.]*[kMBT]?\s+[A-Za-z$][A-Za-z$0-9]*(?:\s+credits)?)/g;
+      var lastIndex = 0, match;
+      while ((match = re.exec(phrase))) {
+        if (match.index > lastIndex) bullet.appendChild(document.createTextNode(phrase.slice(lastIndex, match.index)));
+        var em = el('span', 'activity-em');
+        em.textContent = match[1];
+        bullet.appendChild(em);
+        lastIndex = match.index + match[1].length;
+      }
+      if (lastIndex < phrase.length) bullet.appendChild(document.createTextNode(phrase.slice(lastIndex)));
       bullets.appendChild(bullet);
     });
     main.appendChild(bullets);

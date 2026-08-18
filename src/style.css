@@ -4272,6 +4272,11 @@ input[type="checkbox"].field {
   overflow-wrap: anywhere;
 }
 
+/* Token amounts inside bullets: same color, slightly heavier. */
+.activity-em {
+  font-weight: 600;
+}
+
 .activity-bullets li {
   margin-top: 2px;
   /* Hand-rolled marker: the dot sits flush left while wrapped lines keep
