@@ -13180,7 +13180,7 @@ export function renderActivityRow(row, project) {
     main.appendChild(line);
     if (row.memo) {
       var groupedMemo = el('div', 'activity-grouped-memo');
-      groupedMemo.textContent = row.memo;
+      groupedMemo.textContent = '“' + row.memo + '”';
       main.appendChild(groupedMemo);
     }
     var phrases = (row.actionParts && row.actionParts.length)
@@ -13197,7 +13197,7 @@ export function renderActivityRow(row, project) {
 
   if (row.memo && row.system) {
     var memo = el('div', 'activity-memo');
-    memo.textContent = row.memo;
+    memo.textContent = '“' + row.memo + '”';
     main.appendChild(memo);
   }
 
