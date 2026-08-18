@@ -13082,10 +13082,17 @@ export function mergeSameTxActivityRows(rows, project) {
   return order.map(function (group) {
     if (group.length === 1) return group[0];
     group.sort(function (a, b) { return sameTxRank(a.type) - sameTxRank(b.type); });
-    var phrases = group.map(function (r) { return activityRowPhrase(r, unit); });
-    var action = phrases.length === 2
-      ? phrases[0] + ' and ' + phrases[1]
-      : phrases.slice(0, -1).join(', ') + ', and ' + phrases[phrases.length - 1];
+    // A zero-issuance pay's "paid into X" adds nothing next to the row's
+    // amount and "in" tag — it contributes no phrase when other actions
+    // exist, but still anchors the row's actor, amount, and memo.
+    var phraseRows = group.filter(function (r) { return !(r.type === 'pay' && r.action.indexOf('paid into') === 0); });
+    if (!phraseRows.length) phraseRows = group;
+    var phrases = phraseRows.map(function (r) { return activityRowPhrase(r, unit); });
+    var action = phrases.length === 1
+      ? phrases[0]
+      : phrases.length === 2
+        ? phrases[0] + ' and ' + phrases[1]
+        : phrases.slice(0, -1).join(', ') + ', and ' + phrases[phrases.length - 1];
     var memo = '';
     group.forEach(function (r) { if (!memo && r.memo) memo = r.memo; });
     var amountSource = null;

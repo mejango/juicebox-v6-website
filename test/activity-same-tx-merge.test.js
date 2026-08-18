@@ -27,9 +27,10 @@ describe('mergeSameTxActivityRows', () => {
     const merged = mergeSameTxActivityRows([swapRow(), payRow()], project);
     expect(merged).toHaveLength(1);
     expect(merged[0].account).toBe('0xpayer');
-    expect(merged[0].action).toBe('paid into ART and bought 28k ART via the buyback pool');
-    // One phrase per event for the bulleted rendering.
-    expect(merged[0].actionParts).toEqual(['paid into ART', 'bought 28k ART via the buyback pool']);
+    // The zero-issuance pay anchors the row (actor, amount, memo) but its
+    // "paid into ART" contributes no phrase — the amount + "in" tag say that.
+    expect(merged[0].action).toBe('bought 28k ART via the buyback pool');
+    expect(merged[0].actionParts).toEqual(['bought 28k ART via the buyback pool']);
     expect(merged[0].memo).toBe('gm');
     expect(merged[0].direction).toBe('in');
   });
@@ -66,8 +67,9 @@ describe('mergeSameTxActivityRows', () => {
 
   it('inlines a fragment token amount with the unit', () => {
     const mint = payRow({ type: 'issuance', account: '0xpayer', action: 'received', tokenAmount: '17k', baseAmount: '' });
-    const merged = mergeSameTxActivityRows([payRow(), mint], project);
-    expect(merged[0].action).toBe('paid into ART and received 17k ART');
+    const bridge = payRow({ type: 'bridge_claim', action: 'claimed ART from Base', tokenAmount: '2k' });
+    const merged = mergeSameTxActivityRows([bridge, mint], project);
+    expect(merged[0].action).toBe('received 17k ART and claimed ART from Base 2k ART');
     expect(merged[0].tokenAmount).toBe('');
   });
 });
