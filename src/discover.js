@@ -13155,11 +13155,6 @@ export function renderActivityRow(row, project) {
   }
   meta.appendChild(metaLeft);
   var side = el('span', 'activity-side');
-  if (row.baseAmount) {
-    var amt = el('span', 'activity-base-amount');
-    amt.textContent = row.baseAmount;
-    side.appendChild(amt);
-  }
   // Only fund flows get an in/out tag: IN = inbound payments & fees, OUT = outbound funds
   // (cash outs, loans). Token-only events (issuance, reserved, ERC20 deploy, project create) get none.
   if (row.direction === 'in' || row.direction === 'out') {
@@ -13173,6 +13168,13 @@ export function renderActivityRow(row, project) {
   side.appendChild(chainsWrap);
   meta.appendChild(side);
   main.appendChild(meta);
+
+  // The flow amount stands on its own line, bold, under "time | actor".
+  if (row.baseAmount) {
+    var amountLine = el('div', 'activity-amount');
+    amountLine.textContent = row.baseAmount;
+    main.appendChild(amountLine);
+  }
 
   // Until the ERC-20 is deployed, the project's tokens are non-transferable credits — say so.
   var unit = (project.tokenSymbol || 'tokens') + (project.tokenAddress ? '' : ' credits');

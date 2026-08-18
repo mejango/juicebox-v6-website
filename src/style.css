@@ -4216,8 +4216,13 @@ input[type="checkbox"].field {
 .activity-chain-link { display: inline-flex; opacity: 0.85; }
 .activity-chain-link:hover { opacity: 1; }
 
-.activity-base-amount {
-  color: var(--muted-2);
+/* The flow amount on its own line, bold, under "time | actor". */
+.activity-amount {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .activity-tag {
