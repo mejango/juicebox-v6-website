@@ -15505,7 +15505,7 @@ function renderProjectHandleCard(project) {
       badge.textContent = state.handle ? 'Verified' : (state.authorityIdentityError ? 'Authority mismatch' : (state.invalidHandle ? 'Invalid handle' : (state.stored ? 'Awaiting ENS' : 'No handle')));
       head.appendChild(badge); row.appendChild(head);
       var desc = el('div', 'powers-desc');
-      desc.textContent = chainNameOf(state.chainId) + ' #' + state.projectId + ' · ENS text: ' + PROJECT_HANDLE_TEXT_KEY + ' = ' + state.expectedText;
+      desc.textContent = chainNameOf(state.chainId) + ' #' + state.projectId + ' | ENS text: ' + PROJECT_HANDLE_TEXT_KEY + ' = ' + state.expectedText;
       row.appendChild(desc);
       if (state.authorityIdentityError) {
         var mismatch = el('div', 'powers-warn');
