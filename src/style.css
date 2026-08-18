@@ -4254,8 +4254,17 @@ input[type="checkbox"].field {
 
 .activity-bullets li {
   margin-top: 2px;
-  /* Inside markers keep the dots flush with the text above the list. */
-  list-style: disc inside;
+  /* Hand-rolled marker: the dot sits flush left while wrapped lines keep
+     hanging-indent alignment with the first line's text. */
+  list-style: none;
+  position: relative;
+  padding-left: 14px;
+}
+
+.activity-bullets li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
 }
 
 .activity-memo {
