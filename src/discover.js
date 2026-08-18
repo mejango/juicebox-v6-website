@@ -13167,9 +13167,15 @@ export function renderActivityRow(row, project) {
     line.appendChild(document.createTextNode(row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')));
     main.appendChild(line);
   } else if (row.actionParts && row.actionParts.length > 1) {
-    // A merged same-tx row: the actor stands alone and each action is a bullet.
+    // A merged same-tx row: the actor stands alone, the memo (if any) is the
+    // headline, and each action reads as a fine-print bullet below it.
     line.appendChild(addressNode(row.account || row.from));
     main.appendChild(line);
+    if (row.memo) {
+      var groupedMemo = el('div', 'activity-grouped-memo');
+      groupedMemo.textContent = row.memo;
+      main.appendChild(groupedMemo);
+    }
     var bullets = el('ul', 'activity-bullets');
     row.actionParts.forEach(function (phrase) {
       var bullet = el('li', '');
@@ -13183,7 +13189,7 @@ export function renderActivityRow(row, project) {
     main.appendChild(line);
   }
 
-  if (row.memo) {
+  if (row.memo && !(row.actionParts && row.actionParts.length > 1)) {
     var memo = el('div', 'activity-memo');
     memo.textContent = row.memo;
     main.appendChild(memo);

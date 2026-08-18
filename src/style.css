@@ -4236,12 +4236,19 @@ input[type="checkbox"].field {
   overflow-wrap: anywhere;
 }
 
-/* Merged same-tx rows: one bullet per action under the actor line. */
+/* Merged same-tx rows: the memo is the headline, the actions are fine-print bullets. */
+.activity-grouped-memo {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
 .activity-bullets {
   margin: 2px 0 0;
   padding-left: 18px;
-  font-size: 12px;
-  color: var(--text);
+  font-size: 11px;
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 
