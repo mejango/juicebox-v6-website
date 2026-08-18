@@ -13139,8 +13139,19 @@ export function renderActivityRow(row, project) {
   var meta = el('div', 'activity-meta');
   // One shape for every actor row: "time | actor" on the meta line, then the
   // memo headline and the actions as fine-print bullets.
+  // The flow cluster ("[in/out] amount") leads the row; the prefixed actor
+  // sits on its own line below.
   var metaLeft = el('span', 'activity-meta-left');
-  if (!row.system) metaLeft.appendChild(addressNode(row.account || row.from));
+  if (row.direction === 'in' || row.direction === 'out') {
+    var tag = el('span', 'activity-tag activity-tag--' + row.direction);
+    tag.textContent = row.direction;
+    metaLeft.appendChild(tag);
+  }
+  if (row.baseAmount) {
+    var amountValue = el('span', 'activity-amount-value');
+    amountValue.textContent = row.baseAmount;
+    metaLeft.appendChild(amountValue);
+  }
   meta.appendChild(metaLeft);
   // The right side reads "time on <chains>" — one chain bubble per chain this
   // event fired on, each still linking to its own tx. Single chain: the time
@@ -13160,21 +13171,14 @@ export function renderActivityRow(row, project) {
   meta.appendChild(side);
   main.appendChild(meta);
 
-  // The flow line reads "[in/out] amount": the tag only for fund flows
-  // (IN = inbound payments & fees, OUT = outbound funds), then the bold amount.
-  if (row.baseAmount || row.direction === 'in' || row.direction === 'out') {
-    var amountLine = el('div', 'activity-amount');
-    if (row.direction === 'in' || row.direction === 'out') {
-      var tag = el('span', 'activity-tag activity-tag--' + row.direction);
-      tag.textContent = row.direction;
-      amountLine.appendChild(tag);
-    }
-    if (row.baseAmount) {
-      var amountValue = el('span', 'activity-amount-value');
-      amountValue.textContent = row.baseAmount;
-      amountLine.appendChild(amountValue);
-    }
-    main.appendChild(amountLine);
+  // "From" for outflows, "To" for inflows, "By" for everything else.
+  if (!row.system) {
+    var actorLine = el('div', 'activity-actor');
+    var actorPrefix = el('span', '');
+    actorPrefix.textContent = (row.direction === 'out' ? 'From ' : row.direction === 'in' ? 'To ' : 'By ');
+    actorLine.appendChild(actorPrefix);
+    actorLine.appendChild(addressNode(row.account || row.from));
+    main.appendChild(actorLine);
   }
 
   // Until the ERC-20 is deployed, the project's tokens are non-transferable credits — say so.
