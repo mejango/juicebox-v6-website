@@ -4074,16 +4074,12 @@ input[type="checkbox"].field {
   color: var(--muted-3);
 }
 
-/* "time | actor" on the meta line's left side; the pipe stays quiet. */
+/* The actor on the meta line's left side (the time sits right). */
 .activity-meta-left {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-}
-
-.activity-meta-sep {
-  color: var(--muted-4);
 }
 
 .activity-meta a {
@@ -4216,13 +4212,19 @@ input[type="checkbox"].field {
 .activity-chain-link { display: inline-flex; opacity: 0.85; }
 .activity-chain-link:hover { opacity: 1; }
 
-/* The flow amount on its own line, bold, under "time | actor". */
+/* The flow line under "actor … time": bold amount, in/out tag, "on <chains>". */
 .activity-amount {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 2px;
   font-size: 12px;
+  color: var(--muted-2);
+}
+
+.activity-amount-value {
   font-weight: 600;
   color: var(--text);
-  overflow-wrap: anywhere;
 }
 
 .activity-tag {
