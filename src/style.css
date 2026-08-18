@@ -4233,6 +4233,7 @@ input[type="checkbox"].field {
   border: 1px solid var(--c-teal);
   color: var(--c-teal);
   padding: 0 4px;
+  text-transform: capitalize;
   font-size: 9px;
   line-height: 16px;
 }

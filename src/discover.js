@@ -13175,7 +13175,7 @@ export function renderActivityRow(row, project) {
   if (!row.system) {
     var actorLine = el('div', 'activity-actor');
     var actorPrefix = el('span', '');
-    actorPrefix.textContent = (row.direction === 'out' ? 'To ' : row.direction === 'in' ? 'From ' : 'By ');
+    actorPrefix.textContent = (row.direction === 'out' ? 'to ' : row.direction === 'in' ? 'from ' : 'by ');
     actorLine.appendChild(actorPrefix);
     actorLine.appendChild(addressNode(row.account || row.from));
     main.appendChild(actorLine);
