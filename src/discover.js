@@ -13091,7 +13091,7 @@ export function mergeSameTxActivityRows(rows, project) {
     var amountSource = null;
     group.forEach(function (r) { if (!amountSource && r.baseAmount) amountSource = r; });
     return Object.assign({}, group[0], {
-      action: action, tokenAmount: '', memo: memo,
+      action: action, actionParts: phrases, tokenAmount: '', memo: memo,
       baseAmount: (amountSource || group[0]).baseAmount,
     });
   });
@@ -13165,11 +13165,23 @@ export function renderActivityRow(row, project) {
   if (row.system) {
     // No actor (synthesized from chain state, e.g. ruleset queueing) — the action stands alone.
     line.appendChild(document.createTextNode(row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')));
+    main.appendChild(line);
+  } else if (row.actionParts && row.actionParts.length > 1) {
+    // A merged same-tx row: the actor stands alone and each action is a bullet.
+    line.appendChild(addressNode(row.account || row.from));
+    main.appendChild(line);
+    var bullets = el('ul', 'activity-bullets');
+    row.actionParts.forEach(function (phrase) {
+      var bullet = el('li', '');
+      bullet.textContent = phrase;
+      bullets.appendChild(bullet);
+    });
+    main.appendChild(bullets);
   } else {
     line.appendChild(addressNode(row.account || row.from));
     line.appendChild(document.createTextNode(' ' + row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')));
+    main.appendChild(line);
   }
-  main.appendChild(line);
 
   if (row.memo) {
     var memo = el('div', 'activity-memo');
