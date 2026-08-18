@@ -4074,6 +4074,14 @@ input[type="checkbox"].field {
   color: var(--muted-3);
 }
 
+/* "time | actor" on the meta line's left side. */
+.activity-meta-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .activity-meta a {
   color: var(--muted-3);
   text-decoration: none;

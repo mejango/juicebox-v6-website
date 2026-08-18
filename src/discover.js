@@ -13137,12 +13137,23 @@ export function renderActivityRow(row, project) {
 
   var main = el('div', 'activity-main');
   var meta = el('div', 'activity-meta');
+  // One shape for every actor row: "time | actor" on the meta line, then the
+  // memo headline and the actions as fine-print bullets.
+  var metaLeft = el('span', 'activity-meta-left');
   // Single chain: the time itself links to the tx. Multiple: time is plain text (bubbles carry the links).
   if (chains.length === 1) {
-    meta.appendChild(renderExplorerTxLink(chains[0].chainId, chains[0].txHash, timeAgo(row.timestamp)));
+    metaLeft.appendChild(renderExplorerTxLink(chains[0].chainId, chains[0].txHash, timeAgo(row.timestamp)));
   } else {
-    var t = el('span', 'activity-time'); t.textContent = timeAgo(row.timestamp); meta.appendChild(t);
+    var t = el('span', 'activity-time'); t.textContent = timeAgo(row.timestamp); metaLeft.appendChild(t);
   }
+  if (!row.system) {
+    var actorSep = el('span', '');
+    actorSep.textContent = '|';
+    actorSep.setAttribute('aria-hidden', 'true');
+    metaLeft.appendChild(actorSep);
+    metaLeft.appendChild(addressNode(row.account || row.from));
+  }
+  meta.appendChild(metaLeft);
   var side = el('span', 'activity-side');
   if (row.baseAmount) {
     var amt = el('span', 'activity-base-amount');
@@ -13163,18 +13174,14 @@ export function renderActivityRow(row, project) {
   meta.appendChild(side);
   main.appendChild(meta);
 
-  var line = el('div', 'activity-line');
   // Until the ERC-20 is deployed, the project's tokens are non-transferable credits — say so.
   var unit = (project.tokenSymbol || 'tokens') + (project.tokenAddress ? '' : ' credits');
   if (row.system) {
     // No actor (synthesized from chain state, e.g. ruleset queueing) — the action stands alone.
+    var line = el('div', 'activity-line');
     line.appendChild(document.createTextNode(row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')));
     main.appendChild(line);
   } else {
-    // One shape for every actor row: actor, memo headline, then the actions
-    // as fine-print bullets — a lone action is still a bullet.
-    line.appendChild(addressNode(row.account || row.from));
-    main.appendChild(line);
     if (row.memo) {
       var groupedMemo = el('div', 'activity-grouped-memo');
       groupedMemo.textContent = '“' + row.memo + '”';
