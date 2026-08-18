@@ -13142,15 +13142,15 @@ export function renderActivityRow(row, project) {
   // The flow cluster ("[in/out] amount") leads the row; the prefixed actor
   // sits on its own line below.
   var metaLeft = el('span', 'activity-meta-left');
-  if (row.direction === 'in' || row.direction === 'out') {
-    var tag = el('span', 'activity-tag activity-tag--' + row.direction);
-    tag.textContent = row.direction;
-    metaLeft.appendChild(tag);
-  }
   if (row.baseAmount) {
     var amountValue = el('span', 'activity-amount-value');
     amountValue.textContent = row.baseAmount;
     metaLeft.appendChild(amountValue);
+  }
+  if (row.direction === 'in' || row.direction === 'out') {
+    var tag = el('span', 'activity-tag activity-tag--' + row.direction);
+    tag.textContent = row.direction;
+    metaLeft.appendChild(tag);
   }
   meta.appendChild(metaLeft);
   // The right side reads "time on <chains>" — one chain bubble per chain this
