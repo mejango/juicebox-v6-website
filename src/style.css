@@ -4074,12 +4074,16 @@ input[type="checkbox"].field {
   color: var(--muted-3);
 }
 
-/* "time | actor" on the meta line's left side. */
+/* "time | actor" on the meta line's left side; the pipe stays quiet. */
 .activity-meta-left {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.activity-meta-sep {
+  color: var(--muted-4);
 }
 
 .activity-meta a {

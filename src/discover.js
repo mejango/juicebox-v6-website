@@ -13147,7 +13147,7 @@ export function renderActivityRow(row, project) {
     var t = el('span', 'activity-time'); t.textContent = timeAgo(row.timestamp); metaLeft.appendChild(t);
   }
   if (!row.system) {
-    var actorSep = el('span', '');
+    var actorSep = el('span', 'activity-meta-sep');
     actorSep.textContent = '|';
     actorSep.setAttribute('aria-hidden', 'true');
     metaLeft.appendChild(actorSep);
