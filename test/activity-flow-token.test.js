@@ -115,8 +115,8 @@ describe('activity rows across chains with differing contexts', () => {
     const project = { chainId: 8453, tokenSymbol: 'ART', _flowToken: flowTokenFromContexts([[USDC_BASE]]) };
     const row = activityRowFromEvent(buybackEventOn(8453), project);
     expect(row.baseAmount).toBe('1.86 USDC');
-    expect(row.tokenAmount).toBe('4k');
-    expect(row.action).toBe('bought ART via the buyback pool');
+    expect(row.tokenAmount).toBe('');
+    expect(row.action).toBe('bought 4k ART via the buyback pool');
   });
 
   it('does not guess the buyback terminal token when accounting contexts are ambiguous', () => {

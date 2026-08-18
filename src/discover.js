@@ -12931,7 +12931,7 @@ function renderActivityCard(project, opts) {
     // Type filter is per-row; group across chains FIRST so each merged row keeps its FULL chain set,
     // then keep groups that fired on at least one selected chain — the row still shows every chain it
     // ran on (including chains not in the filter), since the point is "this happened on my chain(s)".
-    var typed = allRows.filter(function (r) { return !typesSel || typesSel.indexOf(r.type) !== -1; });
+    var typed = mergeSameTxActivityRows(allRows.filter(function (r) { return !typesSel || typesSel.indexOf(r.type) !== -1; }), project);
     var rows = groupActivityRows(typed).filter(function (g) {
       return !chainsSel || g.chains.some(function (c) { return chainsSel.indexOf(c.chainId) !== -1; });
     });
@@ -13044,6 +13044,57 @@ function groupActivityRows(rows) {
   order.forEach(function (g) { g.chains.sort(function (a, b) { return chainOrderIndex(a.chainId) - chainOrderIndex(b.chainId); }); });
   order.sort(function (a, b) { return Number(b.timestamp) - Number(a.timestamp); });
   return order.map(function (g) { g.row.chains = g.chains; g.row.timestamp = g.timestamp; return g.row; });
+}
+
+// "40" or "12.5" when the mint count reads as the reserved-rate remint of the swap
+// output (0 < mint < swap); '' when the pair doesn't fit that shape.
+export function reservePercentLabel(swapRaw, mintRaw) {
+  var swap, mint;
+  try { swap = toBigInt(swapRaw); mint = toBigInt(mintRaw); } catch (_) { return ''; }
+  if (swap <= 0n || mint <= 0n || mint >= swap) return '';
+  var tenths = Number((swap - mint) * 1000n / swap);
+  return tenths % 10 === 0 ? String(tenths / 10) : (tenths / 10).toFixed(1);
+}
+
+// Reading order for a same-tx group: the first type present becomes the merged row's
+// primary (actor, amount, in/out tag, memo); the others fold into the sentence.
+var SAME_TX_ORDER = ['create', 'pay', 'add_to_balance', 'mint_nft', 'cash_out', 'swap', 'issuance', 'auto_issue', 'bridge_claim'];
+function sameTxRank(type) { var i = SAME_TX_ORDER.indexOf(type); return i === -1 ? SAME_TX_ORDER.length : i; }
+
+// The sentence fragment a row contributes, mirroring renderActivityRow's action + tokenAmount layout.
+function activityRowPhrase(row, unit) {
+  return row.action + (row.tokenAmount ? ' ' + row.tokenAmount + ' ' + unit : '');
+}
+
+// Collapse rows that belong to one transaction (on one chain) into a single line item:
+// "paid into ART, bought 28k ART via the buyback pool". System rows (synthesized from
+// chain state, no actor) keep their own line.
+export function mergeSameTxActivityRows(rows, project) {
+  var unit = (project.tokenSymbol || 'tokens') + (project.tokenAddress ? '' : ' credits');
+  var buckets = {}, order = [];
+  rows.forEach(function (r) {
+    if (!r.txHash || r.system) { order.push([r]); return; }
+    var key = r.chainId + ':' + r.txHash;
+    if (buckets[key]) { buckets[key].push(r); return; }
+    buckets[key] = [r];
+    order.push(buckets[key]);
+  });
+  return order.map(function (group) {
+    if (group.length === 1) return group[0];
+    group.sort(function (a, b) { return sameTxRank(a.type) - sameTxRank(b.type); });
+    var phrases = group.map(function (r) { return activityRowPhrase(r, unit); });
+    var action = phrases.length === 2
+      ? phrases[0] + ' and ' + phrases[1]
+      : phrases.slice(0, -1).join(', ') + ', and ' + phrases[phrases.length - 1];
+    var memo = '';
+    group.forEach(function (r) { if (!memo && r.memo) memo = r.memo; });
+    var amountSource = null;
+    group.forEach(function (r) { if (!amountSource && r.baseAmount) amountSource = r; });
+    return Object.assign({}, group[0], {
+      action: action, tokenAmount: '', memo: memo,
+      baseAmount: (amountSource || group[0]).baseAmount,
+    });
+  });
 }
 
 // A chain logo that links to this event's tx on that chain's explorer (plain logo if no explorer/tx).
@@ -13348,11 +13399,16 @@ export function activityRowFromEvent(event, project) {
   }
   if (event.swapEvent) {
     var sw = event.swapEvent;
+    // A same-tx mint is the reserved-rate remint of this swap's output — the payer's
+    // actual receipt. Fold it into the sentence instead of leaving a bare gross amount.
+    var remint = project._remintByTx ? project._remintByTx[chainId + ':' + (sw.txHash || event.txHash)] : null;
+    var reservePct = remint ? reservePercentLabel(sw.projectTokenAmount, remint) : '';
     return { type: 'swap', direction: 'in', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
       account: sw.from || sw.caller || event.from, from: sw.from || event.from,
       baseAmount: activityFlowAmount(project, sw.terminalTokenAmount, null),
-      tokenAmount: sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) : '',
-      action: 'bought ' + sym + ' via the buyback pool', memo: '' };
+      tokenAmount: '',
+      action: 'bought ' + (sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) + ' ' : '') + sym + ' via the buyback pool'
+        + (reservePct ? ', receiving ' + formatCompactTokenAmount(toBigInt(remint)) + ' ' + sym + ' after the ' + reservePct + '% reserve' : ''), memo: '' };
   }
   if (event.buybackPoolEvent) {
     var bp = event.buybackPoolEvent;
@@ -21198,6 +21254,18 @@ async function fetchProjectActivity(project) {
     });
   });
   merged.sort(function (a, b) { return Number(b.timestamp || 0) - Number(a.timestamp || 0); });
+
+  // Non-bridge mint rows are dropped from the feed, but a mint alongside a buyback swap
+  // is the reserved-rate remint — the payer's actual receipt. Map each tx's mint count so
+  // the swap row can say so; an ambiguous tx (multiple mints) maps to null and says nothing.
+  var remintByTx = {};
+  merged.forEach(function (ev) {
+    if (!ev.mintTokensEvent) return;
+    var key = ev.chainId + ':' + (ev.mintTokensEvent.txHash || ev.txHash);
+    remintByTx[key] = (key in remintByTx) ? null : ev.mintTokensEvent.beneficiaryTokenCount;
+  });
+  project._remintByTx = remintByTx;
+
   var bendyRows = merged.map(function (event) {
     return activityRowFromEvent(event, project);
   }).filter(isProjectFeedActivityRow);
