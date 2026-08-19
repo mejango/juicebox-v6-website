@@ -13169,7 +13169,7 @@ export function renderActivityRow(row, project) {
   var on = el('span', 'activity-amount-on');
   on.textContent = 'on';
   side.appendChild(on);
-  var chainsWrap = el('span', 'activity-chains');
+  var chainsWrap = el('span', 'activity-chains' + (chains.length > 1 ? ' activity-chains--stacked' : ''));
   chains.forEach(function (c) { chainsWrap.appendChild(chainTxBubble(c.chainId, c.txHash)); });
   side.appendChild(chainsWrap);
   meta.appendChild(side);
