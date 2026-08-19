@@ -13142,6 +13142,9 @@ export function renderActivityRow(row, project) {
   // The flow cluster ("[in/out] amount") leads the row; the prefixed actor
   // sits on its own line below.
   var metaLeft = el('span', 'activity-meta-left');
+  // No amount and no flow tag = nothing for the title slot; the actor takes
+  // its place (bare, no "to/from/by") instead of leaving a blank line.
+  var hasTitle = !!row.baseAmount || row.direction === 'in' || row.direction === 'out';
   if (row.baseAmount) {
     var amountValue = el('span', 'activity-amount-value');
     amountValue.textContent = row.baseAmount;
@@ -13152,6 +13155,7 @@ export function renderActivityRow(row, project) {
     tag.textContent = row.direction;
     metaLeft.appendChild(tag);
   }
+  if (!hasTitle && !row.system) metaLeft.appendChild(addressNode(row.account || row.from));
   meta.appendChild(metaLeft);
   // The right side reads "time on <chains>" — one chain bubble per chain this
   // event fired on, each still linking to its own tx. Single chain: the time
@@ -13171,8 +13175,9 @@ export function renderActivityRow(row, project) {
   meta.appendChild(side);
   main.appendChild(meta);
 
-  // "From" for outflows, "To" for inflows, "By" for everything else.
-  if (!row.system) {
+  // "From" for outflows, "To" for inflows, "By" for everything else. A
+  // title-less row already carries its actor in the title slot above.
+  if (!row.system && hasTitle) {
     var actorLine = el('div', 'activity-actor');
     var actorPrefix = el('span', '');
     actorPrefix.textContent = (row.direction === 'out' ? 'to ' : row.direction === 'in' ? 'from ' : 'by ');
