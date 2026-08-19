@@ -4207,15 +4207,14 @@ input[type="checkbox"].field {
 .relayr-choice { margin: 8px 0; }
 
 .activity-chains { display: inline-flex; align-items: center; gap: 2px; }
-/* Several chains read as one action: smaller icons overlapped like an avatar
-   stack, each still its own tx link. */
+/* Several chains read as one action: full-size icons overlapped like an
+   avatar stack — leftmost on top — each still its own tx link. */
 .activity-chains--stacked { gap: 0; }
-.activity-chains--stacked img { width: 14px; height: 14px; }
 .activity-chains--stacked .activity-chain-link + .activity-chain-link,
 .activity-chains--stacked > img + img,
 .activity-chains--stacked > img + .activity-chain-link,
-.activity-chains--stacked .activity-chain-link + img { margin-left: -4px; }
-.activity-chains--stacked .activity-chain-link:hover { position: relative; z-index: 1; }
+.activity-chains--stacked .activity-chain-link + img { margin-left: -6px; }
+.activity-chains--stacked .activity-chain-link:hover { z-index: 10 !important; }
 .token-on-chains { display: inline-flex; align-items: center; gap: 6px; }
 .token-on-chains .chain-logo { width: 18px; height: 18px; display: inline-flex; }
 .token-on-chains .chain-logo svg { width: 18px; height: 18px; display: block; }

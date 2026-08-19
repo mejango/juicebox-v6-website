@@ -13170,7 +13170,12 @@ export function renderActivityRow(row, project) {
   on.textContent = 'on';
   side.appendChild(on);
   var chainsWrap = el('span', 'activity-chains' + (chains.length > 1 ? ' activity-chains--stacked' : ''));
-  chains.forEach(function (c) { chainsWrap.appendChild(chainTxBubble(c.chainId, c.txHash)); });
+  chains.forEach(function (c, i) {
+    var bubble = chainTxBubble(c.chainId, c.txHash);
+    // Leftmost chain sits on top of the stack.
+    if (chains.length > 1) { bubble.style.position = 'relative'; bubble.style.zIndex = String(chains.length - i); }
+    chainsWrap.appendChild(bubble);
+  });
   side.appendChild(chainsWrap);
   meta.appendChild(side);
   main.appendChild(meta);
