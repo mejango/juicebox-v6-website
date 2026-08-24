@@ -29963,8 +29963,55 @@ function buildAddLiquidityModal(project) {
     graphTip.textContent = '≈ ' + formatPrice(value) + ' ' + pairSym() + ' / ' + sym;
     graphTip.style.display = '';
     graphTip.style.left = Math.max(2, Math.min(rect.width - 110, e.clientX - rect.left + 8)) + 'px';
+    // Signal that the range ends are draggable when the cursor is over one.
+    var rr = currentRange();
+    var near = state.mode === 'range' && rr.pa > 0 && rr.pb > rr.pa
+      && Math.min(Math.abs(value - rr.pa), Math.abs(value - rr.pb)) <= graphScale.maxV * 14 / graphScale.W;
+    graphWrap.style.cursor = near || dragEdge ? 'ew-resize' : '';
   });
   graphWrap.addEventListener('mouseleave', function () { graphTip.style.display = 'none'; });
+
+  // Drag either end of the range bar. Reuses the hover tip's x -> price mapping; the scale is
+  // frozen for the duration so an edge pulled outward doesn't slide away from the pointer.
+  var dragEdge = null, dragScale = null;
+  function graphValueAt(clientX, scale) {
+    var rect = graphHolder.getBoundingClientRect();
+    if (rect.width <= 0 || !scale || !scale.maxV) return null;
+    var span = scale.W - scale.padL - scale.padR;
+    if (!(span > 0)) return null;
+    return ((clientX - rect.left) / rect.width * scale.W - scale.padL) / span * scale.maxV;
+  }
+  graphWrap.addEventListener('pointerdown', function (e) {
+    if (state.mode !== 'range' || !graphScale || !graphScale.maxV) return;
+    var r = currentRange();
+    if (!(r.pa > 0) || !(r.pb > r.pa)) return;
+    var at = graphValueAt(e.clientX, graphScale);
+    if (at == null) return;
+    // Grab whichever end is nearer, but only from within ~14px of it.
+    var grab = graphScale.maxV * 14 / graphScale.W;
+    var edge = Math.abs(at - r.pa) <= Math.abs(at - r.pb) ? 'pa' : 'pb';
+    if (Math.abs(at - r[edge]) > grab) return;
+    e.preventDefault();
+    dragEdge = edge; dragScale = graphScale;
+    if (graphWrap.setPointerCapture) graphWrap.setPointerCapture(e.pointerId);
+  });
+  graphWrap.addEventListener('pointermove', function (e) {
+    if (!dragEdge) return;
+    var raw = graphValueAt(e.clientX, dragScale);
+    if (raw == null) return;
+    var r = currentRange();
+    // Keep the ends ordered with a sliver of daylight between them.
+    var gap = dragScale.maxV / 400;
+    var next = dragEdge === 'pa' ? Math.min(raw, r.pb - gap) : Math.max(raw, r.pa + gap);
+    if (!(next > 0)) return;
+    (dragEdge === 'pa' ? minInput : maxInput).value = lpTrimNum(next);
+    onRangeChange();
+    // onRangeChange redraws with a fresh scale; keep dragging against the frozen one.
+    graphScale = dragScale;
+  });
+  function endGraphDrag() { dragEdge = null; dragScale = null; drawGraph(); }
+  graphWrap.addEventListener('pointerup', endGraphDrag);
+  graphWrap.addEventListener('pointercancel', endGraphDrag);
 
   // Sizing mode: "By amounts" (default — type both deposits, the range is solved around them) or
   // "By price range" (pick the range, the counterpart amount follows).
