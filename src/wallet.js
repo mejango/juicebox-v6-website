@@ -152,6 +152,40 @@ export function onWalletChange(fn) {
 // keystroke). multicall batching folds concurrent reads into one RPC round-trip. Keyed by the custom
 // RPC value too, so changing the RPC mid-session transparently yields a new client.
 var _readClients = {};
+// A read pinned to a block — `blockNumber: approvalReceipt.blockNumber`, how every approval step here
+// proves its allowance landed — is answered with JSON-RPC -32001 by any node that has not imported that
+// block yet. Public RPCs are load balanced, so the call right after a receipt can hit a sibling one block
+// behind and fail a payment mid-flight, after the payer already paid gas for the approval. Waiting out the
+// lag is the only correct answer: reading `latest` instead would answer from state older than the approval
+// the pin exists to observe. Mainnets mine every 2-12s, so this schedule covers a few blocks of drift.
+const BLOCK_LAG_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 2000];
+
+function isBehindHead(error) {
+  return !!error && typeof error === 'object' && (error.code === -32001 || (error.cause && error.cause.code === -32001));
+}
+
+// Retries only reads that a lagging node cannot answer yet. Writes go through the wallet client, never
+// this transport, so a retry here can repeat work but never an effect. Exported for regression testing.
+export function withBlockLagRetry(transport, delaysMs) {
+  var delays = delaysMs || BLOCK_LAG_RETRY_DELAYS_MS;
+  return function (options) {
+    var instance = transport(options);
+    var inner = instance.request;
+    return Object.assign({}, instance, {
+      request: async function (args) {
+        for (var attempt = 0; ; attempt += 1) {
+          try {
+            return await inner(args);
+          } catch (error) {
+            if (attempt >= delays.length || !isBehindHead(error)) throw error;
+            await new Promise(function (resolve) { setTimeout(resolve, delays[attempt]); });
+          }
+        }
+      },
+    });
+  };
+}
+
 export function createPublicClientForChain(chainId) {
   var chain = CHAINS[chainId];
   if (!chain) return null;
@@ -160,7 +194,7 @@ export function createPublicClientForChain(chainId) {
   if (_readClients[key]) return _readClients[key];
   return (_readClients[key] = createPublicClient({
     chain: chain,
-    transport: http(customRpc || defaultRpcFor(chainId)),
+    transport: withBlockLagRetry(http(customRpc || defaultRpcFor(chainId))),
     batch: { multicall: { wait: 32 } },
   }));
 }

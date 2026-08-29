@@ -15,7 +15,7 @@ vi.mock('viem', () => ({
   createWalletClient: runtime.createWalletClient,
   createPublicClient: runtime.createPublicClient,
   custom: provider => ({ kind: 'custom', provider }),
-  http: url => ({ kind: 'http', url }),
+  http: url => () => ({ config: { kind: 'http', url }, request: async () => {}, value: undefined }),
 }));
 
 vi.mock('../src/chain.js', () => ({
@@ -165,10 +165,11 @@ describe('wallet provider runtime states', () => {
     expect(wallet.createPublicClientForChain(1)).toBe(firstRead);
     runtime.customRpc = 'https://custom.invalid';
     expect(wallet.createPublicClientForChain(1)).not.toBe(firstRead);
-    expect(runtime.createPublicClient).toHaveBeenLastCalledWith(expect.objectContaining({
-      transport: { kind: 'http', url: 'https://custom.invalid' },
-      batch: { multicall: { wait: 32 } },
-    }));
+    const created = runtime.createPublicClient.mock.lastCall[0];
+    expect(created.batch).toEqual({ multicall: { wait: 32 } });
+    // The transport is the block-lag retry wrapping the http transport for the custom RPC: a read pinned
+    // to a block the answering node has not imported yet is retried, not surfaced as a failed payment.
+    expect(created.transport({}).config).toEqual({ kind: 'http', url: 'https://custom.invalid' });
 
     handlers.accountsChanged([]);
     expect(wallet.getAccount()).toBeNull();
