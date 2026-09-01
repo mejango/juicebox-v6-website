@@ -30,7 +30,7 @@ describe('Learn, Build, and Why guides', () => {
     assertTableOfContents(learn);
     assertTableOfContents(build);
     expect(learn.querySelectorAll('.guide-section').length).toBe(21);
-    expect(build.querySelectorAll('.guide-section').length).toBe(20);
+    expect(build.querySelectorAll('.guide-section').length).toBe(21);
     expect(why.querySelectorAll('.why-want').length).toBe(12);
     expect(why.textContent).toMatch(/freedom to earn their money, on their terms/i);
 

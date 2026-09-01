@@ -24880,18 +24880,8 @@ function renderYouCard(project, opts) {
         readUserLpPositions(project, cid, acct).then(function (ps) {
           span.innerHTML = '';
           if (!ps || !ps.length) { span.textContent = '—'; return; }
+          // The cell is a count only; claimable fees live in the positions table and modal.
           span.textContent = ps.length + (ps.length > 1 ? ' positions' : ' position');
-          // Claimable fees are the reason to open the modal, so surface them in the cell.
-          Promise.all(ps.map(function (p) { return readLpPositionFees(cid, p).catch(function () { return null; }); })).then(function (fees) {
-            if (!span.isConnected) return;
-            var pair = 0n, tok = 0n, pairInfo = ps[0] && ps[0].pair;
-            fees.forEach(function (f) { if (f) { pair += f.pairFees; tok += f.tokFees; } });
-            if (pair <= 0n && tok <= 0n) return;
-            var parts = [];
-            if (tok > 0n) parts.push(formatTokens(tok) + ' ' + sym);
-            if (pair > 0n && pairInfo) parts.push(formatBalance(pair, pairInfo.decimals, pairInfo.symbol));
-            var feeTag = el('span', 'lp-pos-count'); feeTag.textContent = parts.join(' + ') + ' fees'; span.appendChild(feeTag);
-          });
           span.style.cursor = 'pointer'; span.style.textDecoration = 'underline'; span.style.textDecorationStyle = 'dotted';
           span.title = 'Manage / remove your LP positions';
           span.onclick = function () { openRemoveLiquidityModal(project, cid, function () { fillLpCell(span, cid); }); };
@@ -29673,7 +29663,193 @@ async function refreshLpPositionForRemoval(chainId, pos, expectedAccount) {
     tickUpper: tickUpper,
     pairAmt: pos.pairIsC0 ? amounts.amount0 : amounts.amount1,
     tokAmt: pos.pairIsC0 ? amounts.amount1 : amounts.amount0,
+    // The live pool price the amounts were derived at — the move builder sizes
+    // its mint against the same reading.
+    sqrtP: sqrtP,
     smartWallet: reads[2],
+  });
+}
+
+// A position's band on the pair-per-token display axis, min < max regardless of which currency the pool
+// sorts first (pairIsC0 flips which tick is the higher display price).
+export function lpBandPricesOf(pos) {
+  var pairDec = pos.pair.decimals;
+  var display = function (tick) {
+    var raw = Math.pow(1.0001, tick);
+    return pos.pairIsC0 ? Math.pow(10, 18 - pairDec) / raw : raw * Math.pow(10, 18 - pairDec);
+  };
+  var a = display(pos.tickLower), b = display(pos.tickUpper);
+  return { min: Math.min(a, b), max: Math.max(a, b) };
+}
+
+// Encode a one-transaction band move: BURN_POSITION(old) + MINT_POSITION(new ticks) + CLOSE_CURRENCY(c0) +
+// CLOSE_CURRENCY(c1) (0x03021212). Deltas net inside the unlock, so the burn's credit funds the mint — no
+// Permit2, no msg.value — and the closes return unclaimed fees plus whatever the new band doesn't consume.
+// The mint is sized from 99% of the position's FRESH holdings so ~1% of price drift between review and
+// execution still fits; a larger move leaves a close short against the empty credit and the whole
+// transaction reverts with the old position untouched. Burn floors stay the standard 95%. `pos` must come
+// from refreshLpPositionForRemoval (it carries the live sqrtP the amounts were derived at).
+export function prepareMoveLiquidity(chainId, pos, acct, pa, pb) {
+  var posm = POSITION_MANAGER_BY_CHAIN[chainId];
+  if (!posm) throw new Error('No position manager on this chain');
+  if (!(pa > 0) || !(pb > pa)) throw new Error('Set a valid positive price range (min below max).');
+  var key = pos.key, pairDec = pos.pair.decimals, pairIsC0 = pos.pairIsC0, sqrtP = pos.sqrtP;
+  if (!sqrtP || sqrtP <= 0n) throw new Error('Could not verify the current pool price');
+  var shave = function (v) { return v - v / 100n; };
+  var amount0 = pairIsC0 ? shave(pos.pairAmt) : shave(pos.tokAmt);
+  var amount1 = pairIsC0 ? shave(pos.tokAmt) : shave(pos.pairAmt);
+  var s = Number(key.tickSpacing);
+  var maxUsable = Math.trunc(887272 / s) * s, minUsable = Math.trunc(-887272 / s) * s;
+  var pRawFromQ = function (q) { return pairIsC0 ? (Math.pow(10, 18 - pairDec) / q) : (q * Math.pow(10, pairDec - 18)); };
+  var tA = Math.log(pRawFromQ(pa)) / Math.log(1.0001);
+  var tB = Math.log(pRawFromQ(pb)) / Math.log(1.0001);
+  var tickLower = Math.max(minUsable, lpAlignDown(Math.floor(Math.min(tA, tB)), s));
+  var tickUpper = Math.min(maxUsable, lpAlignUp(Math.ceil(Math.max(tA, tB)), s));
+  if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
+  // A currently single-sided position keeps the add path's nudge: the current price stays OUTSIDE the new
+  // range so the funded side is the only one the mint needs (same rule as prepareAddLiquidity).
+  var curTick = Math.floor(2 * Math.log(Number(sqrtP) / Math.pow(2, 96)) / Math.log(1.0001));
+  if (amount1 <= 0n && amount0 > 0n && curTick >= tickLower) tickLower = Math.min(maxUsable, lpAlignUp(curTick + 1, s));
+  if (amount0 <= 0n && amount1 > 0n && curTick < tickUpper) tickUpper = Math.max(minUsable, lpAlignDown(curTick, s));
+  if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
+  var liquidity = lpGetLiquidityForAmounts(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), amount0, amount1);
+  if (liquidity <= 0n) throw new Error('The position is too small for this range');
+  var need = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), liquidity);
+  var amount0Max = need.amount0 + need.amount0 / 100n + 1n;
+  var amount1Max = need.amount1 + need.amount1 / 100n + 1n;
+  var pairMin = quotedOutputFloor(pos.pairAmt, 9500);
+  var tokenMin = quotedOutputFloor(pos.tokAmt, 9500);
+  var burnParams = encodeAbiParameters(
+    [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }],
+    [BigInt(pos.tokenId), pairIsC0 ? pairMin : tokenMin, pairIsC0 ? tokenMin : pairMin, '0x']
+  );
+  var mintParams = encodeAbiParameters(
+    [
+      { type: 'tuple', components: [{ type: 'address' }, { type: 'address' }, { type: 'uint24' }, { type: 'int24' }, { type: 'address' }] },
+      { type: 'int24' }, { type: 'int24' }, { type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'address' }, { type: 'bytes' },
+    ],
+    [
+      [key.currency0, key.currency1, BigInt(key.fee), BigInt(key.tickSpacing), key.hooks],
+      BigInt(tickLower), BigInt(tickUpper), liquidity, amount0Max, amount1Max, acct, '0x',
+    ]
+  );
+  var closeC0 = encodeAbiParameters([{ type: 'address' }], [key.currency0]);
+  var closeC1 = encodeAbiParameters([{ type: 'address' }], [key.currency1]);
+  var unlockData = encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    ['0x03021212', [burnParams, mintParams, closeC0, closeC1]] // BURN, MINT, CLOSE(c0), CLOSE(c1)
+  );
+  var deadline = BigInt(Math.floor(Date.now() / 1000) + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
+  return {
+    posm: posm, unlockData: unlockData, deadline: deadline, value: 0n,
+    pairMin: pairMin, tokenMin: tokenMin,
+    tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity,
+    pairMax: pairIsC0 ? amount0Max : amount1Max,
+    tokenMax: pairIsC0 ? amount1Max : amount0Max,
+    smartWallet: !!pos.smartWallet,
+  };
+}
+
+// The band editor for a one-transaction move. Opens immediately, refreshes the position for the prefill,
+// and re-refreshes on review so stale amounts never become the reviewed floors or mint sizing (the same
+// discipline as the remove flow).
+function openLpMoveEditor(project, chainId, stalePos, acct, onDone) {
+  var sym = project.tokenSymbol || 'tokens';
+  var pos = null; // set once the refresh lands
+  var wrap = el('div', 'modal-body');
+  var intro = el('div', 'modal-balance');
+  intro.textContent = 'Refreshing position…';
+  wrap.appendChild(intro);
+  var lblR = el('div', 'modal-label');
+  lblR.textContent = 'New price range (' + stalePos.pair.symbol + ' per ' + sym + ')';
+  lblR.style.marginTop = '10px';
+  wrap.appendChild(lblR);
+  var rangeRow = el('div', 'ops-chainrow');
+  var minField = el('div', 'ops-field ops-field--grow');
+  var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.step = 'any'; minInput.min = '0'; minInput.placeholder = 'Min'; minInput.disabled = true; minField.appendChild(minInput);
+  rangeRow.appendChild(minField);
+  var toSpan = el('span', 'ops-between'); toSpan.textContent = 'to'; rangeRow.appendChild(toSpan);
+  var maxField = el('div', 'ops-field ops-field--grow');
+  var maxInput = el('input', 'ops-amount'); maxInput.type = 'number'; maxInput.step = 'any'; maxInput.min = '0'; maxInput.placeholder = 'Max'; maxInput.disabled = true; maxField.appendChild(maxInput);
+  rangeRow.appendChild(maxField);
+  wrap.appendChild(rangeRow);
+  var note = el('div', 'modal-balance');
+  note.textContent = 'One transaction: the burn funds the new band — no approvals, no extra capital. Unclaimed fees and anything the new band doesn’t use return to your wallet; at least 95% of the current holdings is enforced on the burn, and if any leg falls short the whole move reverts.';
+  wrap.appendChild(note);
+  var status = el('div', 'modal-status error'); status.style.display = 'none'; wrap.appendChild(status);
+  var go = el('button', 'detail-check-btn'); go.textContent = 'Review & move'; go.disabled = true; go.style.marginTop = '10px'; wrap.appendChild(go);
+  var handle = openModal('Move position #' + stalePos.tokenId.toString(), wrap);
+
+  function showError(e, fallback) {
+    var msg = errMessage(e, fallback);
+    status.textContent = msg.length > 160 ? msg.slice(0, 160) + '…' : msg;
+    status.style.display = '';
+  }
+
+  refreshLpPositionForRemoval(chainId, stalePos, acct).then(function (fresh) {
+    pos = fresh;
+    intro.textContent = 'Burn position #' + pos.tokenId.toString() + ' and re-mint what it holds — '
+      + formatTokens(pos.tokAmt) + ' ' + sym + ' + ' + formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol)
+      + ' — into a new price band.';
+    var band = lpBandPricesOf(pos);
+    minInput.value = String(Number(band.min.toPrecision(6)));
+    maxInput.value = String(Number(band.max.toPrecision(6)));
+    minInput.disabled = false; maxInput.disabled = false; go.disabled = false;
+  }).catch(function (e) {
+    intro.textContent = 'Could not refresh this position.';
+    showError(e, 'Could not refresh this position');
+  });
+
+  go.addEventListener('click', function () {
+    if (go.disabled || !pos) return;
+    status.style.display = 'none';
+    go.disabled = true; go.textContent = 'Refreshing…';
+    // Re-read immediately before building: the editor can sit open while the market moves.
+    refreshLpPositionForRemoval(chainId, pos, acct).then(function (fresh) {
+      pos = fresh;
+      go.disabled = false; go.textContent = 'Review & move';
+      var prep;
+      try {
+        prep = prepareMoveLiquidity(chainId, pos, acct, Number(minInput.value), Number(maxInput.value));
+      } catch (e) { showError(e, 'Could not prepare the move'); return; }
+      // Show the post-tick-snap band, not the typed one — that is what mints.
+      var snapped = lpBandPricesOf({ pair: pos.pair, pairIsC0: pos.pairIsC0, tickLower: prep.tickLower, tickUpper: prep.tickUpper });
+      var mintMaxH = formatTokens(prep.tokenMax) + ' ' + sym + ' + ' + formatBalance(prep.pairMax, pos.pair.decimals, pos.pair.symbol);
+      var minH = formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol);
+      openTxConfirm({
+        summary: {
+          action: 'Move your liquidity to a new band in the ' + sym + '/' + pos.pair.symbol + ' pool',
+          rows: [
+            ['Position', '#' + pos.tokenId.toString() + ' → a new position in the same pool'],
+            ['New band', formatPrice(snapped.min) + ' to ' + formatPrice(snapped.max) + ' ' + pos.pair.symbol + '/' + sym],
+            ['Mints up to', mintMaxH + ' — funded by the burn, not your wallet'],
+            ['Burn minimum', minH + ' — reverts below this'],
+            ['Leftovers', 'unclaimed fees + whatever the new band doesn’t use, to ' + acct],
+            ['Deadline', prep.smartWallet ? '30 days — survives a multisig signing queue' : '~20 minutes'],
+          ],
+        },
+        chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
+        'function': 'modifyLiquidities', value: '0',
+        calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
+        position: { actions: 'BURN_POSITION, MINT_POSITION, CLOSE, CLOSE (0x03021212)', tokenId: pos.tokenId.toString(), minimumReturns: minH, recipient: acct },
+        args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days — survives a multisig signing queue' : '20 min') + ')' },
+      }, function (ctx) {
+        ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Moving liquidity…', 'pending');
+        lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet }).then(function (hash) {
+          ctx.modal.close();
+          handle.close();
+          noteLocalLpWrite(chainId, pos.poolId);
+          if (onDone) onDone(hash);
+        }).catch(function (e) {
+          ctx.confirm.disabled = false; ctx.cancel.disabled = false;
+          if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
+          var msg = errMessage(e, 'Move failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
+        });
+      }, { title: 'Confirm move liquidity', confirmText: 'Confirm & move', closeOnConfirm: false });
+    }).catch(function (e) {
+      go.disabled = false; go.textContent = 'Review & move';
+      showError(e, 'Could not refresh this position');
+    });
   });
 }
 
@@ -29723,6 +29899,9 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
       var lifeC = el('span', 'owners-balance'); lifeC.textContent = pos.claimedPair == null ? '—' : 'reading…'; tr.appendChild(lifeC);
       var actC = el('span', 'lp-mine-actions');
       var claim = el('button', 'detail-check-btn'); claim.textContent = 'Claim fees'; claim.disabled = true; actC.appendChild(claim);
+      var mv = el('button', 'detail-check-btn'); mv.textContent = 'Move';
+      mv.addEventListener('click', function () { openLpMoveEditor(project, cid, pos, acct, onDone); });
+      actC.appendChild(mv);
       var manage = el('button', 'detail-check-btn'); manage.textContent = 'Remove';
       manage.addEventListener('click', function () { openRemoveLiquidityModal(project, cid, onDone); });
       actC.appendChild(manage);
@@ -29847,6 +30026,15 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
         });
       });
       row.appendChild(claim);
+      var mv = el('button', 'detail-check-btn'); mv.textContent = 'Move';
+      mv.addEventListener('click', function () {
+        openLpMoveEditor(project, chainId, pos, acct, function (hash) {
+          var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Moved | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
+          row.innerHTML = ''; row.appendChild(ok);
+          if (onDone) onDone();
+        });
+      });
+      row.appendChild(mv);
       var rm = el('button', 'detail-check-btn'); rm.textContent = 'Remove';
       rm.addEventListener('click', function () {
         if (rm.disabled) return;
