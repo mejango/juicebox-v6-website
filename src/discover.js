@@ -24643,7 +24643,7 @@ function opsActionsRow(project, opts) {
     opts.noLoans ? null : ['Get a loan', function () { var h = {}; var content = buildLoanModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Get a loan', content).close; }],
     // Moving funds only makes sense when the project lives on more than one chain.
     multiChain ? ['Move between chains', function () { openModal('Move between chains', buildMoveModal(project)); }] : null,
-    capabilities.canAddMarketLiquidity ? ['Add market liquidity', function () { openModal('Add market liquidity', buildAddLiquidityModal(project)); }] : null,
+    capabilities.canAddMarketLiquidity ? ['Add liquidity', function () { openModal('Add liquidity', buildAddLiquidityModal(project)); }] : null,
   ].filter(Boolean).forEach(function (a) {
     var b = document.createElement('button');
     b.className = 'ops-action-btn';

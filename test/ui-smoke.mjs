@@ -212,8 +212,8 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
       depthMarkers.intro.includes('TEST') && !/\bREV\b/.test(depthMarkers.intro), depthMarkers.intro);
 
     await page.goto(BASE + '?r=505#basesep:8/owners/accounts', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Add market liquidity'), null, { timeout: 20000 });
-    await Q(page, '() => { [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Add market liquidity").click(); return 1; }');
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Add liquidity'), null, { timeout: 20000 });
+    await Q(page, '() => { [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Add liquidity").click(); return 1; }');
     await page.waitForSelector('.modal-dialog .lp-graph-svg', { timeout: 30000 });
     const liquidityRange = await Q(page, `() => {
       const modal = document.querySelector('.modal-dialog');
