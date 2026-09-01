@@ -29788,9 +29788,9 @@ function openLpMoveEditor(project, chainId, stalePos, acct, onDone) {
 
   refreshLpPositionForRemoval(chainId, stalePos, acct).then(function (fresh) {
     pos = fresh;
-    intro.textContent = 'Burn position #' + pos.tokenId.toString() + ' and re-mint what it holds — '
+    intro.textContent = 'Position #' + pos.tokenId.toString() + ' is burned and everything it holds — '
       + formatTokens(pos.tokAmt) + ' ' + sym + ' + ' + formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol)
-      + ' — into a new price band.';
+      + ' — is re-minted into the new price band, all in one transaction.';
     var band = lpBandPricesOf(pos);
     minInput.value = String(Number(band.min.toPrecision(6)));
     maxInput.value = String(Number(band.max.toPrecision(6)));
@@ -29822,8 +29822,8 @@ function openLpMoveEditor(project, chainId, stalePos, acct, onDone) {
           rows: [
             ['Position', '#' + pos.tokenId.toString() + ' → a new position in the same pool'],
             ['New band', formatPrice(snapped.min) + ' to ' + formatPrice(snapped.max) + ' ' + pos.pair.symbol + '/' + sym],
-            ['Mints up to', mintMaxH + ' — funded by the burn, not your wallet'],
-            ['Burn minimum', minH + ' — reverts below this'],
+            ['Into the new band', '≈ ' + mintMaxH + ' — funded by the burn, not your wallet'],
+            ['You get back at least', minH + ' — reverts below this'],
             ['Leftovers', 'unclaimed fees + whatever the new band doesn’t use, to ' + acct],
             ['Deadline', prep.smartWallet ? '30 days — survives a multisig signing queue' : '~20 minutes'],
           ],
