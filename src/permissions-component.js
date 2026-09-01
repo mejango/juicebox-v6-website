@@ -42,7 +42,7 @@ export function buildSetPermissionsArgs(o) {
 }
 
 // Complete permission IDs from nana-permission-ids-v6
-var PERMISSION_IDS = [
+export var PERMISSION_IDS = [
   { id: 1, name: 'ROOT', desc: 'Grants all permissions' },
   { id: 2, name: 'QUEUE_RULESETS', desc: 'Queue new rulesets' },
   { id: 3, name: 'LAUNCH_RULESETS', desc: 'Launch first rulesets' },

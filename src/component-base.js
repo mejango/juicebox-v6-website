@@ -8,6 +8,7 @@ import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
 import { decodeFunctionData, encodeFunctionData, isAddress } from 'viem';
 import { getAddress, meta, getABI } from './abi-registry.js';
+import { prettyArgSteps } from './tx-pretty-args.js';
 import { contractGasWithHeadroom } from './gas.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
@@ -930,7 +931,34 @@ function decodeCallRich(tx) {
 
 // One decoded arg as a DOM row. Recurses into tuples / tuple[] so each field sits on its own indented line
 // (the "pretty" tree view) instead of a single inline JSON blob.
+// A decoded steps block ({title, rows:[[label, value],…]}[]) nested under an
+// argument label, in the standard decoded-arg styling.
+function renderPrettyArgSteps(input, steps, depth) {
+  var wrap = el('div', 'tx-decoded-arg'); wrap.style.marginLeft = (depth * 14) + 'px';
+  var head = el('span', 'tx-decoded-argname');
+  head.textContent = (input.name || '') + (input.type ? ' (' + input.type + ')' : '') + ' — decoded:';
+  wrap.appendChild(head);
+  steps.forEach(function (step) {
+    var titleRow = el('div', 'tx-decoded-arg'); titleRow.style.marginLeft = ((depth + 1) * 14) + 'px';
+    var titleKey = el('span', 'tx-decoded-argname'); titleKey.textContent = step.title;
+    titleRow.appendChild(titleKey); wrap.appendChild(titleRow);
+    step.rows.forEach(function (row) {
+      var line = el('div', 'tx-decoded-arg'); line.style.marginLeft = ((depth + 2) * 14) + 'px';
+      var key = el('span', 'tx-decoded-argname'); key.textContent = row[0] + ': ';
+      var val = el('span', 'tx-decoded-argval'); val.textContent = row[1];
+      line.appendChild(key); line.appendChild(val); wrap.appendChild(line);
+    });
+  });
+  return wrap;
+}
+
 function renderArgNode(input, value, depth, ctx) {
+  // Precisely decoded views for arguments whose default rendering is opaque
+  // (hook metadata bytes, Safe inner calls, claim proofs) or misleading raw
+  // numbers (permission ids, split percents). Null keeps the default path;
+  // the exact bytes always remain in the raw view.
+  var prettySteps = ctx && ctx.fn ? prettyArgSteps(ctx.fn, input.name || '', value) : null;
+  if (prettySteps) return renderPrettyArgSteps(input, prettySteps, depth);
   var type = input.type || '';
   var baseType = type.replace(/\[\]$/, '');
   var isArray = /\[\]$/.test(type);
