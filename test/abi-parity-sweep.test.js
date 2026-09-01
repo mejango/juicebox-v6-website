@@ -145,6 +145,7 @@ const NO_CANONICAL_ARTIFACT = {
     'SAFE_ONCHAIN_ABI.nonce',
     'PROXY_FACTORY_ABI.createProxyWithNonce',
     'SAFE_SETUP_ABI.setup',
+    'SAFE_TO_L2_SETUP_ABI.setupToL2',
   ],
   'src/discover.js': [
     'v3QuoterAbi.quoteExactInputSingle',
@@ -172,7 +173,7 @@ const MIN_FRAGMENTS = {
   'src/pay-component.js': 2, 'src/cashout-component.js': 4, 'src/payouts-component.js': 7,
   'src/burn-component.js': 2, 'src/mint-component.js': 1, 'src/permissions-component.js': 1,
   'src/reserved-component.js': 2, 'src/deploy-erc20-component.js': 1, 'src/project-payer.js': 1,
-  'src/pay-preview.js': 1, 'src/component-base.js': 6, 'src/safe.js': 3, 'src/relayr.js': 1,
+  'src/pay-preview.js': 1, 'src/component-base.js': 6, 'src/safe.js': 4, 'src/relayr.js': 1,
   'src/discover.js': 135,
 };
 

@@ -26,6 +26,8 @@ import {
   verifySafeCreationGovernance,
   verifySafeCreationIdentity,
   verifyPlainSafeDeploymentPolicy,
+  safeSingletonsAreEquivalent,
+  initializerUsesSafeToL2Setup,
 } from '../src/safe.js';
 
 const SAFE = '0x1111111111111111111111111111111111111111';
@@ -35,6 +37,9 @@ const OWNER_C = '0x4444444444444444444444444444444444444444';
 const FACTORY = '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67';
 const SINGLETON = '0x41675C099F32341bf84BFc5382aF534df5C7461a';
 const ALT_SINGLETON = '0x29fcB43b46531BcA003ddC8FCB67FFE91900C762';
+// SafeToL2Setup repoints slot zero at ALT_SINGLETON on every non-Ethereum chain, so it is the recognized L2 half
+// of SINGLETON's release rather than a divergence. Use a different release when a real mismatch is under test.
+const UNPAIRED_SINGLETON = '0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552';
 const HANDLER = '0x7777777777777777777777777777777777777777';
 const MODULE = '0x8888888888888888888888888888888888888888';
 const HASH = `0x${'ab'.repeat(32)}`;
@@ -126,8 +131,33 @@ function initializer(overrides = {}) {
       overrides.fallbackHandler || HANDLER,
       '0x0000000000000000000000000000000000000000',
       overrides.payment == null ? 0n : BigInt(overrides.payment),
-      '0x0000000000000000000000000000000000000000',
+      overrides.paymentReceiver || '0x0000000000000000000000000000000000000000',
     ],
+  });
+}
+
+const SAFE_TO_L2_SETUP = '0xBD89A1CE4DDe368FFAB0eC35506eEcE0b1fFdc54';
+const SAFE_VANITY_PAYMENT_RECEIVER = '0x5afe7a11e7000000000000000000000000000000';
+
+function setupToL2(l2Singleton = ALT_SINGLETON) {
+  return encodeFunctionData({
+    abi: [{
+      type: 'function', name: 'setupToL2', stateMutability: 'nonpayable',
+      inputs: [{ name: 'l2Singleton', type: 'address' }], outputs: [],
+    }],
+    functionName: 'setupToL2',
+    args: [l2Singleton],
+  });
+}
+
+// The initializer Safe's own interface produces today: a SafeToL2Setup delegatecall plus Safe's vanity payment
+// receiver. It yields SINGLETON on Ethereum and ALT_SINGLETON everywhere else, from one CREATE2 address.
+function l2Initializer(overrides = {}) {
+  return initializer({
+    to: SAFE_TO_L2_SETUP,
+    data: setupToL2(),
+    paymentReceiver: SAFE_VANITY_PAYMENT_RECEIVER,
+    ...overrides,
   });
 }
 
@@ -269,6 +299,42 @@ describe('same-address Safe deployment governance hardening', () => {
     expect(() => verifySafeCreationGovernance(initializer({ to: MODULE, data: '0x1234' }), governance))
       .toThrow(/delegate setup\/module initializer.*unsafe/i);
     expect(() => verifySafeCreationGovernance(initializer({ payment: 1 }), governance))
+      .toThrow(/setup payment.*unsafe/i);
+  });
+
+  it('accepts the SafeToL2Setup initializer the Safe interface deploys on an L2', () => {
+    // The live L2 Safe already runs SafeL2 while the creation record still names the Ethereum singleton.
+    const l2Policy = {
+      owners: [OWNER_B, OWNER_A], threshold: 2,
+      singletonStorage: guardWord(ALT_SINGLETON),
+      fallbackHandlerStorage: guardWord(HANDLER),
+    };
+    expect(verifySafeCreationIdentity(l2Initializer(), SINGLETON, l2Policy)).toEqual({
+      singleton: ALT_SINGLETON.toLowerCase(),
+      fallbackHandler: HANDLER.toLowerCase(),
+    });
+    expect(safeSingletonsAreEquivalent(SINGLETON, ALT_SINGLETON)).toBe(true);
+    expect(safeSingletonsAreEquivalent(SINGLETON, UNPAIRED_SINGLETON)).toBe(false);
+    expect(initializerUsesSafeToL2Setup(l2Initializer())).toBe(true);
+    expect(initializerUsesSafeToL2Setup(initializer())).toBe(false);
+  });
+
+  it('rejects a tampered SafeToL2Setup hook and any other delegatecall target', () => {
+    const l2Policy = {
+      owners: [OWNER_B, OWNER_A], threshold: 2,
+      singletonStorage: guardWord(ALT_SINGLETON),
+      fallbackHandlerStorage: guardWord(HANDLER),
+    };
+    for (const data of [setupToL2(MODULE), '0x', setupToL2().replace(/^0xfe51f643/, '0xdeadbeef')]) {
+      expect(() => verifySafeCreationIdentity(l2Initializer({ data }), SINGLETON, l2Policy))
+        .toThrow(/delegate setup\/module initializer.*unsafe/i);
+    }
+    expect(() => verifySafeCreationIdentity(l2Initializer({ to: MODULE }), SINGLETON, l2Policy))
+      .toThrow(/delegate setup\/module initializer.*unsafe/i);
+    // The vanity receiver is inert only while payment stays zero.
+    expect(() => verifySafeCreationIdentity(l2Initializer({ payment: 1 }), SINGLETON, l2Policy))
+      .toThrow(/setup payment.*unsafe/i);
+    expect(() => verifySafeCreationIdentity(l2Initializer({ paymentReceiver: MODULE }), SINGLETON, l2Policy))
       .toThrow(/setup payment.*unsafe/i);
   });
 
@@ -424,7 +490,7 @@ describe('same-address Safe deployment governance hardening', () => {
   });
 
   it.each([
-    ['singleton', { singleton: ALT_SINGLETON }, /singleton differs/i],
+    ['singleton', { singleton: UNPAIRED_SINGLETON, version: '1.3.0' }, /singleton differs/i],
     ['fallback handler', { fallbackHandler: MODULE }, /fallback handler differs/i],
   ])('stops before sending when the live source %s differs from creation', async (_label, policy, error) => {
     deployState.clients.set(SOURCE_CHAIN, sourceClient({
@@ -526,7 +592,7 @@ describe('same-address Safe deployment governance hardening', () => {
   });
 
   it.each([
-    ['singleton', { singleton: ALT_SINGLETON }, /recognized proxy, implementation, handler.*do not use/i],
+    ['singleton', { singleton: UNPAIRED_SINGLETON, version: '1.3.0' }, /recognized proxy, implementation, handler.*do not use/i],
     ['fallback handler', { fallbackHandler: MODULE }, /recognized proxy, implementation, handler.*do not use/i],
   ])('fails closed after deployment when the target %s differs from source', async (_label, policy, error) => {
     deployState.clients.set(SOURCE_CHAIN, sourceClient());

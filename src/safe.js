@@ -616,6 +616,62 @@ var RECOGNIZED_SAFE_RELEASES = [
     factories: ['0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67'],
   },
 ];
+// Safe's canonical 1.4.1 creation calls SafeToL2Setup.setupToL2 as setup's delegatecall hook. That library
+// repoints slot zero at SafeL2 on every chain except Ethereum, so one initializer yields the same address with a
+// different — but paired — singleton per chain. Rejecting the pair would reject every Safe the Safe interface
+// deploys on an L2.
+export var SAFE_TO_L2_SETUP_ADDRESS = '0xbd89a1ce4dde368ffab0ec35506eece0b1ffdc54';
+// keccak256 of SafeToL2Setup's runtime, identical on every canonical chain.
+export var SAFE_TO_L2_SETUP_CODE_HASH = '0x2f25df28caf984366ee584e13241707e85dcd5a6ea0c14267928dafc1fd6274b';
+// Safe's vanity paymentReceiver marker. Inert because a non-zero payment stays rejected.
+export var SAFE_CANONICAL_PAYMENT_RECEIVER = '0x5afe7a11e7000000000000000000000000000000';
+// Ethereum singleton to its SafeL2 counterpart, per recognized release.
+var SAFE_L1_L2_SINGLETON_PAIRS = [
+  ['0x41675c099f32341bf84bfc5382af534df5c7461a', '0x29fcb43b46531bca003ddc8fcb67ffe91900c762'],
+];
+var SAFE_TO_L2_SETUP_ABI = [{
+  type: 'function', name: 'setupToL2', stateMutability: 'nonpayable',
+  inputs: [{ name: 'l2Singleton', type: 'address' }], outputs: [],
+}];
+
+// The SafeL2 singleton SafeToL2Setup may install for `singleton`, if any.
+function pairedSafeL2Singleton(singleton) {
+  var normalized;
+  try { normalized = checksumAddress(singleton).toLowerCase(); } catch (_) { return null; }
+  var pair = SAFE_L1_L2_SINGLETON_PAIRS.find(function (entry) { return entry[0] === normalized; });
+  return pair ? pair[1] : null;
+}
+
+// True when two singletons describe one recognized release: the same address, or its exact Ethereum/SafeL2 pair.
+// Both halves stay allow-listed by safeReleaseForSingleton elsewhere.
+export function safeSingletonsAreEquivalent(left, right) {
+  var a, b;
+  try { a = checksumAddress(left).toLowerCase(); b = checksumAddress(right).toLowerCase(); }
+  catch (_) { return false; }
+  if (a === b) return true;
+  return SAFE_L1_L2_SINGLETON_PAIRS.some(function (pair) {
+    return (pair[0] === a && pair[1] === b) || (pair[0] === b && pair[1] === a);
+  });
+}
+
+// Byte-exact setupToL2(l2Singleton) naming the SafeL2 counterpart of the initializer's own singleton. Nothing else
+// may be delegatecalled at setup.
+function isExactSetupToL2Call(data, creationSingleton) {
+  var l2Singleton = creationSingleton && pairedSafeL2Singleton(creationSingleton);
+  if (!l2Singleton) return false;
+  var expected;
+  try {
+    expected = encodeFunctionData({ abi: SAFE_TO_L2_SETUP_ABI, functionName: 'setupToL2', args: [checksumAddress(l2Singleton)] });
+  } catch (_) { return false; }
+  return String(data).toLowerCase() === expected.toLowerCase();
+}
+
+// True when this initializer delegatecalls the canonical SafeToL2Setup.
+export function initializerUsesSafeToL2Setup(initializer) {
+  try { return normalizedAddress(decodeSafeSetupInitializer(initializer)[2]) === SAFE_TO_L2_SETUP_ADDRESS; }
+  catch (_) { return false; }
+}
+
 export var SAFE_SETUP_ABI = [{
   type: 'function', name: 'setup', stateMutability: 'nonpayable',
   inputs: [
@@ -708,16 +764,22 @@ function decodeSafeSetupInitializer(initializer) {
   return decoded.args;
 }
 
-function verifyDecodedSafeSetup(args, sourceGovernance) {
+function verifyDecodedSafeSetup(args, sourceGovernance, creationSingleton) {
   var owners = args[0], threshold = args[1], delegateTarget = args[2], delegateData = args[3];
   var paymentToken = args[5], payment = args[6], paymentReceiver = args[7];
-  if (String(delegateTarget).toLowerCase() !== ZERO.toLowerCase() || String(delegateData).toLowerCase() !== '0x') {
+  // The only accepted delegatecall hook is the canonical SafeToL2Setup installing this release's own SafeL2
+  // counterpart. Any other target, selector, or argument can install modules or mutate arbitrary Safe storage.
+  var usesSafeToL2Setup = String(delegateTarget).toLowerCase() === SAFE_TO_L2_SETUP_ADDRESS;
+  var plainSetup = String(delegateTarget).toLowerCase() === ZERO.toLowerCase() && String(delegateData).toLowerCase() === '0x';
+  if (usesSafeToL2Setup ? !isExactSetupToL2Call(delegateData, creationSingleton) : !plainSetup) {
     throw new Error('This Safe was created with a delegate setup/module initializer, so automatic same-address deployment is unsafe. Deploy it through Safe instead.');
   }
   // setup() can also pay an arbitrary receiver. Replaying a non-zero payment could drain assets prefunded to the
-  // deterministic address before deployment, so it is outside the safe automatic replay subset.
+  // deterministic address before deployment, so it is outside the safe automatic replay subset. Safe's own vanity
+  // receiver marker is accepted because the zero payment above makes it inert.
   if (String(paymentToken).toLowerCase() !== ZERO.toLowerCase() || BigInt(payment || 0) !== 0n
-      || String(paymentReceiver).toLowerCase() !== ZERO.toLowerCase()) {
+      || (String(paymentReceiver).toLowerCase() !== ZERO.toLowerCase()
+        && String(paymentReceiver).toLowerCase() !== SAFE_CANONICAL_PAYMENT_RECEIVER)) {
     throw new Error('This Safe was created with a setup payment, so automatic same-address deployment is unsafe. Deploy it through Safe instead.');
   }
   var initializerGovernance = { owners: owners, threshold: threshold };
@@ -759,9 +821,9 @@ function safeStorageIdentity(policy, label) {
 // handler means replaying the old creation would produce a different authority even when owners still happen to
 // match, so reject before asking the wallet to send anything.
 export function verifySafeCreationIdentity(initializer, creationSingleton, sourcePolicy) {
-  var setup = verifyDecodedSafeSetup(decodeSafeSetupInitializer(initializer), sourcePolicy);
+  var setup = verifyDecodedSafeSetup(decodeSafeSetupInitializer(initializer), sourcePolicy, creationSingleton);
   var sourceIdentity = safeStorageIdentity(sourcePolicy, 'The source Safe');
-  if (normalizedAddress(creationSingleton, 'The creation singleton') !== sourceIdentity.singleton) {
+  if (!safeSingletonsAreEquivalent(creationSingleton, sourceIdentity.singleton)) {
     throw new Error('The Safe’s current singleton differs from its creation record. Deployment was stopped.');
   }
   if (normalizedAddress(setup.fallbackHandler, 'The setup fallback handler') !== sourceIdentity.fallbackHandler) {
@@ -844,7 +906,10 @@ function sameRecognizedSafeDeploymentPolicy(a, b) {
   var bb = verifyRecognizedSafeDeploymentPolicy(b, 'The deployed Safe');
   return aa.threshold === bb.threshold && aa.owners.length === bb.owners.length
     && aa.owners.every(function (owner, i) { return owner === bb.owners[i]; })
-    && aa.proxyCode === bb.proxyCode && aa.singleton === bb.singleton && aa.singletonCode === bb.singletonCode
+    && aa.proxyCode === bb.proxyCode && safeSingletonsAreEquivalent(aa.singleton, bb.singleton)
+    // Paired Ethereum/SafeL2 singletons are distinct implementations of one release, so their runtimes only have
+    // to match when the address does.
+    && (aa.singleton !== bb.singleton || aa.singletonCode === bb.singletonCode)
     && aa.version === bb.version && aa.fallbackHandler === bb.fallbackHandler
     && aa.fallbackHandlerCode === bb.fallbackHandlerCode;
 }
@@ -895,7 +960,7 @@ async function readSafeDeploymentPolicy(chainId, safe) {
 
 async function verifySafeDeploymentDestination(client, creation, expectedSafe, sourcePolicy) {
   var source = verifyRecognizedSafeDeploymentPolicy(sourcePolicy, 'The source Safe');
-  var addresses = [expectedSafe, creation.factory, creation.singleton].concat(source.owners);
+  var addresses = [expectedSafe, creation.factory, creation.singleton, SAFE_TO_L2_SETUP_ADDRESS].concat(source.owners);
   if (source.fallbackHandler !== ZERO.toLowerCase()) addresses.push(source.fallbackHandler);
   var codes = await Promise.all(addresses.map(function (address) { return client.getBytecode({ address: cs(address) }); }));
   if (normalizedRuntimeCode(codes[0], false, 'The target Safe address')) {
@@ -903,8 +968,20 @@ async function verifySafeDeploymentDestination(client, creation, expectedSafe, s
   }
   normalizedRuntimeCode(codes[1], true, 'The official Safe proxy factory');
   var targetSingletonCode = normalizedRuntimeCode(codes[2], true, 'The target Safe singleton');
-  if (targetSingletonCode !== source.singletonCode) throw new Error('The target Safe singleton bytecode does not match the source chain.');
-  codes.slice(3, 3 + source.owners.length).forEach(function (code) {
+  // A paired Ethereum/SafeL2 singleton is a different runtime by construction, so bind it by its allow-listed
+  // address instead of the source Safe's bytecode.
+  if (normalizedAddress(creation.singleton) === source.singleton
+    ? targetSingletonCode !== source.singletonCode
+    : !safeSingletonsAreEquivalent(creation.singleton, source.singleton)) {
+    throw new Error('The target Safe singleton bytecode does not match the source chain.');
+  }
+  // The initializer delegatecalls SafeToL2Setup on the target chain, so that library's runtime must be the
+  // canonical one there too.
+  if (initializerUsesSafeToL2Setup(creation.initializer)
+    && keccak256(normalizedRuntimeCode(codes[3], true, 'The canonical SafeToL2Setup library')) !== SAFE_TO_L2_SETUP_CODE_HASH) {
+    throw new Error('The canonical SafeToL2Setup library is missing or altered on the target chain.');
+  }
+  codes.slice(4, 4 + source.owners.length).forEach(function (code) {
     var ownerCode = normalizedRuntimeCode(code, false, 'A target Safe owner');
     if (ownerCode && !isEip7702DelegatedEoaRuntime(ownerCode)) {
       throw new Error('A Safe owner is a contract on the target chain; automatic same-address deployment was stopped.');
