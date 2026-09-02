@@ -165,7 +165,11 @@ export function errMessage(e, fallback) {
 export function friendlyTransactionError(errorText) {
   var text = String(errorText || '').toLowerCase();
   if (text.indexOf('0xd81b2f2e') !== -1 || text.indexOf('allowanceexpired') !== -1) {
-    return 'Token authorization expired. Review and try again to renew it before paying.';
+    // Permit2 AllowanceExpired. Every JB terminal pulls ERC-20s through Permit2, so a direct caller who never
+    // set that allowance sees the same selector as an expired one.
+    return 'Permit2 token authorization is missing or expired. In a pay flow, review and try again to renew it. '
+      + 'When calling a terminal directly, first approve the token for Permit2 (0x000000000022D473030F116dDEE9F6B43aC78BA3), '
+      + 'then Permit2.approve(token, terminal, amount, expiration) — or pass a permit in the call metadata.';
   }
   if (text.indexOf('0x6b2bb382') !== -1 || text.indexOf('jbmultiterminal_undermin') !== -1) {
     return 'The live return fell below the minimum you reviewed. Refresh the quote and try again.';

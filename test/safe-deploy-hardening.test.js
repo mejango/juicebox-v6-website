@@ -15,6 +15,7 @@ vi.mock('../src/component-base.js', () => ({
   VIEW_AS_TX_ERROR: "You're viewing the site as another account — exit View as to transact.",
   switchChain: deployState.switchChain,
   createPublicClientForChain: chainId => deployState.clients.get(Number(chainId)),
+  waitForTrackedTransactionReceipt: (client, hash) => client.waitForTransactionReceipt({ hash }),
   ZERO_ADDRESS: '0x0000000000000000000000000000000000000000',
 }));
 

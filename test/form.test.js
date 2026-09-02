@@ -34,6 +34,7 @@ vi.mock('../src/component-base.js', () => ({
   shouldKeepSubmittedTransactionPending: (hash, error) => !!hash && !error?.onchainRevert,
   truncAddr: value => `${String(value).slice(0, 6)}…${String(value).slice(-4)}`,
   waitForTrackedTransactionReceipt: (client, hash) => client.waitForTransactionReceipt({ hash }),
+  friendlyTransactionError: () => null,
 }));
 
 const chainState = vi.hoisted(() => ({ setCurrent: vi.fn(), setRpc: vi.fn() }));

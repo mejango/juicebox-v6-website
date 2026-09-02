@@ -15,6 +15,8 @@ vi.mock('../src/component-base.js', () => ({
   VIEW_AS_TX_ERROR: "You're viewing the site as another account — exit View as to transact.",
   switchChain: safeState.switchChain,
   createPublicClientForChain: () => safeState.publicClient,
+  // The shared dual-source poll is the module under test's receipt boundary; here it is the client's watcher.
+  waitForTrackedTransactionReceipt: (client, hash) => client.waitForTransactionReceipt({ hash }),
   ZERO_ADDRESS: '0x0000000000000000000000000000000000000000',
 }));
 

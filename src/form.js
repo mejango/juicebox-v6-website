@@ -5,7 +5,7 @@
 import { encodeFunctionData } from 'viem';
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange } from './wallet.js';
-import { confirmTransactionModal, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
+import { confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
 import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
@@ -443,12 +443,17 @@ function parseEtherSafe(val) {
   return parseAmount(val, 18);
 }
 
-function formatError(err, abi) {
+export function formatError(err, abi) {
   if (err.message && err.message.includes('User rejected')) return 'Transaction rejected by wallet';
+  // A selector from a contract outside this call's ABI (Permit2, a hook) decodes to nothing here; the shared
+  // table names the ones callers keep hitting so a raw caller gets the precondition, not four bytes.
+  var friendly = friendlyTransactionError([err.data, err.shortMessage, err.message, err.details].join(' '));
   if (err.data && abi) {
     var decoded = decodeError(abi, err.data);
     if (decoded) return 'Reverted: ' + decoded.errorName + '(' + decoded.args.join(', ') + ')';
+    if (friendly) return friendly;
     return 'Reverted: ' + err.data;
   }
+  if (friendly) return friendly;
   return err.shortMessage || err.message || 'Unknown error';
 }

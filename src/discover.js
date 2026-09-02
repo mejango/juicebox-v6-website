@@ -4670,20 +4670,6 @@ export function permit2AllowanceCovers(allowance, amount, now, lifetimeBufferSec
   } catch (_) { return false; }
 }
 
-function pollDirectSwapReceipt(client, hash) {
-  return new Promise(function (resolve, reject) {
-    var attempts = 120;
-    function check() {
-      client.getTransactionReceipt({ hash: hash }).then(resolve).catch(function (error) {
-        attempts -= 1;
-        if (attempts <= 0) { reject(error); return; }
-        setTimeout(check, 2000);
-      });
-    }
-    check();
-  });
-}
-
 // Wallets which do not implement this Permit2 EIP-712 shape commonly surface JSON-RPC -32602/4200. A user
 // rejection is never converted into another wallet prompt; only capability/parameter failures may fall back to
 // an ordinary on-chain Permit2.approve transaction.
@@ -4935,12 +4921,9 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
     var approvalHash = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas }));
     if (onStatus) onStatus('Swap-router authorization submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: approvalHash, chainId: chainId });
-    var approvalReceipt;
-    try {
-      approvalReceipt = await client.waitForTransactionReceipt({ hash: approvalHash });
-    } catch (waitError) {
-      approvalReceipt = await pollDirectSwapReceipt(client, approvalHash).catch(function () { throw waitError; });
-    }
+    // The same dual-source receipt poll as every other write here: viem's watcher can sit pending forever on
+    // some wallet/public-RPC pairs even after the approval mined, which stranded this step at "Confirming".
+    var approvalReceipt = await waitForTrackedTransactionReceipt(client, approvalHash, wallet, chainId);
     if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error('Swap-router authorization reverted onchain. Nothing else was sent.');
     var approved = await client.readContract({
       address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [recipient, token, ur],

@@ -11,7 +11,7 @@
 // the "Open in Safe app" deep link.
 
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData, decodeFunctionData, decodeFunctionResult, keccak256, stringToHex } from 'viem';
-import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR } from './component-base.js';
+import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt } from './component-base.js';
 import { CHAINS, chainList, isTestnetChain } from './chain.js';
 import { contractGasWithinCap } from './gas.js';
 
@@ -396,7 +396,7 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var hash = await wallet.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees));
   try {
-    var rcpt = await pub.waitForTransactionReceipt({ hash: hash });
+    var rcpt = await waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
     if (!rcpt) throw new Error('Receipt unavailable.');
     if (rcpt.status !== 'success') throw new Error((label || 'Transaction') + ' reverted onchain (tx ' + hash + ').');
     if (verifyReceipt) await verifyReceipt(rcpt);
