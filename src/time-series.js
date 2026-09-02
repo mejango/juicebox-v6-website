@@ -105,3 +105,22 @@ export function smoothPriceSeries(points, maxBuckets) {
   smoothed.push({ timestamp: end, value: deduped[deduped.length - 1].value });
   return smoothed;
 }
+
+// The pool's reserves resampled onto `count` even buckets across [start, end], each taking the
+// last observation at or before its centre — so the bars sit on a regular grid whatever the
+// trade cadence. Buckets before the first observation are omitted rather than drawn empty.
+export function bucketPoolReserves(points, start, end, count) {
+  var observed = (points || []).slice().sort(function (a, b) { return a.timestamp - b.timestamp; });
+  if (!observed.length || !(end > start) || !(count >= 1)) return [];
+  var width = (end - start) / count;
+  var buckets = [];
+  var index = 0;
+  var current = null;
+  for (var bucket = 0; bucket < count; bucket++) {
+    var timestamp = start + (bucket + 0.5) * width;
+    while (index < observed.length && observed[index].timestamp <= timestamp) current = observed[index++];
+    if (!current) continue;
+    buckets.push(Object.assign({}, current, { timestamp: timestamp }));
+  }
+  return buckets;
+}

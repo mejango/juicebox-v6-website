@@ -10,7 +10,7 @@ const budgets = {
   // EIP-7702 authority support + exact pending-Safe-call reuse: 8,684,397 B raw / 1,249,797 B gzip;
   // complete Permissions card — owner row, wildcard-scope grants, per-chain sets: 8,695,219 B raw;
   // amounts-first LP sizing — range solver + mode toggle in the add-liquidity modal: 8,700,528 B raw).
-  'dist/app.js': { raw: 8_710_000, gzip: 1_260_000 },
+  'dist/app.js': { raw: 8_760_000, gzip: 1_266_000 },
   'dist/style.css': { raw: 243_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },

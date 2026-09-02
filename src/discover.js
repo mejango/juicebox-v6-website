@@ -5,7 +5,7 @@
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
-import { downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
+import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { quotedOutputFloor } from './slippage.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
@@ -6137,6 +6137,12 @@ export function formatCompactTokenAmount(raw) {
   if (raw === null || raw === undefined) return '—';
   var n = Number(formatAmount(raw, 18));
   if (!isFinite(n)) return formatTokens(raw);
+  return formatCompactNumber(n) || formatTokenCount(raw);
+}
+
+// The same three-significant-figure ladder for a plain number; empty below 1k so the caller
+// picks its own exact rendering there.
+function formatCompactNumber(n) {
   if (n === 0) return '0';
   var sign = n < 0 ? '-' : '';
   var mag = Math.abs(n);
@@ -6148,7 +6154,7 @@ export function formatCompactTokenAmount(raw) {
       return sign + scaled.toFixed(decimals).replace(/\.?0+$/, '') + ladder[i][1];
     }
   }
-  return formatTokenCount(raw);
+  return '';
 }
 
 // The unabbreviated value a hover reveals for any compacted figure.
@@ -19253,6 +19259,64 @@ export function ammPriceFromSqrtPriceX96(sqrtPriceX96, projectTokenIsCurrency0, 
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
+// Both sides of the pool over time, for the faint bars under the pool line: every indexed liquidity
+// change replayed in order (positions keyed by NFT id, `liquidityAfter` replacing the position and
+// deleting it at 0), with the reserves re-read at each change at the price the index recorded there
+// and at each trade's exact post-swap price. A change in the same second as a trade applies first;
+// trades before the first change carry nothing. Amounts are the pool's own units (token 18-dec, pair
+// in `pairDecimals`); `pairValue`/`tokenValue` are both sides priced in the pair token at that
+// point, only ever compared with each other and never put on the chart's axis.
+export function replayPoolReserves(events, prices, projectTokenIsCurrency0, pairDecimals) {
+  var positions = {};
+  var pairScale = Math.pow(10, Number(pairDecimals));
+  function reservesAt(timestamp, sqrtPriceX96) {
+    var ammPrice = ammPriceFromSqrtPriceX96(sqrtPriceX96, projectTokenIsCurrency0, pairDecimals);
+    if (!ammPrice) return null;
+    var amount0 = 0n, amount1 = 0n;
+    Object.keys(positions).forEach(function (id) {
+      var position = positions[id];
+      var amounts = lpGetAmountsForLiquidity(sqrtPriceX96, position.lower, position.upper, position.liquidity);
+      amount0 += amounts.amount0;
+      amount1 += amounts.amount1;
+    });
+    var tokenAmount = Number(projectTokenIsCurrency0 ? amount0 : amount1) / 1e18;
+    var pairAmount = Number(projectTokenIsCurrency0 ? amount1 : amount0) / pairScale;
+    return {
+      timestamp: timestamp,
+      tokenAmount: tokenAmount,
+      pairAmount: pairAmount,
+      pairValue: pairAmount,
+      tokenValue: tokenAmount * ammPrice,
+    };
+  }
+  var timeline = (events || []).map(function (event) { return { at: Number(event.timestamp), order: 0, event: event }; })
+    .concat((prices || []).map(function (price) { return { at: Number(price.timestamp), order: 1, price: price }; }))
+    .sort(function (a, b) { return a.at - b.at || a.order - b.order; });
+  var out = [];
+  var seenLiquidity = false;
+  timeline.forEach(function (item) {
+    var point = null;
+    if (item.event) {
+      var liquidity = toBigInt(item.event.liquidityAfter);
+      if (liquidity > 0n) {
+        positions[String(item.event.tokenId)] = {
+          lower: lpSqrtAtTick(item.event.tickLower),
+          upper: lpSqrtAtTick(item.event.tickUpper),
+          liquidity: liquidity,
+        };
+      } else {
+        delete positions[String(item.event.tokenId)];
+      }
+      seenLiquidity = true;
+      if (item.event.sqrtPriceX96) point = reservesAt(item.at, toBigInt(item.event.sqrtPriceX96));
+    } else if (seenLiquidity) {
+      point = reservesAt(item.at, toBigInt(item.price.sqrtPriceX96));
+    }
+    if (point) out.push(point);
+  });
+  return out;
+}
+
 // One chart axis, one unit. The issuance ladder is denominated in the ruleset's baseCurrency (the
 // ETH=1/USD=2 convention), while AMM spot and the cash-out floor are pair/accounting-token units
 // (accounting contexts carry currency = uint32(uint160(token))). When they differ the issuance series
@@ -19377,6 +19441,7 @@ function renderPriceChart(project, stages) {
   var cashout = null;    // current cash out floor (pair token/project token), filled in lazily
   var cashoutHistory = [];
   var ammHistory = [];   // initial + exact post-trade AMM spot prices from Bendystraw
+  var poolReserves = []; // both sides of the pool after every indexed change and trade
   var ammPairSym = 'terminal tokens';
   var ammChipTail = '';
   var curYears = 1;
@@ -19430,7 +19495,8 @@ function renderPriceChart(project, stages) {
       true,
       cashoutHistory,
       ammHistory,
-      showEveryTrade
+      showEveryTrade,
+      { reserves: poolReserves, pairSym: ammPairSym }
     );
   }
   function selectRange(years, btn) {
@@ -19485,7 +19551,7 @@ function renderPriceChart(project, stages) {
     readBasePerAcctRate(project, project.chainId),
   ]).then(function (res) {
     var p = res[0], f = res[1], history = res[2] || [];
-    var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
+    var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null, reserves: [] };
     var lp = res[4];
     var basePerAcct = res[5];
     // Re-checked, not reused: `unitMismatch` above is captured while `project.acctToken` may still
@@ -19534,7 +19600,7 @@ function renderPriceChart(project, stages) {
         setChartNote('No price feed converts ' + acctLabel + ' into ' + baseLabel
           + ', this project\u2019s issuance currency, so the pool and cash out series are not shown. Only the issuance ceiling is plotted.');
         chartReady = true;
-        p = null; f = null; history = []; swaps = Object.assign({}, swaps, { series: [] });
+        p = null; f = null; history = []; swaps = Object.assign({}, swaps, { series: [], reserves: [] });
         draw();
       }
     }
@@ -19549,6 +19615,7 @@ function renderPriceChart(project, stages) {
     if (swaps.series && swaps.series.length) {
       ammHistory = swaps.series.slice();
     }
+    poolReserves = swaps.reserves || [];
     if (p && p > 0) {
       amm = p;
       ammHistory.push({ timestamp: now, value: p });
@@ -19630,6 +19697,7 @@ function renderPriceChart(project, stages) {
       now = Math.floor(Date.now() / 1000);
       if (swaps) {
         ammHistory = (swaps.series || []).slice();
+        poolReserves = swaps.reserves || [];
         if (swaps.pair) ammPairSym = swaps.pair.symbol;
       }
       if (live && live > 0) {
@@ -19773,9 +19841,18 @@ export function shouldShowCashOutAsymptote(cashOutPrice, asymptote) {
     && cashOutPrice > asymptote;
 }
 
+// The pool's reserves as two tints of the pool line, the pair side darker under the token side. The
+// bars are translucent over the card; the tooltip sits on near-black, so its squares carry the colour
+// the bars actually show — the same tint composited onto the card background.
+var POOL_RESERVE_BARS = 48;
+var POOL_PAIR_FILL = 'rgba(184,96,46,0.3)';
+var POOL_TOKEN_FILL = 'rgba(184,96,46,0.14)';
+var POOL_PAIR_SWATCH = 'color-mix(in srgb, #b8602e 30%, var(--card-bg))';
+var POOL_TOKEN_SWATCH = 'color-mix(in srgb, #b8602e 14%, var(--card-bg))';
+
 // Plots PRICE (base token per project token = 1/issuance), rising as issuance is cut. The card
 // header still shows issuance (tokens/ETH). Zero-issuance regions clamp to the top of the finite range.
-function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past, cashoutHistory, ammHistory, showEveryTrade) {
+function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past, cashoutHistory, ammHistory, showEveryTrade, poolReserves) {
   var firstStart = Number(sorted[0].start);
   var bounds = priceChartTimeBounds(firstStart, now, years, past);
   if (!past && years <= 0) {
@@ -19877,12 +19954,33 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     cashLine += '<path d="' + minLine + '" fill="none" stroke="rgba(196,53,80,0.55)" stroke-width="1.3" stroke-dasharray="5 4"/>';
   }
 
+  // Faint bars from the plot bottom on their own hidden scale (the tallest stack takes 28% of the
+  // plot): the pair side under the token side, both valued in the pair token so the stack is the
+  // pool's size at that moment. Even buckets across the range, so the grid is regular whatever the
+  // trade cadence; bars are 70% of a slot so translucent neighbours never overlap into a third shade.
+  var bars = '';
+  var reserveBars = bucketPoolReserves(poolReserves || [], t0, t1, POOL_RESERVE_BARS);
+  var tallest = 0;
+  reserveBars.forEach(function (bar) { tallest = Math.max(tallest, bar.pairValue + bar.tokenValue); });
+  if (tallest > 0) {
+    var unit = (H - padT - padB) * 0.28 / tallest;
+    var barW = Math.max(1, (W - padL - padR) / POOL_RESERVE_BARS * 0.7);
+    reserveBars.forEach(function (bar) {
+      var bx = (X(bar.timestamp) - barW / 2).toFixed(1);
+      var pairH = Math.max(0, bar.pairValue) * unit, tokenH = Math.max(0, bar.tokenValue) * unit;
+      var pairTop = H - padB - pairH;
+      bars += '<rect x="' + bx + '" y="' + pairTop.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + pairH.toFixed(1) + '" fill="' + POOL_PAIR_FILL + '"/>'
+        + '<rect x="' + bx + '" y="' + (pairTop - tokenH).toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + tokenH.toFixed(1) + '" fill="' + POOL_TOKEN_FILL + '"/>';
+    });
+  }
+
   var span = t1 - t0;
   var y0 = priceChartAxisLabel(t0, span);
   var y1 = priceChartAxisLabel(t1, span);
 
   var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="none" class="issuance-svg">'
     + '<path d="' + area + '" fill="rgba(110,196,196,0.18)"/>'
+    + bars
     // Resolved overlays sit behind the issuance schedule so clipped/out-of-domain prices can never paint over
     // the schedule this chart is primarily explaining.
     + ammLine + cashLine
@@ -19899,8 +19997,8 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
 }
 
 // Render the chart into a wrap + attach a hover tooltip/guide showing each series' value at that time.
-function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade) {
-  var c = issuanceChartSvg(sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade);
+function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade, pool) {
+  var c = issuanceChartSvg(sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade, pool && pool.reserves);
   var holder = wrap.querySelector('.chart-holder');
   if (!holder) {
     wrap.classList.add('chart-wrap');
@@ -19929,6 +20027,16 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
       var minAt = seriesValueAt(ch.minHistory || [], t);
       if (minAt) html += row('Cash out asymptote', minAt, 'rgba(196,53,80,0.55)');
       var floorPoint = seriesPointAt(ch.cashoutHistory || [], t);
+      // What the pool held at the hovered moment: the last replayed reserve point at or before it.
+      var held = null;
+      for (var ri = 0; ri < ch.reserves.length && ch.reserves[ri].timestamp <= t; ri++) held = ch.reserves[ri];
+      if (held && (held.tokenAmount > 0 || held.pairAmount > 0)) {
+        var reserve = function (n) { return formatCompactNumber(n) || formatPrice(n); };
+        html += '<div class="chart-tip-row">Pool liquidity: '
+          + '<span class="chart-tip-swatch" style="background:' + POOL_TOKEN_SWATCH + '"></span>' + reserve(held.tokenAmount) + ' ' + ch.sym
+          + ' + <span class="chart-tip-swatch" style="background:' + POOL_PAIR_SWATCH + '"></span>' + reserve(held.pairAmount) + ' ' + ch.pairSym
+          + '</div>';
+      }
       if (floorPoint && floorPoint.reason) {
         html += '<div class="chart-tip-reason">' + floorPoint.reason + '</div>';
       }
@@ -19952,6 +20060,7 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
     geo: c.geo, sorted: sorted, sym: sym, amm: amm, cashout: cashout,
     cashoutHistory: cashoutHistory || [], ammHistory: c.ammSeries || [],
     minHistory: c.minimumSeries || [],
+    reserves: (pool && pool.reserves) || [], pairSym: (pool && pool.pairSym) || 'terminal tokens',
   };
 }
 
@@ -20478,6 +20587,12 @@ export var BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY = 'query($poolId: String!, $chai
   + 'buybackPoolEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp poolId chainId initialSqrtPriceX96 projectTokenIsCurrency0 } totalCount } }';
+// Every position change in the pool (mint / increase / decrease / burn), with the pool price the
+// indexer read at that block, so the pool's two reserves can be replayed over time.
+export var BENDYSTRAW_BUYBACK_POOL_LIQUIDITY_EVENTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'buybackPoolLiquidityEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { timestamp poolId chainId tokenId tickLower tickUpper liquidityDelta liquidityAfter sqrtPriceX96 } totalCount } }';
 var BENDYSTRAW_PARTICIPANTS_BY_GROUP_QUERY = 'query($suckerGroupId: String!, $chainIds: [Int!], $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'participants(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds, version: $version, balance_gt: "0" }, '
   + 'orderBy: "balance", orderDirection: "desc", limit: $limit, offset: $offset) { '
@@ -21043,7 +21158,7 @@ export function explainCashOutChange(previous, current) {
 // Older rows without sqrtPriceX96 retain the realized average-price fallback.
 // Returns the empty shape if the model isn't indexed yet — never fabricates.
 async function fetchSwapHistory(project) {
-  var empty = { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
+  var empty = { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null, reserves: [] };
   var chainId = Number(project.chainId);
   if (!chainId) return empty;
 
@@ -21070,19 +21185,32 @@ async function fetchSwapHistory(project) {
     fetchBendystrawCollectionPages(BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY, 'buybackPoolEvents', variables,
       PRICE_HISTORY_PAGE_SIZE)
       .catch(function () { return { items: [], totalCount: 0 }; }),
+    // The reserves replay is an addition to the price history, never a condition of it.
+    fetchBendystrawCollectionPages(BENDYSTRAW_BUYBACK_POOL_LIQUIDITY_EVENTS_QUERY, 'buybackPoolLiquidityEvents', variables,
+      PRICE_HISTORY_PAGE_SIZE)
+      .catch(function () { return { items: [], totalCount: 0 }; }),
   ]);
 
+  function inPool(row) {
+    return Number(row.chainId) === chainId && String(row.poolId || '').toLowerCase() === String(pool.poolId).toLowerCase();
+  }
   var items = pages[0].items || [];
   var series = [];
   var buyVolume = 0, sellVolume = 0, count = 0;
+  // Every exact pool price the index saw, for the reserves replay below.
+  var pricePoints = [];
+  var projectTokenIsCurrency0 = null;
   (pages[1].items || []).forEach(function (registered) {
-    if (Number(registered.chainId) !== chainId || String(registered.poolId || '').toLowerCase() !== String(pool.poolId).toLowerCase()) return;
+    if (!inPool(registered)) return;
     if (!registered.initialSqrtPriceX96 || typeof registered.projectTokenIsCurrency0 !== 'boolean') return;
     var price = ammPriceFromSqrtPriceX96(registered.initialSqrtPriceX96, registered.projectTokenIsCurrency0, pair.decimals);
-    if (price) series.push({ timestamp: Number(registered.timestamp), value: price });
+    if (!price) return;
+    series.push({ timestamp: Number(registered.timestamp), value: price });
+    pricePoints.push({ timestamp: Number(registered.timestamp), sqrtPriceX96: registered.initialSqrtPriceX96 });
+    projectTokenIsCurrency0 = registered.projectTokenIsCurrency0;
   });
   items.forEach(function (sw) {
-    if (Number(sw.chainId) !== chainId || String(sw.poolId || '').toLowerCase() !== String(pool.poolId).toLowerCase()) return;
+    if (!inPool(sw)) return;
     if (sw.direction === 'mint') return; // mint is the issuance route, not a market trade
     var terminalUnits = Number(toBigInt(sw.terminalTokenAmount)) / pairScale;
     if (sw.direction === 'buy') buyVolume += terminalUnits;
@@ -21096,7 +21224,14 @@ async function fetchSwapHistory(project) {
       if (tokens > 0) price = terminalUnits / tokens;
     }
     if (price && price > 0) series.push({ timestamp: Number(sw.timestamp), value: price, usdRate: usdRateOf(sw.accountingTokenUsdRate) });
+    if (sw.sqrtPriceX96 && typeof sw.projectTokenIsCurrency0 === 'boolean') {
+      pricePoints.push({ timestamp: Number(sw.timestamp), sqrtPriceX96: sw.sqrtPriceX96 });
+      if (projectTokenIsCurrency0 === null) projectTokenIsCurrency0 = sw.projectTokenIsCurrency0;
+    }
   });
+  var reserves = projectTokenIsCurrency0 === null
+    ? []
+    : replayPoolReserves((pages[2].items || []).filter(inPool), pricePoints, projectTokenIsCurrency0, pair.decimals);
   series.sort(function (a, b) { return a.timestamp - b.timestamp; });
   series = downsampleTimeSeries(
     series,
@@ -21110,6 +21245,7 @@ async function fetchSwapHistory(project) {
     sellVolume: sellVolume,
     count: count,
     pair: pair,
+    reserves: reserves,
     sampled: series.length < (pages[0].totalCount || 0) + (pages[1].totalCount || 0),
   };
 }

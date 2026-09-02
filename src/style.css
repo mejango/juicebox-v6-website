@@ -5247,6 +5247,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .chart-tip-date { font-weight: bold; margin-bottom: 2px; }
 .chart-tip-row { display: flex; align-items: center; gap: 5px; }
 .chart-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.chart-tip-swatch { width: 7px; height: 7px; flex-shrink: 0; }
 
 /* A term whose definition appears on hover. The dotted underline rather than an icon, for
    anything rendered AS TEXT: it attaches to the word being defined and adds no visual mass,
