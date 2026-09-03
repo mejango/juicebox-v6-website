@@ -15,7 +15,7 @@ import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgre
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel } from './create-flow.js';
+import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel, noticeClashIssue, stageStartOk } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -23202,6 +23202,10 @@ function openQueueRulesetModal(project, preferredQueueAction) {
     currentUseDataHookForPayByChain: {},
     currentUseDataHookForCashOutByChain: {},
     queueBaseByChain: {},
+    // The ruleset the queued stage 1 is based on (its cycle boundaries + approval deadline), per chain — what
+    // JBRulesets.deriveStartFrom snaps the new start to, so later stages can wait N of ITS cycles.
+    queueParentByChain: {},
+    queueHomeChainId: project.chainId,
     controllerByChain: {},
     isOmnichain: false,                  // true only when the live data-hook wrapper is JBOmnichainDeployer
     canAddShop: false,
@@ -23327,6 +23331,18 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       state.queueTimingExplanation = 'This configuration is copied from current Cycle #' + cycle
         + '. Its cycle schedule and approval hook determine when the queued change can take effect.';
     }
+  }
+
+  // The contract base for a queued configuration: the latest ruleset when appending after it, its parent when
+  // replacing it, else the current ruleset (mirrors _configureIntrinsicPropertiesFor's fallback).
+  function queueParentFor(situation, option, chainId) {
+    var parent = option.action === 'after' ? situation.latest[0]
+      : (option.action === 'replace' ? situation.latestParent[0] : situation.current[0]);
+    var deadline = null;
+    DEADLINE_OPTIONS.forEach(function (d) {
+      if (d.contract && (getAddress(d.contract, chainId) || '').toLowerCase() === String(parent.approvalHook || '').toLowerCase()) deadline = d.key;
+    });
+    return { start: Number(parent.start), duration: Number(parent.duration), deadline: deadline };
   }
 
   function updateQueueApprovalNote(situation, option) {
@@ -23455,6 +23471,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       var ruleset = selected[0], metadata = selected[1];
       if (!metadata) throw new Error('No ruleset metadata on ' + (chain.name || chain.id) + '.');
       state.queueMustStartAtByChain[chain.id] = queueStartFor(option);
+      state.queueParentByChain[chain.id] = queueParentFor(situation, option, chain.id);
       var hook = metadata.dataHook && !/^0x0+$/.test(metadata.dataHook) ? metadata.dataHook : '';
       var preservedHook = hook;
       var preservedUsePay = !!metadata.useDataHookForPay;
@@ -23725,6 +23742,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       var selected = queueEntryForOption(situation, option);
       var baseR = selected[0], baseM = selected[1];
       state.queueMustStartAtByChain[project.chainId] = queueStartFor(option);
+      state.queueParentByChain[project.chainId] = queueParentFor(situation, option, project.chainId);
       state.queueFingerprintByChain[project.chainId] = queueFingerprint(controller, option);
       applyQueueActionCopy(situation, option);
       updateQueueApprovalNote(situation, option);
@@ -24000,6 +24018,10 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   }
   if (state.shopChoice === 'remove' && !state.canRemoveShop) throw new Error('This shop cannot be safely removed through the queue editor.');
   if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
+  var badStart = (state.stages || []).findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
+  if (badStart !== -1) { setStatus('Ruleset #' + (badStart + 1) + ' needs a valid start — a whole number of cycles or a date.', 'error'); return; }
+  var noticeClash = noticeClashIssue(state);
+  if (noticeClash) { setStatus(noticeClash, 'error'); return; }
   if (typeof state.verifyQueuePosition !== 'function') throw new Error('The live queue recheck is unavailable. Nothing was sent.');
   setStatus('Rechecking the live queue…');
   await state.verifyQueuePosition(selected);
