@@ -16,6 +16,7 @@ vi.mock('viem', () => ({
   createPublicClient: runtime.createPublicClient,
   custom: provider => ({ kind: 'custom', provider }),
   http: url => () => ({ config: { kind: 'http', url }, request: async () => {}, value: undefined }),
+  fallback: transports => () => ({ config: { kind: 'fallback', transports }, request: async () => {}, value: undefined }),
 }));
 
 vi.mock('../src/chain.js', () => ({
@@ -44,6 +45,7 @@ vi.mock('../src/chain.js', () => ({
   getCurrentChainId: () => runtime.currentChain,
   getCustomRpc: () => runtime.customRpc,
   defaultRpcFor: chainId => `https://default-${chainId}.invalid`,
+  readRpcUrlsFor: (chainId, customRpc) => (customRpc ? [customRpc] : [`https://default-${chainId}.invalid`]),
 }));
 
 vi.mock('../src/wallet-links.js', () => ({ isMobileDevice: () => runtime.mobile }));
