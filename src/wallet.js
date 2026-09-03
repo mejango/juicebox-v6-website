@@ -2,8 +2,8 @@
 // Wallet connection via viem — direct window.ethereum interaction
 // No wagmi, no RainbowKit. Maximum simplicity for auditability.
 
-import { createWalletClient, createPublicClient, custom, http } from 'viem';
-import { CHAINS, getCurrentChainId, getCustomRpc, defaultRpcFor } from './chain.js';
+import { createWalletClient, createPublicClient, custom, fallback, http } from 'viem';
+import { CHAINS, getCurrentChainId, getCustomRpc, readRpcUrlsFor } from './chain.js';
 import { isMobileDevice } from './wallet-links.js';
 import { detectSafeApp, makeSafeProvider, proposeSafeTransactions } from './safe-app.js';
 export { proposeSafeTransactions } from './safe-app.js';
@@ -192,9 +192,15 @@ export function createPublicClientForChain(chainId) {
   var customRpc = getCustomRpc(chainId) || '';
   var key = chainId + '|' + customRpc;
   if (_readClients[key]) return _readClients[key];
+  // publicnode first, JB Center's keyless read gateway second. viem's fallback moves to the next
+  // transport on transport/provider errors but rethrows execution reverts and user rejections at once,
+  // so a revert is never re-run against the fallback. No default URL (a chain outside DEFAULT_RPC)
+  // falls through to viem's own chain default.
+  var urls = readRpcUrlsFor(chainId, customRpc);
+  var transport = urls.length > 1 ? fallback(urls.map(function (url) { return http(url); })) : http(urls[0]);
   return (_readClients[key] = createPublicClient({
     chain: chain,
-    transport: withBlockLagRetry(http(customRpc || defaultRpcFor(chainId))),
+    transport: withBlockLagRetry(transport),
     batch: { multicall: { wait: 32 } },
   }));
 }
