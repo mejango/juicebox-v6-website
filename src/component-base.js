@@ -1066,7 +1066,7 @@ function txRawJson(tx) {
 // Plain-language confirm summary: an action line + labeled rows, for calls whose ABI decode is unreadable.
 // Rendered with the SAME box + row classes as the decoded tree (chain eyebrow, contract | address, bold
 // title, indented `label: value` lines) so every confirm modal's pretty view looks identical.
-function renderFriendlySummary(summary, tx) {
+export function renderFriendlySummary(summary, tx) {
   if (!summary) return null;
   var wrap = el('div', 'tx-decoded tx-decoded-friendly');
   if (tx && tx.chain) { var ch = el('div', 'tx-decoded-chain'); ch.textContent = tx.chain; wrap.appendChild(ch); }
@@ -1173,6 +1173,62 @@ export function openDialog(titleText, opts) {
   return { dialog: dialog, panel: panel, title: title, closeButton: x, close: close, requestClose: requestClose };
 }
 
+// The wallet-step list every confirm dialog opens with: one item per wallet prompt, advancing as they
+// complete. `steps` are plain labels; `setActive(index, allComplete)` marks earlier items done.
+export function buildTransactionSequence(steps, introText) {
+  var sequence = el('div', 'pay-confirm-sequence');
+  var sequenceIntro = el('div', 'pay-confirm-sequence-intro');
+  sequenceIntro.textContent = introText || ((steps.length === 1 ? 'Your wallet will ask for one action.' : 'Your wallet may ask for up to ' + steps.length + ' actions, depending on existing approvals.') + ' This dialog stays open and advances through each one.');
+  sequence.appendChild(sequenceIntro);
+  var sequenceList = el('ol', 'pay-confirm-sequence-list');
+  var items = [];
+  steps.forEach(function (step, index) {
+    var item = el('li', 'pay-confirm-sequence-step');
+    var number = el('span', 'pay-confirm-sequence-number'); number.textContent = String(index + 1); item.appendChild(number);
+    var label = el('span'); label.textContent = step; item.appendChild(label);
+    items.push(item);
+    sequenceList.appendChild(item);
+  });
+  sequence.appendChild(sequenceList);
+  function setActive(index, allComplete) {
+    items.forEach(function (item, itemIndex) {
+      var complete = !!allComplete || itemIndex < index;
+      item.classList.toggle('complete', complete);
+      item.classList.toggle('active', !allComplete && itemIndex === index);
+      var number = item.querySelector('.pay-confirm-sequence-number');
+      if (number) number.textContent = complete ? '✓' : String(itemIndex + 1);
+    });
+  }
+  setActive(0, false);
+  return { node: sequence, items: items, setActive: setActive };
+}
+
+// 'sendReservedTokensToSplitsOf' → 'Send reserved tokens to splits'
+export function humanizeFunctionName(name) {
+  var words = String(name || '').replace(/(Of|For)$/, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').split(' ');
+  return words.map(function (w, i) { return i === 0 ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : (/^[A-Z0-9]+$/.test(w) ? w : w.toLowerCase()); }).join(' ');
+}
+
+// Default wallet-step labels for a review payload when the caller passes none.
+export function confirmStepsFor(payload, opts) {
+  opts = opts || {};
+  if (opts.steps && opts.steps.length) return opts.steps.slice();
+  var steps = [];
+  if (Array.isArray(payload.chains) && payload.chains.length > 1) {
+    payload.chains.forEach(function (c) { steps.push('Sign for ' + (c.chain || ('chain ' + c.chainId))); });
+    steps.push('Pay the relay fee once');
+    return steps;
+  }
+  if (Array.isArray(payload.transactions) && payload.transactions.length > 1) {
+    payload.transactions.forEach(function (t, i) { steps.push(t.step || ('Send transaction ' + (i + 1) + (t.chain ? ' on ' + t.chain : ''))); });
+    return steps;
+  }
+  if (payload.erc20Approval) steps.push('Approve token access if needed');
+  var main = (payload.summary && payload.summary.action) || payload.action || (payload['function'] && humanizeFunctionName(payload['function'])) || 'Send the transaction';
+  steps.push(main);
+  return steps;
+}
+
 export function confirmTransactionModal(payload, opts) {
   opts = opts || {};
   // View-as is browse-only: every confirm funnel refuses here with a clear notice instead of a review.
@@ -1189,57 +1245,91 @@ export function confirmTransactionModal(payload, opts) {
       closeBtn.addEventListener('click', modal.requestClose);
     });
   }
-  return new Promise(function (resolve) {
-    // Legacy callers await a boolean and expect the modal to close on confirm. `keepOpenForProgress`
-    // (executeTransaction only) opts into the richer behavior: stay open, resolve { ok, showStatus, close }.
-    var keepOpen = !!opts.keepOpenForProgress;
-    var cancelResult = keepOpen ? { ok: false } : false;
-    var resolved = false, inFlight = false;
-    function finish(result) { if (resolved) return; resolved = true; resolve(result); }
-    // Escape, ✕ and backdrop clicks all run through one gate: refused while the reviewed tx is in
-    // flight, and any dismissal that isn't an explicit confirm resolves as cancelled.
-    var modal = openDialog(opts.title || 'Confirm transaction', {
-      canClose: function () { return !inFlight; },
-      onClose: function () { finish(cancelResult); },
-    });
-    var content = el('div', 'pay-confirm');
-    renderConfirmBody(content, payload, opts); // safety note + decoded summary + raw-in-details + audit link
-    var foot = el('div', 'create-modal-foot');
-    var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
-    var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
-    if (!opts.hideCancel) foot.appendChild(cancel);
-    foot.appendChild(confirm); content.appendChild(foot);
-    // Post-confirm progress shows HERE, inside the modal — the modal stays open after "Confirm" so callers
-    // don’t have to render tx status next to a button. Hidden until the tx is in flight.
-    var statusEl = el('div', 'tx-confirm-status'); statusEl.style.display = 'none'; content.appendChild(statusEl);
-    modal.panel.appendChild(content);
-    var teardown = modal.close;
-    function close(result) { finish(result); teardown(); }
-    function showStatus(m, kind, meta) {
-      statusEl.style.display = '';
-      statusEl.className = 'tx-confirm-status ' + (kind === 'error' ? 'error' : kind === 'success' ? 'success' : 'pending');
-      setStatusContent(statusEl, m, meta);
-      // A failed simulation/send is terminal for this reviewed confirmation. Unlock dismissal so the user can
-      // correct the form and try again instead of being trapped behind disabled Cancel/close controls. Confirm
-      // stays disabled because its one-shot promise has already handed the exact reviewed call to executeTransaction.
-      if (kind === 'error') {
-        inFlight = false;
-        cancel.disabled = false;
-        cancel.textContent = 'Close';
-      }
-    }
-    cancel.addEventListener('click', modal.requestClose);
-    confirm.addEventListener('click', function () {
-      if (keepOpen) {
-        // Hand control to the caller: keep the modal open, disable the buttons, and let it drive
-        // showStatus()/close() as the tx progresses. Resolve now so the caller can start.
-        inFlight = true; confirm.disabled = true; cancel.disabled = true;
-        finish({ ok: true, showStatus: showStatus, close: teardown });
-      } else {
-        close(true);
-      }
-    });
+  // Legacy callers await a boolean and expect the modal to close on confirm. `keepOpenForProgress`
+  // (executeTransaction only) opts into the richer behavior: stay open, resolve { ok, showStatus, close, showNext }.
+  // `showNext(payload, opts)` re-reviews a follow-on call in the SAME dialog (its step list advances) and
+  // resolves like a fresh confirm, so multi-transaction flows never open a second dialog.
+  var keepOpen = !!opts.keepOpenForProgress;
+  var cancelResult = keepOpen ? { ok: false } : false;
+  var pendingResolve = null, closed = false, inFlight = false;
+  function settle(result) { var r = pendingResolve; pendingResolve = null; if (r) r(result); }
+  var modal = openDialog(opts.title || 'Confirm transaction', {
+    canClose: function () { return !inFlight; },
+    onClose: function () { closed = true; settle(cancelResult); },
   });
+  var content = el('div', 'pay-confirm');
+  // `steps: false` is the read-only details view — nothing is sent from it, so no wallet-step list.
+  var sequence = buildTransactionSequence(opts.steps === false ? [] : confirmStepsFor(payload, opts), opts.stepsIntro);
+  if (opts.steps !== false) content.appendChild(sequence.node);
+  var stepIndex = opts.stepIndex || 0;
+  var hasApproval = !!payload.erc20Approval;
+  sequence.setActive(stepIndex, false);
+  var reviewHost = el('div', 'pay-confirm-current-action');
+  content.appendChild(reviewHost);
+  function showAction(nextPayload, nextOpts) {
+    reviewHost.innerHTML = '';
+    renderConfirmBody(reviewHost, nextPayload, nextOpts); // safety note + decoded summary + raw-in-details + audit link
+  }
+  showAction(payload, opts);
+  var foot = el('div', 'create-modal-foot');
+  var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
+  var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
+  if (!opts.hideCancel) foot.appendChild(cancel);
+  foot.appendChild(confirm); content.appendChild(foot);
+  // Post-confirm progress shows HERE, inside the modal — the modal stays open after "Confirm" so callers
+  // don’t have to render tx status next to a button. Hidden until the tx is in flight.
+  var statusEl = el('div', 'tx-confirm-status'); statusEl.style.display = 'none'; content.appendChild(statusEl);
+  modal.panel.appendChild(content);
+  var teardown = modal.close;
+  function showStatus(m, kind, meta) {
+    var mainStep = stepIndex + (hasApproval ? 1 : 0);
+    if (meta && meta.step != null) sequence.setActive(meta.step < 0 ? sequence.items.length - 1 : meta.step, false);
+    else if (kind === 'success') sequence.setActive(mainStep + 1, mainStep + 1 >= sequence.items.length);
+    else sequence.setActive(hasApproval && /approving token|token approval/i.test(String(m)) ? stepIndex : mainStep, false);
+    statusEl.style.display = '';
+    statusEl.className = 'tx-confirm-status ' + (kind === 'error' ? 'error' : kind === 'success' ? 'success' : 'pending');
+    setStatusContent(statusEl, m, meta);
+    // A failed simulation/send is terminal for this reviewed confirmation. Unlock dismissal so the user can
+    // correct the form and try again instead of being trapped behind disabled Cancel/close controls. Confirm
+    // stays disabled because its one-shot promise has already handed the exact reviewed call to executeTransaction.
+    if (kind === 'error') {
+      inFlight = false;
+      cancel.disabled = false;
+      cancel.textContent = 'Close';
+    }
+  }
+  function waitForConfirm() {
+    return new Promise(function (resolve) {
+      if (closed) { resolve(cancelResult); return; }
+      pendingResolve = resolve;
+    });
+  }
+  function showNext(nextPayload, nextOpts) {
+    nextOpts = nextOpts || {};
+    stepIndex = nextOpts.stepIndex != null ? nextOpts.stepIndex : stepIndex + 1 + (hasApproval ? 1 : 0);
+    hasApproval = !!nextPayload.erc20Approval;
+    sequence.setActive(stepIndex, false);
+    if (nextOpts.title) modal.title.textContent = nextOpts.title;
+    showAction(nextPayload, nextOpts);
+    confirm.textContent = nextOpts.confirmText || 'Confirm & send';
+    confirm.disabled = false; cancel.disabled = false; cancel.textContent = 'Cancel';
+    statusEl.style.display = 'none';
+    inFlight = false;
+    return waitForConfirm();
+  }
+  cancel.addEventListener('click', modal.requestClose);
+  confirm.addEventListener('click', function () {
+    if (confirm.disabled) return;
+    if (keepOpen) {
+      // Hand control to the caller: keep the modal open, disable the buttons, and let it drive
+      // showStatus()/close() as the tx progresses. Resolve now so the caller can start.
+      inFlight = true; confirm.disabled = true; cancel.disabled = true;
+      settle({ ok: true, showStatus: showStatus, close: teardown, showNext: showNext });
+    } else {
+      settle(true); teardown();
+    }
+  });
+  return waitForConfirm();
 }
 
 export function executeTransaction(opts) {
@@ -1275,9 +1365,16 @@ export function executeTransaction(opts) {
       summary: opts.confirmSummary || undefined,
     };
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
-      payload.erc20Approval = { token: opts.tokenAddr, spender: opts.spenderAddr, amount: opts.approvalAmount };
+      var isNativeToken = opts.tokenAddr.toLowerCase() === NATIVE_TOKEN.toLowerCase() || opts.tokenAddr === ZERO_ADDRESS;
+      if (!isNativeToken) payload.erc20Approval = { token: opts.tokenAddr, spender: opts.spenderAddr, amount: opts.approvalAmount };
     }
-    confirmStep = confirmTransactionModal(payload, { title: opts.confirmTitle || 'Confirm transaction', confirmText: opts.confirmText, note: opts.confirmNote, description: opts.confirmDescription, keepOpenForProgress: true });
+    // Multi-transaction flows pass `confirmSteps` (the whole wallet-step list), `confirmStepIndex` (this call's
+    // place in it), `keepConfirmOpen` (leave the dialog up on success) and, for the follow-on call,
+    // `confirmSession` (the open dialog from the previous call's onSuccess meta) so one dialog carries every step.
+    var modalOpts = { title: opts.confirmTitle || 'Confirm transaction', confirmText: opts.confirmText, note: opts.confirmNote, description: opts.confirmDescription, keepOpenForProgress: true, steps: opts.confirmSteps, stepIndex: opts.confirmStepIndex, stepsIntro: opts.confirmStepsIntro };
+    confirmStep = opts.confirmSession && opts.confirmSession.showNext
+      ? opts.confirmSession.showNext(payload, modalOpts)
+      : confirmTransactionModal(payload, modalOpts);
   }
 
   confirmStep.then(function (r) {
@@ -1287,7 +1384,11 @@ export function executeTransaction(opts) {
       var base = cbs;
       cbs = {
         onStatus: function (m, k, meta) { r.showStatus(m, k, meta); base.onStatus(m, k, meta); },
-        onSuccess: function (m, meta) { if (r.close) r.close(); base.onSuccess(m, meta); },
+        onSuccess: function (m, meta) {
+          if (!opts.keepConfirmOpen) { if (r.close) r.close(); base.onSuccess(m, meta); return; }
+          r.showStatus(m, 'success', meta);
+          base.onSuccess(m, Object.assign({}, meta || {}, { confirmSession: r }));
+        },
         onError: function (m, meta) { r.showStatus(m, 'error', meta); base.onError(m, meta); },
       };
     }

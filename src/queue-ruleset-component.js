@@ -249,6 +249,11 @@ export function renderQueueRulesetComponent() {
     verifyQueueFeedCoverage(state.selectedChain, state.projectId, rulesetConfigs).then(function() {
       executeTransaction({
         ...buildQueueRulesetsArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, rulesetConfigs: rulesetConfigs, memo: state.memo || '' }),
+        confirmSummary: { action: 'Queue rulesets', rows: [
+          ['Queues', rulesetConfigs.length + ' ruleset' + (rulesetConfigs.length === 1 ? '' : 's')],
+          ['Project', '#' + String(state.projectId)],
+          state.memo ? ['Memo', state.memo] : null,
+        ].filter(Boolean) },
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
         onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

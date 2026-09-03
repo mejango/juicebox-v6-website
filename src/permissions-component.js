@@ -292,6 +292,12 @@ export function renderPermissionsComponent() {
 
     executeTransaction({
       ...buildSetPermissionsArgs({ chainId: state.chainId, permissionsAddr: permissionsAddr, account: account, operator: state.operator, projectId: projectId, permissionIds: selectedArr }),
+      confirmSummary: { action: 'Set permissions', rows: [
+        ['Operator', state.operator],
+        ['On behalf of', account],
+        ['Scope', projectId === 0 ? 'all your projects on this chain' : 'project #' + String(projectId)],
+        ['Permissions', selectedArr.length ? selectedArr.join(', ') + ' (replaces the current set)' : 'none — revokes everything'],
+      ] },
       confirmDescription: danger.join(' ') || undefined,
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },

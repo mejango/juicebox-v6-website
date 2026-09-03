@@ -367,11 +367,20 @@ export function renderCashOutComponent() {
       updateUI(); return;
     }
 
+    var reclaimDecimals = state.selectedToken.decimals != null ? Number(state.selectedToken.decimals) : 18;
+    var reclaimSymbol = state.selectedToken.symbol || 'tokens';
     executeTransaction(Object.assign(buildCashOutArgs({
       chainId: chainId, terminalAddr: terminalAddr, holder: holder, projectId: state.projectId,
       cashOutCount: cashOutCount, tokenToReclaim: reclaimToken, beneficiary: beneficiary,
       minReclaimed: preparedRoute.terminalMinimum, metadata: preparedRoute.metadata,
     }), {
+      confirmSummary: { action: 'Cash out', rows: [
+        ['Cashing out', formatAmount(cashOutCount, 18) + ' tokens'],
+        ['You receive', (preparedRoute.via === 'amm' ? '≈ ' : '') + formatAmount(preparedRoute.expected, reclaimDecimals) + ' ' + reclaimSymbol],
+        ['Minimum', formatAmount(preparedRoute.terminalMinimum, reclaimDecimals) + ' ' + reclaimSymbol + ' — reverts below this'],
+        ['Route', preparedRoute.via === 'amm' ? 'sold through the buyback pool' : 'burned against the project surplus'],
+        ['To', beneficiary],
+      ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

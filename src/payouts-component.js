@@ -406,6 +406,12 @@ export function renderPayoutsComponent() {
       state.phase = 'ready'; state.txStatus = null; updateUI();
       executeTransaction({
         ...buildSendPayoutsArgs({ chainId: chainId, terminalAddr: terminalAddr, projectId: state.projectId, token: tokenAddr, amount: amountParsed, currency: currency, minPaidOut: minPaidOut }),
+        confirmSummary: { action: 'Send payouts', rows: [
+          ['Sending', amountText + ' (currency ' + String(currency) + ') to the payout splits'],
+          ['Token', state.selectedToken.symbol || tokenAddr],
+          ['Minimum paid out', String(minPaidOut) + ' raw terminal-token units — reverts below this'],
+          ['Project', '#' + String(state.projectId)],
+        ] },
         confirmNote: 'The live simulation returned ' + String(quoted) + ' raw terminal-token units. This transaction reverts below ' + String(minPaidOut) + ' instead of silently paying less.',
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },

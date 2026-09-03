@@ -4,7 +4,7 @@
 
 import {
   el, createComponentWrapper, createWalletButton, executeTransaction, executeRead,
-  renderError, getAddress, getAccount, NATIVE_TOKEN,
+  renderError, getAddress, getAccount, NATIVE_TOKEN, formatAmount,
 } from './component-base.js';
 import { createDefaultRuleset, buildRulesetConfigs } from './ruleset-config.js';
 import { renderRulesetFieldset } from './ruleset-ui.js';
@@ -229,6 +229,12 @@ export function renderLaunchComponent() {
       functionName: 'launchProjectFor',
       args: [owner, state.projectUri || '', rulesetConfigs, terminalConfigs, state.memo || ''],
       value: creationFee,
+      confirmSummary: { action: 'Launch project', rows: [
+        ['Owner', owner],
+        ['Rulesets', String(rulesetConfigs.length)],
+        ['Accepts', terminalAddr ? 'ETH through JBMultiTerminal' : 'no terminal yet'],
+        ['Creation fee', formatAmount(creationFee || 0n, 18) + ' ETH'],
+      ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

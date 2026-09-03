@@ -594,6 +594,13 @@ export function renderPayComponent() {
         memo: state.memo || '',
         route: route,
       }), {
+        confirmSummary: { action: 'Pay project #' + String(state.projectId), rows: [
+          ['Paying', state.amount + ' ' + (state.selectedToken.symbol || '')],
+          ['You get', formatTokenCount(route.preview.received) + ' tokens' + (route.preview.reserved ? ' (' + formatTokenCount(route.preview.reserved) + ' reserved for the project)' : '')],
+          ['Minimum', formatTokenCount(quotedOutputFloor(BigInt(route.preview.received), 9900)) + ' tokens — reverts below this'],
+          ['To', beneficiary],
+          state.memo ? ['Memo', state.memo] : null,
+        ].filter(Boolean) },
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
         onError: function(msg) { state.phase = 'ready'; state.error = msg; state.txStatus = null; updateUI(); },

@@ -4130,32 +4130,58 @@ async function runDeploy(state, owner) {
       };
     }),
   };
+  var isRev = state.projectType === 'revnet';
+  var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
+  reviewPayload.summary = {
+    action: isRev ? 'Deploy revnet' : 'Launch project',
+    rows: [
+      ['Name', state.details.name || 'project'],
+      [isRev ? 'Operator' : 'Owner', isRev ? (operatorRaw || owner) : owner],
+      ['Chains', plans.map(function (p) { return chainName(p.chainId); }).join(', ')],
+      isRev ? ['Token', state.details.ticker || 'TOKEN'] : null,
+      ['Accepts', (state.accepts || []).map(function (t) { return t === 'eth' ? 'ETH' : t === 'usdc' ? 'USDC' : 'custom token'; }).join(', ') || 'ETH'],
+      [isRev ? 'Stages' : 'Rulesets', String((state.stages || []).length || 1)],
+      ['Creation fee', formatEther(plans[0].value) + ' ETH per chain'],
+    ].filter(Boolean),
+  };
   var reviewOk = await confirmTransactionModal(reviewPayload, {
     title: multichain ? 'Review the raw data sent to Relayr' : 'Review the transaction',
-    confirmText: 'Confirm & simulate',
+    confirmText: multichain ? 'Confirm & simulate' : (isRev ? 'Confirm & deploy' : 'Confirm & launch'),
+    keepOpenForProgress: !multichain,
+    steps: multichain
+      ? plans.map(function (p) { return 'Sign for ' + chainName(p.chainId); }).concat(['Pay the relay fee once'])
+      : [(isRev ? 'Deploy the revnet' : 'Launch the project') + ' on ' + chainName(plans[0].chainId)],
     note: multichain
       ? 'This is the exact per-chain calldata that will be wrapped into ERC-2771 forward requests and sent to Relayr for a quote. Nothing is signed or sent until you confirm — simulation runs next, then you pay once.'
       : 'This is the exact transaction. Nothing is sent until you confirm — it’s simulated next, then sent to your wallet to sign.',
   });
-  if (!reviewOk) { push('Launch cancelled — nothing was simulated or sent.'); return false; }
+  if (!reviewOk || (typeof reviewOk === 'object' && !reviewOk.ok)) { push('Launch cancelled — nothing was simulated or sent.'); return false; }
+  var confirmCtx = typeof reviewOk === 'object' ? reviewOk : null;
+  function pushLive(text, kind) { push(text, kind); if (confirmCtx) confirmCtx.showStatus(text, kind === 'err' ? 'error' : 'pending'); }
 
   // Single chain → simulate locally (eth_call), then one direct wallet transaction (creation fee as
   // msg.value). Already reviewed above, so skip executeTransaction's own confirm (the wallet still shows
   // its native signing prompt).
   if (plans.length === 1) {
     var p0 = plans[0];
-    push('Simulating the ' + (state.projectType === 'revnet' ? 'revnet deploy' : 'launch') + ' on ' + chainName(p0.chainId) + '…');
     try {
-      await simulateTransaction({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, account: signer });
-      push('Simulation passed on ' + chainName(p0.chainId), 'ok');
+      pushLive('Simulating the ' + (state.projectType === 'revnet' ? 'revnet deploy' : 'launch') + ' on ' + chainName(p0.chainId) + '…');
+      try {
+        await simulateTransaction({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, account: signer });
+        push('Simulation passed on ' + chainName(p0.chainId), 'ok');
+      } catch (e) {
+        throw new Error('Could not simulate on ' + chainName(p0.chainId) + ' — ' + friendlyDeployError(e));
+      }
+      if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the launch transaction again.');
+      pushLive('Confirm in your wallet for ' + chainName(p0.chainId) + ' (incl. ' + formatEther(p0.value) + ' ETH creation fee)…');
+      var hash0 = await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, skipConfirm: true, onStatus: function (m, kind, meta) { push(m); if (confirmCtx) confirmCtx.showStatus(m, 'pending', meta); } });
+      pushLive('Reading the new project…');
+      await captureDeployed(state, p0.chainId, hash0);
     } catch (e) {
-      throw new Error('Could not simulate on ' + chainName(p0.chainId) + ' — ' + friendlyDeployError(e));
+      if (confirmCtx) confirmCtx.showStatus(friendlyDeployError(e), 'error');
+      throw e;
     }
-    if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the launch transaction again.');
-    push('Confirm in your wallet for ' + chainName(p0.chainId) + ' (incl. ' + formatEther(p0.value) + ' ETH creation fee)…');
-    var hash0 = await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, skipConfirm: true, onStatus: function (m) { push(m); } });
-    push('Reading the new project…');
-    await captureDeployed(state, p0.chainId, hash0);
+    if (confirmCtx) confirmCtx.close();
     return;
   }
 

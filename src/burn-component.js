@@ -255,6 +255,12 @@ export function renderBurnComponent() {
 
     executeTransaction({
       ...buildBurnArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, holder: holder, projectId: state.projectId, tokenCount: tokenCount, memo: state.memo || '' }),
+      confirmSummary: { action: 'Burn tokens', rows: [
+        ['Burning', formatAmount(tokenCount, 18) + ' tokens — gone for good'],
+        ['From', holder],
+        ['Project', '#' + String(state.projectId)],
+        state.memo ? ['Memo', state.memo] : null,
+      ].filter(Boolean) },
       reverify: async function () {
         var latestBalance = await executeRead({
           chainId: state.selectedChain,

@@ -11,8 +11,9 @@ const budgets = {
   // complete Permissions card — owner row, wildcard-scope grants, per-chain sets: 8,695,219 B raw;
   // amounts-first LP sizing — range solver + mode toggle in the add-liquidity modal: 8,700,528 B raw;
   // later-ruleset start control (N cycles / date) + JBDeadline launch-queue gate: 8,761,482 B raw / 1,266,105 B gzip;
-  // queue-editor follow-on rulesets + JB Center read-RPC fallback: 8,564 KB raw / 1,268,292 B gzip).
-  'dist/app.js': { raw: 8_780_000, gzip: 1_272_000 },
+  // queue-editor follow-on rulesets + JB Center read-RPC fallback: 8,564 KB raw / 1,268,292 B gzip;
+  // Pay-style stepped confirm for every write — step lists, showNext sessions, friendly rows: 8,799,344 B raw / 1,275,448 B gzip).
+  'dist/app.js': { raw: 8_820_000, gzip: 1_280_000 },
   'dist/style.css': { raw: 243_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },

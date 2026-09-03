@@ -149,6 +149,12 @@ export function renderDeployERC20Component() {
 
     executeTransaction({
       ...buildDeployErc20Args({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, name: state.tokenName.trim(), symbol: state.tokenSymbol.trim(), salt: salt }),
+      confirmSummary: { action: 'Deploy ERC-20 token', rows: [
+        ['Name', state.tokenName.trim()],
+        ['Symbol', state.tokenSymbol.trim()],
+        ['Project', '#' + String(state.projectId)],
+        ['One-time', 'a project can deploy its token once'],
+      ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

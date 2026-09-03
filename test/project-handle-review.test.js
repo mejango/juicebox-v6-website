@@ -93,12 +93,13 @@ describe('project-handle route lifecycle', () => {
     expect(editor).not.toContain('Required ENS text record:');
     expect(editor).not.toContain("normalizedHint.textContent = 'URL: @'");
     expect(editor).toContain("el('div', 'operator-edit-across project-handle-location')");
-    expect(editor).toContain('var handleSequence = buildTransactionSequence([');
+    expect(editor).toContain('var handleSteps = [');
     expect(editor).toContain('ENS setText on Ethereum');
     expect(editor).toContain('JBProjectHandles.setEnsNamePartsFor on Ethereum');
     expect(editor).toContain('Verified steps skip; queued Safe steps resume without duplicates.');
-    expect(editor).toContain("if (next.kind === 'done') handleSequence.setActive(2, true)");
-    expect(editor).toContain("else if (next.kind === 'publish' || next.kind === 'publish-pending') handleSequence.setActive(1, false)");
+    expect(editor).toContain('steps: handleSteps, stepIndex: 0, stepsIntro: handleStepsIntro');
+    expect(editor).toContain('steps: handleSteps, stepIndex: 1, stepsIntro: handleStepsIntro');
+    expect(editor).not.toContain('buildTransactionSequence(');
     expect(editor).toContain("var primary = el('button', 'operator-cta operator-edit-submit')");
     expect(editor).toContain("canClose: function () { return !busy; }");
     expect(editor).not.toContain("textContent = '1. Set ENS record'");
@@ -117,15 +118,18 @@ describe('project-handle route lifecycle', () => {
     expect(editor).toContain('result.relayr || result.executedReady || Number(result.executed) > 0');
   });
 
-  it('reuses the Approve + Pay transaction sequence primitive for the handle progress modal', () => {
-    var source = readFileSync('src/discover.js', 'utf8');
-    var primitiveStart = source.indexOf('function buildTransactionSequence');
-    var payStart = source.indexOf('function openTxConfirm', primitiveStart);
-    var payEnd = source.indexOf('function openPayConfirm', payStart);
+  it('reuses the shared transaction sequence primitive for every confirm dialog', () => {
+    var base = readFileSync('src/component-base.js', 'utf8');
+    var primitiveStart = base.indexOf('export function buildTransactionSequence');
+    var modalStart = base.indexOf('export function confirmTransactionModal', primitiveStart);
     expect(primitiveStart).toBeGreaterThan(-1);
-    expect(source.slice(primitiveStart, payStart)).toContain("el('div', 'pay-confirm-sequence')");
-    expect(source.slice(primitiveStart, payStart)).toContain("item.classList.toggle('complete', complete)");
-    expect(source.slice(payStart, payEnd)).toContain('sequenceUi = buildTransactionSequence(opts.sequenceSteps)');
+    expect(base.slice(primitiveStart, modalStart)).toContain("el('div', 'pay-confirm-sequence')");
+    expect(base.slice(primitiveStart, modalStart)).toContain("item.classList.toggle('complete', complete)");
+    expect(base.slice(modalStart)).toContain('buildTransactionSequence(opts.steps === false ? [] : confirmStepsFor(payload, opts), opts.stepsIntro)');
+    var source = readFileSync('src/discover.js', 'utf8');
+    var payStart = source.indexOf('function openTxConfirm');
+    var payEnd = source.indexOf('function openPayConfirm', payStart);
+    expect(source.slice(payStart, payEnd)).toContain('sequenceUi = buildTransactionSequence(opts.sequenceSteps, opts.sequenceIntro)');
   });
 
   it('locks nested Safe review work and reuses an exact pending call', () => {

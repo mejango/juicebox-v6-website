@@ -152,6 +152,11 @@ export function renderReservedComponent() {
 
     executeTransaction({
       ...buildSendReservedArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId }),
+      confirmSummary: { action: 'Distribute reserved tokens', rows: [
+        ['Sends', 'all pending reserved tokens to the reserved splits'],
+        ['Project', '#' + String(state.projectId)],
+        ['Who can call', 'anyone — no fee'],
+      ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadPending(); updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

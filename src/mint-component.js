@@ -6,7 +6,7 @@ import {
   el, createComponentWrapper, createProjectAndChainInput,
   createBeneficiaryInput, createWalletButton, discoverChains, selectChain,
   firstChainForNetwork, executeTransaction, renderError, getAddress,
-  getChainTokens, parseAmount, parseHashDefaults, getBeneficiaryAddress,
+  getChainTokens, parseAmount, formatAmount, parseHashDefaults, getBeneficiaryAddress,
 } from './component-base.js';
 
 export var mintTokensAbi = [{
@@ -182,6 +182,12 @@ export function renderMintComponent() {
 
     executeTransaction({
       ...buildMintArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, tokenCount: tokenCount, beneficiary: beneficiary, memo: state.memo || '', useReservedPercent: state.useReservedPercent }),
+      confirmSummary: { action: 'Mint tokens', rows: [
+        ['Minting', formatAmount(tokenCount, 18) + ' tokens'],
+        ['To', beneficiary],
+        ['Reserved percent', state.useReservedPercent ? 'applied — the reserved share accrues to the project' : 'not applied — the beneficiary gets the full amount'],
+        ['Project', '#' + String(state.projectId)],
+      ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
