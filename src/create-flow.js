@@ -1308,6 +1308,66 @@ function terminalStage(s1) {
   return s;
 }
 
+// JBRulesets.deriveStartFrom: the start a ruleset queued on `base` gets — the base's first cycle boundary at
+// or after mustStartAtOrAfter (0 → the contract substitutes block.timestamp → the very next boundary).
+export function deriveStartFrom(baseStart, baseDuration, mustStartAtOrAfter) {
+  if (!baseDuration) return mustStartAtOrAfter;
+  var nextImmediate = baseStart + baseDuration;
+  if (nextImmediate >= mustStartAtOrAfter) return nextImmediate;
+  var start = mustStartAtOrAfter - ((mustStartAtOrAfter - nextImmediate) % baseDuration);
+  while (mustStartAtOrAfter > start) start += baseDuration;
+  return start;
+}
+// A later custom-flow stage's mustStartAtOrAfter given the previous stage's (estimated) start + duration.
+// 0 keeps today's "next cycle boundary" encoding; N > 1 cycles or a date becomes an absolute timestamp.
+function stageMustStartAtOrAfter(stage, prevStart, prevDuration) {
+  if (stage.startMode === 'date') return Number(stage.startDate) || 0;
+  var n = Number(stage.startCycles) || 1;
+  return n > 1 ? prevStart + n * prevDuration : 0;
+}
+function stageStartOk(stage) {
+  if (stage.startMode === 'date') return Number(stage.startDate) > 0;
+  var n = Number(stage.startCycles);
+  return Number.isInteger(n) && n >= 1;
+}
+// Every deployed stage's encoded mustStartAtOrAfter and the start it lands on, chained from stage 1's known
+// start: its scheduled time, the multichain pin, or `now` for a single chain (stage 1 starts at the deploy
+// block; "N cycles" is exact as long as the tx lands within one duration of clicking Launch). The queue
+// editor keeps every later stage at 0 — its first stage's start isn't known here.
+function stageStarts(state, effectiveStages, firstStart, now) {
+  var musts = [firstStart], starts = [firstStart || now];
+  for (var i = 1; i < effectiveStages.length; i++) {
+    var prevStart = starts[i - 1], prevDuration = effectiveStages[i - 1].durationSeconds || 0;
+    var must = (state.queueEditor || i >= state.stages.length) ? 0 : stageMustStartAtOrAfter(effectiveStages[i], prevStart, prevDuration);
+    musts.push(must);
+    starts.push(deriveStartFrom(prevStart, prevDuration, must || now));
+  }
+  return { musts: musts, starts: starts };
+}
+var DEADLINE_SECONDS = { '3hours': 3 * 3600, '1day': 86400, '3days': 3 * 86400, '7days': 7 * 86400 };
+// A stage queued in the launch tx has id ≈ block.timestamp; JBDeadline returns Failed when start − id is
+// shorter than its deadline, so the stage silently never takes effect and the earlier ruleset keeps
+// cycling. Covers the standby/terminal stage "Afterwards" appends too. Returns the warning text or null.
+function noticeClashIssue(state) {
+  if (state.projectType === 'revnet' || state.queueEditor || !deadlineApplies(state)) return null;
+  var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === (state.stages[0] || {}).deadline; });
+  var secs = dl ? DEADLINE_SECONDS[dl.key] : 0;
+  if (!secs) return null;
+  var now = Math.floor(Date.now() / 1000);
+  var first = state.stages[0];
+  var firstStart = first.schedule ? Number(first.schedule) : (state.chainIds.length > 1 ? now + 600 : 0);
+  var starts = stageStarts(state, resolveStages(state), firstStart, now).starts;
+  for (var i = 1; i < starts.length; i++) {
+    if (starts[i] - now < secs) {
+      var who = i < state.stages.length ? 'Ruleset #' + (i + 1) : 'The closing ruleset (Afterwards)';
+      var lead = Math.floor((starts[i] - now) / 3600) * 3600;
+      return who + ' would start ' + secondsLabel(lead) + ' after launch, sooner than the ' + dl.detailLabel
+        + ' deadline, so the approval condition would reject it and it would never take effect. Shorten the deadline or make the earlier rules run longer.';
+    }
+  }
+  return null;
+}
+
 // Returns the index of the first non-final stage with no duration (which would break sequencing), or -1.
 function badStageIndex(state) {
   for (var i = 0; i < state.stages.length - 1; i++) {
@@ -1452,6 +1512,9 @@ export function createStage() {
     reservedRecipients: [], tokenAdvancedOpen: false,
     // revnet-only stage fields (ignored by the custom flow)
     cutFreqDays: '30', autoIssuances: [], startDaysAfter: '30',
+    // custom flow, stage 2+: start after N cycles of the previous ruleset, or on a date (snapped UP to the
+    // previous ruleset's cycle boundary by JBRulesets.deriveStartFrom). 1 cycle encodes mustStartAtOrAfter 0.
+    startMode: 'cycles', startCycles: '1', startDate: '',
     // payouts (single-token). Multi-accounting-context queues use payoutByKind instead (keyed by token kind).
     payoutMode: 'none', payoutRecipients: [], payoutByKind: {},
     // surplus allowance — owner can withdraw from surplus (beyond payouts) up to a cap each ruleset
@@ -1500,7 +1563,7 @@ export function renderStages(state, render, opts) {
     var notes = {
       wait: 'The project idles safely — no issuance, payments paused, cash outs preserved — until the project owner changes it.',
       terminal: (state.queueEditor ? 'The new ruleset’s' : 'Ruleset #1’s') + ' terms continue on forever, without cycling again.',
-      cycle: (state.queueEditor ? 'The new ruleset' : 'Ruleset #1') + ' repeats its cycle until the project owner changes it. Changes can only take effect once a cycled ruleset ends.',
+      cycle: (state.queueEditor ? 'The new ruleset' : 'Ruleset #1') + ' repeats its cycle until the project owner changes it. Changes can only take effect once a cycled ruleset ends.' + (state.queueEditor ? '' : ' To hand off to new rules after a set number of cycles or on a date, pick Custom and set when Ruleset #2 starts.'),
     };
     wrap.appendChild(infoNote(notes[state.afterMode] || ''));
 
@@ -1895,6 +1958,13 @@ function setBulletSummary(elx, parts) {
   parts.forEach(function (p) { var d = el('div', 'create-sum-li'); d.textContent = '• ' + p; elx.appendChild(d); });
 }
 
+function startLabel(stage, idx) {
+  if (stage.startMode === 'date') {
+    return stage.startDate ? 'Starts ' + new Date(Number(stage.startDate) * 1000).toLocaleString() + ', snapped to Ruleset #' + idx + '’s cycle' : 'Starts on a date';
+  }
+  var n = Number(stage.startCycles) || 1;
+  return 'Starts after ' + n + ' cycle' + (n === 1 ? '' : 's') + ' of Ruleset #' + idx;
+}
 function stageSummaryRaw(stage, idx, state) {
   var parts = [];
   if (state.queueEditor) {
@@ -1902,7 +1972,7 @@ function stageSummaryRaw(stage, idx, state) {
       ? (state.queueStartSummary || 'Starts when the queued change becomes eligible')
       : 'Starts after the preceding queued ruleset');
   } else {
-    parts.push(idx === 0 ? ((stage.scheduleOn && stage.schedule) ? 'Starts at a set time' : 'Starts at launch') : 'Starts after Ruleset #' + idx);
+    parts.push(idx === 0 ? ((stage.scheduleOn && stage.schedule) ? 'Starts at a set time' : 'Starts at launch') : startLabel(stage, idx));
   }
   parts.push(!stage.durationSeconds ? 'lasts until changed by owner'
     : (stage.durationSeconds === FOREVER_SECONDS ? 'lasts forever' : 'lasts ' + secondsLabel(stage.durationSeconds)));
@@ -2031,10 +2101,37 @@ function stageTiming(stage, idx, isLast, render, state) {
       }));
       w.appendChild(fieldBlock(null, false, ww));
     }
+  } else if (state.queueEditor) {
+    w.appendChild(infoNote('This following ruleset begins automatically when the preceding queued ruleset ends.'));
   } else {
-    w.appendChild(infoNote(state.queueEditor
-      ? 'This following ruleset begins automatically when the preceding queued ruleset ends.'
-      : 'Stage ' + (idx + 1) + ' begins automatically when Stage ' + idx + ' ends.'));
+    var sf = el('div', 'create-field');
+    var slab = el('label', 'create-label'); slab.textContent = 'Starts'; sf.appendChild(slab);
+    var srow = el('div', 'create-amount-row');
+    var msel = el('select', 'field create-input create-input-auto');
+    [['cycles', 'After'], ['date', 'On a date']].forEach(function (o) {
+      var op = el('option', ''); op.value = o[0]; op.textContent = o[1]; if (stage.startMode === o[0]) op.selected = true; msel.appendChild(op);
+    });
+    msel.addEventListener('change', function () { stage.startMode = msel.value; render(); });
+    fitSelect(msel); srow.appendChild(msel);
+    if (stage.startMode === 'date') {
+      var di = el('input', 'field create-input'); di.type = 'datetime-local';
+      if (stage.startDate) di.value = timestampToZonedInput(stage.startDate, 'datetime');
+      di.addEventListener('input', function () { stage.startDate = di.value ? (zonedInputToTimestamp(di.value, 'datetime') || '') : ''; });
+      srow.appendChild(di);
+      sf.appendChild(srow);
+      sf.appendChild(timeZoneControl(di, { label: 'Ruleset #' + (idx + 1) + ' start date and time', getTimestamp: function () { return stage.startDate; } }));
+      var dh = el('div', 'create-hint'); dh.textContent = 'Rule changes land on cycle boundaries, so the start snaps to Ruleset #' + idx + '’s first cycle ending at or after this date.'; sf.appendChild(dh);
+    } else {
+      var ni = el('input', 'field create-split-pct'); ni.type = 'number'; ni.min = '1'; ni.step = '1'; ni.value = stage.startCycles;
+      ni.addEventListener('input', function () { stage.startCycles = ni.value.trim(); });
+      ni.addEventListener('change', function () { render(); });
+      srow.appendChild(ni);
+      var nl = el('span', ''); nl.style.marginLeft = '8px'; nl.textContent = 'cycle' + (Number(stage.startCycles) === 1 ? '' : 's') + ' of Ruleset #' + idx; srow.appendChild(nl);
+      sf.appendChild(srow);
+      var ch = el('div', 'create-hint'); ch.textContent = 'Ruleset #' + idx + ' repeats that many times, then these rules take over.'; sf.appendChild(ch);
+    }
+    w.appendChild(sf);
+    if (!stageStartOk(stage)) w.appendChild(warnNote(stage.startMode === 'date' ? 'Pick a start date for this ruleset.' : 'Enter a whole number of cycles (at least 1).'));
   }
   // Accept payments — first thing after timing. Pausing payments idles token issuance (see tokenSection).
   w.appendChild(toggleRow('Accept payments', dz('The project can receive payments.', 'The project can’t receive payments.'), !stage.pausePay, function (v) { stage.pausePay = !v; render(); }));
@@ -3263,6 +3360,8 @@ function renderDeploy(state, render) {
   var deadlineBad = deadlinePresetIssue(state); // preset approval hook (JBDeadline) unmanifested on a selected chain
   var lpBad = lpHookIssue(state); // Fund market split with the LP fee hook unmanifested on a selected chain
   var mediaBad = shopMediaUploadIssue(state); // never launch while an item attachment is pending/failed
+  var noticeBad = noticeClashIssue(state); // a launch-queued stage the JBDeadline hook would reject
+  var startBad = isRev ? -1 : state.stages.findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
   var exportRow = el('div', 'create-predeploy-export-row');
   var exportBeforeDeploy = el('button', 'create-io-btn create-predeploy-export');
   exportBeforeDeploy.type = 'button'; exportBeforeDeploy.textContent = 'Export your configuration';
@@ -3273,7 +3372,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!noticeBad || startBad !== -1 || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3291,6 +3390,8 @@ function renderDeploy(state, render) {
   if (deadlineBad) wrap.appendChild(warnNote(deadlineBad));
   if (lpBad) wrap.appendChild(warnNote(lpBad));
   if (mediaBad) wrap.appendChild(warnNote(mediaBad));
+  if (noticeBad) wrap.appendChild(warnNote(noticeBad));
+  if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start — a whole number of cycles or a date — on the Rulesets step.'));
   if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
   if (!state.tos) wrap.appendChild(infoNote('Check the box above to confirm you accept the risks before ' + (isRev ? 'deploying.' : 'launching.')));
@@ -4177,12 +4278,14 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var terminalConfigs = buildTerminalConfigs(chainId, state, state.swapRouter);
   var effectiveStages = resolveStages(state);
   var deadlineOn = deadlineApplies(state);
+  var firstStart = effectiveStages[0].schedule ? Number(effectiveStages[0].schedule) : (immediateStart || 0);
+  var musts = stageStarts(state, effectiveStages, firstStart, Math.floor(Date.now() / 1000)).musts;
   var stageRulesets = function (payHook) {
     return buildRulesetConfigs(
       effectiveStages.map(function (s, i) {
         // The appended standby/terminal stage (index ≥ user-stage count) inherits the last user stage's overrides.
         var userIdx = Math.min(i, state.stages.length - 1);
-        return assembleRuleset(state, s, userIdx, chainId, i === 0, deadlineOn, immediateStart);
+        return assembleRuleset(state, s, userIdx, chainId, musts[i], deadlineOn);
       }),
       payHook ? { payDataHookVariant: true } : undefined);
   };
@@ -4393,8 +4496,8 @@ function buildRevStage(state, stage, idx, chainId, start) {
 }
 
 // Assemble a single ruleset state object (createDefaultRuleset shape) from the wizard steps.
-// Build one JBRulesetConfig from a stage. isFirst => stage 1 (honors scheduled launch); later stages
-// queue with mustStartAtOrAfter 0 so the controller chains them after the previous stage's duration.
+// Build one JBRulesetConfig from a stage. `mustStartAtOrAfter` comes from stageStarts: stage 1's scheduled
+// time / multichain pin / 0, later stages 0 (next cycle boundary) or an absolute N-cycles/date start.
 // Encode a queue's rulesets for one chain — the same stage→JBRulesetConfig[] mapping the launcher uses
 // (resolveStages applies the "Afterwards" choice; assembleRuleset encodes each), minus the NFT/terminal
 // scaffolding. `immediateStart` aligns the first ruleset across chains for an omnichain queue (0 = next
@@ -4402,13 +4505,15 @@ function buildRevStage(state, stage, idx, chainId, start) {
 export function buildQueueRulesetConfigs(state, chainId, immediateStart, opts) {
   var effectiveStages = resolveStages(state);
   var deadlineOn = deadlineApplies(state);
+  var firstStart = effectiveStages[0].schedule ? Number(effectiveStages[0].schedule) : (immediateStart || 0);
+  var musts = stageStarts(state, effectiveStages, firstStart, Math.floor(Date.now() / 1000)).musts;
   return buildRulesetConfigs(effectiveStages.map(function (s, i) {
     var userIdx = Math.min(i, state.stages.length - 1);
-    return assembleRuleset(state, s, userIdx, chainId, i === 0, deadlineOn, immediateStart || 0);
+    return assembleRuleset(state, s, userIdx, chainId, musts[i], deadlineOn);
   }), opts);
 }
 
-function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn, immediateStart) {
+function assembleRuleset(state, stage, userStageIdx, chainId, mustStartAtOrAfter, deadlineOn) {
   var lockOk = splitLockAllowed(stage); // split locks only encode for a fixed-duration ruleset (not Flexible)
   // Per-chain overrides (amount + beneficiary), keyed by user-stage + recipient index; fall back to defaults.
   var amtAt = function (x, idx) { return chainPayoutAmount(state, chainId, userStageIdx, idx); };
@@ -4421,10 +4526,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   var reservedPid = function (x, idx) { return projAt(x, 'rpid:' + userStageIdx + ':' + idx); };
   var rs = createDefaultRuleset();
   rs.baseCurrency = stage.baseCurrency || 1;
-  // First ruleset start: scheduled time if set; else 0 ("start at the deploy block") for single chain. For
-  // MULTICHAIN "immediately", use the shared `immediateStart` (one deploy-time timestamp, identical on every
-  // chain) so each chain's first ruleset starts at the SAME moment instead of its own block-confirmation time.
-  rs.mustStartAtOrAfter = isFirst ? (stage.schedule ? Number(stage.schedule) : (immediateStart || 0)) : 0;
+  rs.mustStartAtOrAfter = mustStartAtOrAfter || 0;
   rs.durationPreset = -1; rs.durationCustom = String(stage.durationSeconds || 0); // exact seconds via custom path
 
   var custom = stage.tokenMode === 'custom';
@@ -5131,7 +5233,7 @@ export const __test = {
   createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
   verifyLaunchFeedCoverage, launchBaseCurrencies, revnetBaseCurrencyId,
-  lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft,
+  lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft, noticeClashIssue, stageMustStartAtOrAfter,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft, renderRevnetStages,
   // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.
   revDeployAbi, revDeploy721Abi, deployer721Abi, omnichainAbi, omnichain721Abi,

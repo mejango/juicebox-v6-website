@@ -9,8 +9,9 @@ const budgets = {
   // persisted exact Relayr/Safe completion proof: 8,667,995 B raw / 1,246,408 B gzip;
   // EIP-7702 authority support + exact pending-Safe-call reuse: 8,684,397 B raw / 1,249,797 B gzip;
   // complete Permissions card — owner row, wildcard-scope grants, per-chain sets: 8,695,219 B raw;
-  // amounts-first LP sizing — range solver + mode toggle in the add-liquidity modal: 8,700,528 B raw).
-  'dist/app.js': { raw: 8_760_000, gzip: 1_266_000 },
+  // amounts-first LP sizing — range solver + mode toggle in the add-liquidity modal: 8,700,528 B raw;
+  // later-ruleset start control (N cycles / date) + JBDeadline launch-queue gate: 8,761,482 B raw / 1,266,105 B gzip).
+  'dist/app.js': { raw: 8_770_000, gzip: 1_268_000 },
   'dist/style.css': { raw: 243_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },
