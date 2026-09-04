@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { downsampleTimeSeries, smoothPriceSeries } from '../src/time-series.js';
+import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from '../src/time-series.js';
 
 describe('downsampleTimeSeries', () => {
   it('retains endpoints and a material spike in timestamp order', () => {
@@ -38,5 +38,18 @@ describe('smoothPriceSeries', () => {
       { timestamp: 100, value: 12 },
     ];
     expect(smoothPriceSeries(points)).toEqual(points);
+  });
+});
+
+describe('bucketPoolReserves', () => {
+  it('shows a change landing in the last half of the final bucket', () => {
+    const latest = { timestamp: 99, pairAmount: 9, tokenAmount: 90, pairValue: 9, tokenValue: 9 };
+    const buckets = bucketPoolReserves(
+      [{ timestamp: 10, pairAmount: 1, tokenAmount: 20, pairValue: 1, tokenValue: 2 }, latest],
+      0,
+      100,
+      4,
+    );
+    expect(buckets.at(-1)).toEqual({ ...latest, timestamp: 87.5 });
   });
 });
