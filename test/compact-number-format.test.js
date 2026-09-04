@@ -24,6 +24,7 @@ describe('formatCompactTokenAmount', () => {
   it('trims trailing zeros rather than padding', () => {
     expect(formatCompactTokenAmount(wei(1000))).toBe('1k');
     expect(formatCompactTokenAmount(wei(2000000))).toBe('2m');
+    expect(formatCompactTokenAmount(wei(600000))).toBe('600k');
   });
 
   it('handles zero and absent values', () => {

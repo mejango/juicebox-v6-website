@@ -91,6 +91,36 @@ describe('mergeSameTxActivityRows', () => {
     expect(reservePercentLabel('1000', null)).toBe('');
   });
 
+  it('folds a reserved distribution with its receipts: the total as headline, a recipient per bullet', () => {
+    const tx = { chainId: 8453, txHash: '0xrs', timestamp: 1, from: '0xcaller' };
+    const rows = projectFeedRowsFromEvents([
+      Object.assign({}, tx, { sendReservedTokensToSplitEvent: { tokenCount: '600000000000000000000000', beneficiary: '0x3333333333333333333333333333333333333333', splitProjectId: 0, from: '0xcaller', txHash: '0xrs', timestamp: 1 } }),
+      Object.assign({}, tx, { sendReservedTokensToSplitsEvent: { tokenCount: '3600000000000000000000000', from: '0xcaller', txHash: '0xrs', timestamp: 1 } }),
+      Object.assign({}, tx, { sendReservedTokensToSplitEvent: { tokenCount: '3000000000000000000000000', beneficiary: '0x0000000000000000000000000000000000000000', splitProjectId: 7, from: '0xcaller', txHash: '0xrs', timestamp: 1 } }),
+    ], Object.assign({}, project));
+    const merged = mergeSameTxActivityRows(rows, project);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].baseAmount).toBe('3.6m ART');
+    expect(merged[0].tag).toBe('reserved');
+    expect(merged[0].direction).toBe('');
+    expect(merged[0].account).toBe('0xcaller');
+    expect(merged[0].actionParts).toEqual([
+      '3m ART to project #7',
+      { text: '600k ART to ', address: '0x3333333333333333333333333333333333333333' },
+    ]);
+    expect(merged[0].action).toBe('3m ART to project #7 and 600k ART to 0x3333…3333');
+  });
+
+  it('keeps a receipt without its distribution as a "received" line', () => {
+    const row = activityRowFromEvent({
+      chainId: 8453, txHash: '0xrs', timestamp: 1, from: '0xcaller',
+      sendReservedTokensToSplitEvent: { tokenCount: '600000000000000000000000', beneficiary: '0x3333333333333333333333333333333333333333', splitProjectId: 0, from: '0xcaller', txHash: '0xrs', timestamp: 1 },
+    }, project);
+    expect(row.direction).toBe('in');
+    expect(row.account).toBe('0x3333333333333333333333333333333333333333');
+    expect(row.action).toBe('received 600k ART from a reserved split');
+  });
+
   it('inlines a fragment token amount with the unit', () => {
     const mint = payRow({ type: 'issuance', account: '0xpayer', action: 'received', tokenAmount: '17k', baseAmount: '' });
     const bridge = payRow({ type: 'bridge_claim', action: 'claimed ART from Base', tokenAmount: '2k' });

@@ -6158,7 +6158,8 @@ function formatCompactNumber(n) {
     if (mag >= ladder[i][0]) {
       var scaled = mag / ladder[i][0];
       var decimals = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
-      return sign + scaled.toFixed(decimals).replace(/\.?0+$/, '') + ladder[i][1];
+      var fixed = scaled.toFixed(decimals);
+      return sign + (decimals ? fixed.replace(/\.?0+$/, '') : fixed) + ladder[i][1];
     }
   }
   return '';
@@ -13084,12 +13085,21 @@ export function reservePercentLabel(swapRaw, mintRaw) {
 
 // Reading order for a same-tx group: the first type present becomes the merged row's
 // primary (actor, amount, in/out tag, memo); the others fold into the sentence.
-var SAME_TX_ORDER = ['create', 'pay', 'add_to_balance', 'mint_nft', 'cash_out', 'swap', 'issuance', 'auto_issue', 'bridge_claim'];
+var SAME_TX_ORDER = ['create', 'pay', 'add_to_balance', 'mint_nft', 'cash_out', 'swap', 'issuance', 'auto_issue', 'bridge_claim', 'reserved', 'reserved_split'];
 function sameTxRank(type) { var i = SAME_TX_ORDER.indexOf(type); return i === -1 ? SAME_TX_ORDER.length : i; }
 
 // The sentence fragment a row contributes, mirroring renderActivityRow's action + tokenAmount layout.
-function activityRowPhrase(row, unit) {
+// A reserved-split receipt under its distribution names who got what: a string for a project
+// recipient, or { text, address } so the renderer can link the beneficiary.
+function activityRowPhrase(row, unit, distributed) {
+  if (distributed && row.type === 'reserved_split') {
+    var amount = formatCompactTokenAmount(row.splitCount) + ' ' + unit;
+    return row.splitProjectId ? amount + ' to project #' + row.splitProjectId : { text: amount + ' to ', address: row.account };
+  }
   return row.action + (row.tokenAmount ? ' ' + row.tokenAmount + ' ' + unit : '');
+}
+function phraseText(phrase) {
+  return typeof phrase === 'string' ? phrase : phrase.text + shortAddr6(phrase.address);
 }
 
 // Collapse rows that belong to one transaction (on one chain) into a single line item:
@@ -13107,18 +13117,32 @@ export function mergeSameTxActivityRows(rows, project) {
   });
   return order.map(function (group) {
     if (group.length === 1) return group[0];
-    group.sort(function (a, b) { return sameTxRank(a.type) - sameTxRank(b.type); });
+    group.sort(function (a, b) {
+      var byRank = sameTxRank(a.type) - sameTxRank(b.type);
+      if (byRank) return byRank;
+      // Reserved-split receipts read largest first.
+      var l = a.splitCount || 0n, r = b.splitCount || 0n;
+      return l < r ? 1 : l > r ? -1 : 0;
+    });
     // A zero-issuance pay's "paid into X" adds nothing next to the row's
     // amount and "in" tag — it contributes no phrase when other actions
-    // exist, but still anchors the row's actor, amount, and memo.
-    var phraseRows = group.filter(function (r) { return !(r.type === 'pay' && r.action.indexOf('paid into') === 0); });
+    // exist, but still anchors the row's actor, amount, and memo. Likewise a
+    // reserved distribution's phrase, once its receipts name who got what.
+    var distributed = group.some(function (r) { return r.type === 'reserved'; });
+    var hasReceipts = group.some(function (r) { return r.type === 'reserved_split'; });
+    var phraseRows = group.filter(function (r) {
+      if (r.type === 'pay') return r.action.indexOf('paid into') !== 0;
+      if (r.type === 'reserved') return !hasReceipts;
+      return true;
+    });
     if (!phraseRows.length) phraseRows = group;
-    var phrases = phraseRows.map(function (r) { return activityRowPhrase(r, unit); });
-    var action = phrases.length === 1
-      ? phrases[0]
-      : phrases.length === 2
-        ? phrases[0] + ' and ' + phrases[1]
-        : phrases.slice(0, -1).join(', ') + ', and ' + phrases[phrases.length - 1];
+    var phrases = phraseRows.map(function (r) { return activityRowPhrase(r, unit, distributed); });
+    var texts = phrases.map(phraseText);
+    var action = texts.length === 1
+      ? texts[0]
+      : texts.length === 2
+        ? texts[0] + ' and ' + texts[1]
+        : texts.slice(0, -1).join(', ') + ', and ' + texts[texts.length - 1];
     var memo = '';
     group.forEach(function (r) { if (!memo && r.memo) memo = r.memo; });
     var amountSource = null;
@@ -13176,9 +13200,10 @@ export function renderActivityRow(row, project) {
     amountValue.textContent = row.baseAmount;
     metaLeft.appendChild(amountValue);
   }
-  if (row.direction === 'in' || row.direction === 'out') {
-    var tag = el('span', 'activity-tag activity-tag--' + row.direction);
-    tag.textContent = row.direction;
+  var tagLabel = (row.direction === 'in' || row.direction === 'out') ? row.direction : row.tag;
+  if (tagLabel) {
+    var tag = el('span', 'activity-tag activity-tag--' + tagLabel);
+    tag.textContent = tagLabel;
     metaLeft.appendChild(tag);
   }
   if (!hasTitle && !row.system) metaLeft.appendChild(addressNode(row.account || row.from));
@@ -13236,17 +13261,19 @@ export function renderActivityRow(row, project) {
     var bullets = el('ul', 'activity-bullets');
     phrases.forEach(function (phrase) {
       var bullet = el('li', '');
+      var text = typeof phrase === 'string' ? phrase : phrase.text;
       // Token amounts read slightly emphasized: same color, heavier weight.
       var re = /(\d[\d,.]*[kMBT]?\s+[A-Za-z$][A-Za-z$0-9]*(?:\s+credits)?)/g;
       var lastIndex = 0, match;
-      while ((match = re.exec(phrase))) {
-        if (match.index > lastIndex) bullet.appendChild(document.createTextNode(phrase.slice(lastIndex, match.index)));
+      while ((match = re.exec(text))) {
+        if (match.index > lastIndex) bullet.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
         var em = el('span', 'activity-em');
         em.textContent = match[1];
         bullet.appendChild(em);
         lastIndex = match.index + match[1].length;
       }
-      if (lastIndex < phrase.length) bullet.appendChild(document.createTextNode(phrase.slice(lastIndex)));
+      if (lastIndex < text.length) bullet.appendChild(document.createTextNode(text.slice(lastIndex)));
+      if (phrase.address) bullet.appendChild(addressNode(phrase.address));
       bullets.appendChild(bullet);
     });
     main.appendChild(bullets);
@@ -13364,12 +13391,28 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
   }
   if (event.sendReservedTokensToSplitsEvent) {
     var rs = event.sendReservedTokensToSplitsEvent;
+    var reservedAmount = formatCompactTokenAmount(toBigInt(rs.tokenCount));
+    // The count leads the row the way value flows lead with the amount: "3.6m ART" tagged "reserved".
     return {
-      type: 'reserved', direction: '', chainId: chainId,
+      type: 'reserved', direction: '', tag: 'reserved', chainId: chainId,
       txHash: rs.txHash || event.txHash, timestamp: Number(rs.timestamp || event.timestamp),
       account: rs.from || event.from, from: rs.from || event.from,
-      baseAmount: '', tokenAmount: formatCompactTokenAmount(toBigInt(rs.tokenCount)),
+      baseAmount: reservedAmount + ' ' + sym + (project.tokenAddress ? '' : ' credits'), tokenAmount: reservedAmount,
       action: 'distributed reserved', memo: '',
+    };
+  }
+  if (event.sendReservedTokensToSplitEvent) {
+    var rsp = event.sendReservedTokensToSplitEvent;
+    var splitCount = toBigInt(rsp.tokenCount);
+    // Alongside its distribution (mergeSameTxActivityRows) the receipt reads "<amount> to <recipient>".
+    return {
+      type: 'reserved_split', direction: 'in', chainId: chainId,
+      txHash: rsp.txHash || event.txHash, timestamp: Number(rsp.timestamp || event.timestamp),
+      account: rsp.beneficiary || event.from, from: rsp.from || event.from,
+      splitCount: splitCount, splitProjectId: Number(rsp.splitProjectId) || 0,
+      baseAmount: '', tokenAmount: '',
+      action: 'received ' + formatCompactTokenAmount(splitCount) + ' ' + sym + (project.tokenAddress ? '' : ' credits') + ' from a reserved split',
+      memo: '',
     };
   }
   if (event.autoIssueEvent) {
@@ -20698,6 +20741,7 @@ var BENDYSTRAW_CASH_OUT_TAX_SNAPSHOTS_QUERY = 'query($suckerGroupId: String!, $v
 // reserved-token distributions, loans, NFT mints, ERC20 deploys, project creation).
 export var BENDYSTRAW_ACTIVITY_OR = 'OR: [{ payEvent_not: null }, { cashOutTokensEvent_not: null }, '
   + '{ sendPayoutsEvent_not: null }, { sendReservedTokensToSplitsEvent_not: null }, '
+  + '{ sendReservedTokensToSplitEvent_not: null }, '
   + '{ autoIssueEvent_not: null }, { mintTokensEvent_not: null }, '
   + '{ borrowLoanEvent_not: null }, { repayLoanEvent_not: null }, { liquidateLoanEvent_not: null }, '
   + '{ mintNftEvent_not: null }, { deployErc20Event_not: null }, { projectCreateEvent_not: null }, '
@@ -20710,6 +20754,7 @@ export var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId projectId times
   + 'mintTokensEvent { beneficiary beneficiaryTokenCount caller from txHash timestamp } '
   + 'sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd fee caller from txHash timestamp } '
   + 'sendReservedTokensToSplitsEvent { tokenCount from txHash timestamp } '
+  + 'sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from txHash timestamp } '
   + 'autoIssueEvent { beneficiary count stageId from txHash timestamp } '
   + 'borrowLoanEvent { borrowAmount collateral beneficiary token from txHash timestamp } '
   + 'repayLoanEvent { repayBorrowAmount collateralCountToReturn from txHash timestamp } '

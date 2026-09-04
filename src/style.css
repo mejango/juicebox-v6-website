@@ -4252,6 +4252,11 @@ input[type="checkbox"].field {
   color: var(--c-pink);
 }
 
+.activity-tag--reserved {
+  border-color: var(--c-green);
+  color: var(--c-green);
+}
+
 .activity-line {
   margin-top: 2px;
   font-size: 12px;
