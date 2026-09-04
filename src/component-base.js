@@ -1179,9 +1179,14 @@ export function openDialog(titleText, opts) {
   dialog.appendChild(panel);
 
   var closed = false;
+  // Dialogs replace rather than stack: whatever was open below stays open in the top layer but paints
+  // nothing (`[data-covered]` in style.css) until this one closes.
+  var covered = Array.prototype.filter.call(document.querySelectorAll('dialog[open]:not([data-covered])'), function (d) { return d !== dialog; });
+  covered.forEach(function (d) { d.setAttribute('data-covered', ''); });
   function close() {
     if (closed) return;
     closed = true;
+    covered.forEach(function (d) { d.removeAttribute('data-covered'); });
     if (dialog.open) dialog.close(); // restores focus to whatever opened the modal
     if (dialog.parentNode) dialog.remove();
     if (opts.onClose) opts.onClose();

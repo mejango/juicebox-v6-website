@@ -9646,6 +9646,7 @@ function renderPayCard(project, cart) {
 
   function schedulePreview() {
     if (previewTimer) clearTimeout(previewTimer);
+    state.payAfterPreview = false;
     state.preview = null;
     state.directSwap = null;
     state.phase = 'idle';
@@ -9666,7 +9667,7 @@ function renderPayCard(project, cart) {
     var payOut = p.received;
     var isNativeIn = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     var inputCur = isNativeIn ? ZERO_ADDRESS : state.token.address.toLowerCase();
-    directSwapPoolFor(project, state.chainId).then(function (pool) {
+    return directSwapPoolFor(project, state.chainId).then(function (pool) {
       if (gen !== previewGen || !pool) return;
       function decide(directOut, inputRoute) {
         if (gen !== previewGen) return;
@@ -9677,8 +9678,7 @@ function renderPayCard(project, cart) {
         }
       }
       if (pool.pairAddr === inputCur) {
-        quoteDirectSwap(state.chainId, pool, amt).then(function (out) { decide(out, { kind: 'single-v4' }); });
-        return;
+        return quoteDirectSwap(state.chainId, pool, amt).then(function (out) { decide(out, { kind: 'single-v4' }); });
       }
       var config = nativeSwapConfigForChain(state.chainId);
       var canBridgeNative = !!config && isNativeIn
@@ -9688,7 +9688,7 @@ function renderPayCard(project, cart) {
       if (!config || (!canBridgeNative && !canBridgeUsdcToNative)) return;
       var tokenIn = canBridgeNative ? config.wrappedNative : config.bridgeToken;
       var tokenOut = canBridgeNative ? config.bridgeToken : config.wrappedNative;
-      quoteV3ExactInput(state.chainId, tokenIn, tokenOut, amt).then(function (bridge) {
+      return quoteV3ExactInput(state.chainId, tokenIn, tokenOut, amt).then(function (bridge) {
         if (!bridge || gen !== previewGen) return;
         return quoteDirectSwap(state.chainId, pool, bridge.amountOut).then(function (out) {
           decide(out, canBridgeNative ? {
@@ -9746,10 +9746,16 @@ function renderPayCard(project, cart) {
       if (gen !== previewGen) return;
       state.phase = 'ready';
       state.preview = p;
+      state.previewAt = Date.now();
       state.conversion = null;
       state.directSwap = null;
       renderFeedback();
-      maybeOfferDirectSwap(gen, amt, p);
+      // A Pay click that found the quote stale retries once the refreshed preview and any direct-swap offer are in.
+      Promise.resolve(maybeOfferDirectSwap(gen, amt, p)).catch(function () {}).then(function () {
+        if (gen !== previewGen || !state.payAfterPreview) return;
+        state.payAfterPreview = false;
+        doPay();
+      });
       // Add-to-balance via router: derive the accepted-token amount that lands after the swap. The
       // simulated pay's total mint ÷ the per-unit issuance rate = the swap output (route must be issuance).
       var acc = acceptedToken();
@@ -9774,6 +9780,7 @@ function renderPayCard(project, cart) {
       if (gen !== previewGen) return;
       state.phase = 'ready';
       state.preview = null;
+      state.payAfterPreview = false;
       state.conversion = null;
       renderFeedback();
     });
@@ -9846,6 +9853,13 @@ function renderPayCard(project, cart) {
         ? 'A verified live quote is required before buying these items. Wait for the preview and try again.'
         : 'A verified live quote is required before paying. Wait for the preview and try again.';
       schedulePreview();
+      return;
+    }
+    // A quote older than 30s (the webclients' query staleTime) is refetched first; a live one is used as is.
+    if (!addBalance && Date.now() - (state.previewAt || 0) > 30000) {
+      schedulePreview();
+      state.payAfterPreview = true;
+      status.className = 'paybox-status pending'; status.textContent = 'Refreshing the quote…';
       return;
     }
     // Freeze the exact form state before any balance/terminal reads. A slow response from the old chain or token
