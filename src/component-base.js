@@ -496,6 +496,29 @@ export function createWalletButton(label, onClick, permissionNote) {
 
 // --- Transaction execution pipeline ---
 
+var ETHERSCAN_SKILL_LINE = "If your agent has Etherscan's skills installed (`npx skills add etherscan/skills`), run `etherscan-contract-review` on each target address to pull its verified source, proxy roles, and privileged controls before decoding. Otherwise work from the explorer pages.";
+
+// The post-transaction counterpart of buildTxAuditPrompt: a mined tx the user wants explained (or diagnosed)
+// from explorer evidence. Points at Etherscan's transaction-debugger skill when the reader's agent has it, and
+// degrades to the explorer page when it doesn't. `chains` is [{chainId, txHash}].
+export function buildTxDebugPrompt(chains) {
+  var lines = [];
+  lines.push('A Juicebox V6 transaction (the nana V6 / revnet V6 protocol release, not an older Juicebox version) was mined. Explain what happened in it and whether it did what a Juicebox user would expect.');
+  lines.push('');
+  chains.forEach(function (c) {
+    var chain = CHAINS[c.chainId];
+    var url = txExplorerUrl(c.chainId, c.txHash);
+    lines.push('- ' + (chain ? chain.name : 'chain ' + c.chainId) + ' (chain ' + c.chainId + '): ' + (url || c.txHash));
+  });
+  lines.push('');
+  lines.push("If your agent has Etherscan's skills installed (`npx skills add etherscan/skills`), use `etherscan-transaction-debugger` in security mode on each hash. Otherwise work from the explorer page: receipt status, decoded input, event logs, and internal transactions.");
+  lines.push('');
+  lines.push('Verify contract source only against the Juicebox V6 repositories: https://github.com/Bananapus/version-6 (repositories ending in `-v6`; same-named repositories without that suffix are older versions).');
+  lines.push('');
+  lines.push('Report the decoded method and arguments, every native and token movement with its recipient, every permission, ownership, or ruleset change, and, if it reverted, the narrowest root cause the evidence supports. Mark each claim observed, derived, or inferred. Never invent a function name, amount, or revert reason. End with one line: what the transaction did in plain English, and anything that looks wrong.');
+  return lines.join('\n');
+}
+
 // Build a copy-pasteable prompt the user can feed to an LLM to sanity-check a transaction before signing.
 // Includes the exact payload, block-explorer link(s) to the target contract(s), and a safety checklist.
 function buildTxAuditPrompt(payload) {
@@ -523,6 +546,7 @@ function buildTxAuditPrompt(payload) {
   lines.push('- Full Juicebox V6 ecosystem (umbrella of all V6 repos): https://github.com/Bananapus/version-6');
   contractSourceRefs(payload).forEach(function (r) { lines.push('- ' + r); });
   auditLinksFromPayload(payload).forEach(function (l) { lines.push('- ' + l.label + ' onchain (confirm verified source + legit address): ' + l.url); });
+  lines.push('- ' + ETHERSCAN_SKILL_LINE);
   lines.push('');
 
   // 5) Expected wallet data — what I should match on my wallet / hardware wallet before approving.
@@ -1914,15 +1938,16 @@ export function componentReproPrompt(title, prefix, fileHint) {
 // A "[copy build prompt]" text link that copies whatever buildText() returns (an LLM build prompt). buildText
 // is a function so the prompt captures the CURRENT url at click time. Used by components AND by discover.js’s
 // project-page cards/modals/forms.
-export function promptLinkButton(buildText) {
+export function promptLinkButton(buildText, label, title) {
+  label = label || '[copy build prompt]';
   var btn = el('button', 'comp-prompt-link');
   btn.type = 'button';
-  btn.title = 'Copy an LLM prompt to build this';
-  btn.textContent = '[copy build prompt]';
+  btn.title = title || 'Copy an LLM prompt to build this';
+  btn.textContent = label;
   btn.addEventListener('click', function (e) {
     e.preventDefault(); e.stopPropagation();
     var text = buildText();
-    var ok = function () { btn.classList.add('comp-prompt-link--ok'); btn.textContent = '[copied]'; setTimeout(function () { btn.classList.remove('comp-prompt-link--ok'); btn.textContent = '[copy build prompt]'; }, 1400); };
+    var ok = function () { btn.classList.add('comp-prompt-link--ok'); btn.textContent = '[copied]'; setTimeout(function () { btn.classList.remove('comp-prompt-link--ok'); btn.textContent = label; }, 1400); };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, ok);
     else { try { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} ok(); }
   });
