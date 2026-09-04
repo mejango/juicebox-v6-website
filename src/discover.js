@@ -1544,7 +1544,7 @@ function renderShopSection(project, shop, cart) {
     var old = card.querySelector('.shop-credits');
     if (old) old.remove();
     var acct = getEffectiveAccount();
-    if (!acct || !s || !s.hook) return;
+    if (!acct || !s || !s.hook || !s.tiers.length) return;
     clientFor(project.chainId).readContract({ address: s.hook, abi: TIER721_PAY_CREDITS_ABI, functionName: 'payCreditsOf', args: [acct] }).then(toBigInt).then(function (credit) {
       if (!credit || credit <= 0n || !wrap.isConnected || card.querySelector('.shop-credits')) return;
       var row = el('div', 'about-link-row shop-credits');
