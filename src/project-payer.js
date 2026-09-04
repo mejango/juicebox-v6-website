@@ -6,7 +6,7 @@
 
 import { encodeFunctionData, isAddress } from 'viem';
 import { getAddress } from './abi-registry.js';
-import { CHAINS } from './chain.js';
+import { chainNameFor } from './chain.js';
 
 export var PROJECT_PAYER_DEPLOY_ABI = [{
   type: 'function', name: 'deployProjectPayer', stateMutability: 'nonpayable',
@@ -26,8 +26,7 @@ function validAddress(value) {
 }
 
 function chainName(chainId) {
-  var short = { 10: 'Optimism', 42161: 'Arbitrum' };
-  return short[Number(chainId)] || (CHAINS[chainId] && CHAINS[chainId].name) || ('Chain ' + chainId);
+  return chainNameFor(chainId);
 }
 
 export function normalizeProjectPayerMetadata(metadata) {

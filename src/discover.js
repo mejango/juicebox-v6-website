@@ -4,7 +4,7 @@
 
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
-import { CHAINS, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
+import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { quotedOutputFloor } from './slippage.js';
 import { cacheStale, cacheValidated } from './cache.js';
@@ -2047,7 +2047,7 @@ function openAddTierModal(project, shop) {
   var pendingSession = loadRelayrPendingSession(relayScope);
   var allChains = (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
   var pricing = pricingContextOf(shop, project.chainId);
   var priceUnit = pricing.symbol;
   var priceDecimals = pricing.decimals;
@@ -4108,7 +4108,7 @@ function projectRouterTerminal(project, chainId) {
 function projectChainList(project) {
   return (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
 }
 
 var addressRegistryDeployerOfAbi = [{ type: 'function', name: 'deployerOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'address' }] }];
@@ -5857,11 +5857,7 @@ function resolveAcctToken(chainId, pid) {
   });
 }
 
-// Shorter display names than the manifest's (Arbitrum One → Arbitrum, OP Mainnet → Optimism).
-var SHORT_CHAIN_NAME = { 10: 'Optimism', 42161: 'Arbitrum' };
-function chainNameOf(cid) {
-  return SHORT_CHAIN_NAME[Number(cid)] || (CHAINS[cid] && CHAINS[cid].name) || ('Chain ' + cid);
-}
+function chainNameOf(cid) { return chainNameFor(cid); }
 
 // The unit a project's issuance/weight is denominated in — its ruleset baseCurrency (USD or ETH), NOT
 // its accounting token. "625 ART / USD" means 625 tokens per dollar paid.
@@ -6689,7 +6685,7 @@ function splitAccountNode(sp, project, chainId, opts) {
 
 function chainById(chainId) {
   var cid = Number(chainId);
-  return CHAINS[cid] ? { id: cid, name: CHAINS[cid].name } : { id: cid, name: 'Chain ' + cid };
+  return { id: cid, name: chainNameFor(cid) };
 }
 
 // A span that shows the truncated address immediately, then upgrades to the ENS name
@@ -8903,7 +8899,7 @@ function renderPayCard(project, cart) {
   cart = cart || makeNftCart();
   var chains = (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
 
   // Pay currencies for a chain. The DIRECT tokens are whatever the project's terminal actually accepts
   // (its accounting contexts) — for an ETH-based project that's native ETH; for a USD-based project (e.g.
@@ -10602,7 +10598,7 @@ function renderOtherInfoPanel(project) {
 
   var idChains = (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
   var idsHead = el('div', 'detail-info-head');
   idsHead.textContent = idChains.length > 1 ? 'Project IDs' : 'Project ID';
   grid.appendChild(idsHead);
@@ -10838,7 +10834,7 @@ function openEditProjectModal(project) {
   var operatorAddr = projectAuthorityAddress(project);
   var chains = (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
 
   var content = el('div', 'modal-body operator-edit');
 
@@ -11460,7 +11456,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
   var connectedChainId = await getWalletClient().getChainId().catch(function () { return null; });
   var payment = payments.filter(function (p) { return p.chain === connectedChainId; })[0] || payments[0];
   if (payment.chain !== connectedChainId) {
-    setStatus('Switch your wallet to ' + (CHAINS[payment.chain] && CHAINS[payment.chain].name || payment.chain) + ' to pay…', 'pending');
+    setStatus('Switch your wallet to ' + chainNameFor(payment.chain) + ' to pay…', 'pending');
     await switchChain(payment.chain);
   }
   setStatus('Confirm the Relayr payment…', 'pending');
@@ -11670,7 +11666,7 @@ function openEditTokenModal(project) {
   var operatorAddr = projectAuthorityAddress(project);
   var chains = (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
   var deployed = tokenUiCapabilities(project).hasErc20;
   var permissionId = deployed ? JB_PERMISSION_SET_TOKEN_METADATA : JB_PERMISSION_DEPLOY_ERC20;
 
@@ -13266,7 +13262,7 @@ export function renderActivityRow(row, project) {
   return item;
 }
 
-export function activityRowFromEvent(event, project) {
+export function activityRowFromEvent(event, project, swapOrdinal) {
   var sym = project.tokenSymbol || 'tokens';
   var chainId = Number(event.chainId);
   if (event._accountReceipt) {
@@ -13491,7 +13487,9 @@ export function activityRowFromEvent(event, project) {
     var sw = event.swapEvent;
     // A same-tx mint is the reserved-rate remint of this swap's output — the payer's
     // actual receipt. Fold it into the sentence instead of leaving a bare gross amount.
-    var remint = project._remintByTx ? project._remintByTx[chainId + ':' + (sw.txHash || event.txHash)] : null;
+    // Mints and swaps pair up by position within the tx: the Nth swap's remint is the Nth mint.
+    var remints = project._remintByTx ? project._remintByTx[chainId + ':' + (sw.txHash || event.txHash)] : null;
+    var remint = remints ? remints[swapOrdinal || 0] : null;
     var reservePct = remint ? reservePercentLabel(sw.projectTokenAmount, remint) : '';
     return { type: 'swap', direction: 'in', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
       account: sw.from || sw.caller || event.from, from: sw.from || event.from,
@@ -14222,7 +14220,7 @@ async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
   var connectedChainId = wallet ? await wallet.getChainId().catch(function () { return null; }) : null;
   var payment = payments.filter(function (p) { return p.chain === connectedChainId; })[0] || payments[0];
   if (payment.chain !== connectedChainId) {
-    setStatus('Switch your wallet to ' + (CHAINS[payment.chain] && CHAINS[payment.chain].name || payment.chain) + ' to pay…', 'pending');
+    setStatus('Switch your wallet to ' + chainNameFor(payment.chain) + ' to pay…', 'pending');
     await switchChain(payment.chain);
   }
   setStatus('Confirm the Relayr payment…', 'pending');
@@ -19164,7 +19162,7 @@ export function formatCutPercent(weightCutPercent) {
 async function loadStageAutoIssuanceTotals(project, stages) {
   var chains = (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
   var stageCache = {};
   function stagesForChain(chainId) {
     if (stageCache[chainId]) return stageCache[chainId];
@@ -20342,7 +20340,7 @@ function renderAutoIssuance(project, stages) {
   var sym = project.tokenSymbol ? ' ' + project.tokenSymbol : '';
   var chains = (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
   var stageCache = {};
 
   var body = el('div', 'autoissue-tablewrap');
@@ -21467,6 +21465,30 @@ export function calculateFloorPrice(balance, tokenSupply, cashOutTax, balanceDec
   return isFinite(value) && value > 0 ? value : 0;
 }
 
+// Non-bridge mint rows are dropped from the feed, but a mint alongside a buyback swap
+// is the reserved-rate remint — the payer's actual receipt. Map each tx's mint counts in
+// feed order so the Nth buy swap in a tx can pair with the Nth mint and say so.
+export function projectFeedRowsFromEvents(events, project) {
+  var remintByTx = {};
+  events.forEach(function (ev) {
+    if (!ev.mintTokensEvent) return;
+    var key = ev.chainId + ':' + (ev.mintTokensEvent.txHash || ev.txHash);
+    (remintByTx[key] || (remintByTx[key] = [])).push(ev.mintTokensEvent.beneficiaryTokenCount);
+  });
+  project._remintByTx = remintByTx;
+
+  var swapsSeenByTx = {};
+  return events.map(function (event) {
+    var swapOrdinal = 0;
+    if (event.swapEvent) {
+      var key = event.chainId + ':' + (event.swapEvent.txHash || event.txHash);
+      swapOrdinal = swapsSeenByTx[key] || 0;
+      swapsSeenByTx[key] = swapOrdinal + 1;
+    }
+    return activityRowFromEvent(event, project, swapOrdinal);
+  }).filter(isProjectFeedActivityRow);
+}
+
 async function fetchProjectActivity(project) {
   var deployments = projectDeployments(project);
   var chainIds = deployments.map(function (deployment) { return deployment.chainId; });
@@ -21512,20 +21534,7 @@ async function fetchProjectActivity(project) {
   });
   merged.sort(function (a, b) { return Number(b.timestamp || 0) - Number(a.timestamp || 0); });
 
-  // Non-bridge mint rows are dropped from the feed, but a mint alongside a buyback swap
-  // is the reserved-rate remint — the payer's actual receipt. Map each tx's mint count so
-  // the swap row can say so; an ambiguous tx (multiple mints) maps to null and says nothing.
-  var remintByTx = {};
-  merged.forEach(function (ev) {
-    if (!ev.mintTokensEvent) return;
-    var key = ev.chainId + ':' + (ev.mintTokensEvent.txHash || ev.txHash);
-    remintByTx[key] = (key in remintByTx) ? null : ev.mintTokensEvent.beneficiaryTokenCount;
-  });
-  project._remintByTx = remintByTx;
-
-  var bendyRows = merged.map(function (event) {
-    return activityRowFromEvent(event, project);
-  }).filter(isProjectFeedActivityRow);
+  var bendyRows = projectFeedRowsFromEvents(merged, project);
 
   // Ruleset queueing isn't indexed by bendystraw (no queueRulesets ActivityEvent type), so synthesize it
   // from chain state: JBRulesets.allOf returns each configured ruleset, whose `id` IS the queue timestamp.
@@ -22720,8 +22729,7 @@ function renderOwnersTable(participants, totalSupply, sym) {
 
     var chains = el('span', 'owners-chains');
     row.chains.forEach(function (chainId) {
-      var chain = CHAINS[chainId];
-      chains.appendChild(chainLogo(chainId, chain ? chain.name : String(chainId)));
+      chains.appendChild(chainLogo(chainId, chainNameFor(chainId)));
     });
     tr.appendChild(chains);
 
@@ -24374,7 +24382,7 @@ function openEditSplitsModal(project, opts) {
   var operatorAddr = projectAuthorityAddress(project);
   var allChains = (project.chains && project.chains.length)
     ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+    : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
 
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, opts.gateText || 'to edit splits.'));
@@ -27537,7 +27545,7 @@ export function buildSuckerToRemoteArgs(o) {
 }
 var erc20BalanceOfAbi = [{ type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 
-function moveChainName(cid) { return SHORT_CHAIN_NAME[Number(cid)] || (CHAINS[cid] && CHAINS[cid].name) || ('chain ' + cid); }
+function moveChainName(cid) { return chainNameFor(cid); }
 
 // Active sucker pairs for a project on `chainId`: [{ local, remoteChainId }]. RPC failures propagate so
 // callers can distinguish "no routes" from "could not verify routes".

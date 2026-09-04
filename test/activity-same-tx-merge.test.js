@@ -2,7 +2,7 @@
 // pool swap in one transaction, which must read as a single sentence attributed to the
 // payer (not two rows, one pinned on the tx-submitting bundler EOA).
 import { describe, it, expect } from 'vitest';
-import { activityRowFromEvent, mergeSameTxActivityRows, reservePercentLabel } from '../src/discover.js';
+import { activityRowFromEvent, mergeSameTxActivityRows, projectFeedRowsFromEvents, reservePercentLabel } from '../src/discover.js';
 
 const project = { tokenSymbol: 'ART', tokenAddress: '0x44c4516768e47cd97cff2561b81a74699f23f8ec' };
 
@@ -48,13 +48,39 @@ describe('mergeSameTxActivityRows', () => {
   it('explains the reserved-rate remint on the buyback swap row', () => {
     // 20 USDC → 28,406 gross from the pool, 17,043 reminted to the payer = 40% reserve.
     const withRemint = Object.assign({}, project, {
-      _remintByTx: { '8453:0xbb': '17043000000000000000000' },
+      _remintByTx: { '8453:0xbb': ['17043000000000000000000'] },
     });
     const row = activityRowFromEvent({
       chainId: 8453, txHash: '0xbb', timestamp: 1, from: '0xpayer',
       swapEvent: { terminalTokenAmount: '20000000', projectTokenAmount: '28406000000000000000000', from: '0xpayer', timestamp: 1, txHash: '0xbb' },
     }, withRemint);
     expect(row.action).toBe('bought 28.4k ART via the buyback pool, receiving 17k ART after the 40% reserve');
+  });
+
+  it('pairs each buy swap in a tx with the mint at the same position', () => {
+    function swap(amount) {
+      return { chainId: 8453, txHash: '0xbb', timestamp: 1, from: '0xpayer',
+        swapEvent: { terminalTokenAmount: '20000000', projectTokenAmount: amount, from: '0xpayer', timestamp: 1, txHash: '0xbb' } };
+    }
+    function mint(count) {
+      return { chainId: 8453, txHash: '0xbb', timestamp: 1, from: '0xpayer',
+        mintTokensEvent: { beneficiary: '0xpayer', beneficiaryTokenCount: count, caller: '0xhook', from: '0xhook', txHash: '0xbb', timestamp: 1 } };
+    }
+    const rows = projectFeedRowsFromEvents([
+      swap('28406000000000000000000'), mint('17043000000000000000000'),
+      swap('1000000000000000000000'), mint('875000000000000000000'),
+    ], Object.assign({}, project));
+    expect(rows.map(r => r.action)).toEqual([
+      'bought 28.4k ART via the buyback pool, receiving 17k ART after the 40% reserve',
+      'bought 1k ART via the buyback pool, receiving 875 ART after the 12.5% reserve',
+    ]);
+
+    // More mints than swaps still pairs the leading ones.
+    const extra = projectFeedRowsFromEvents([
+      swap('28406000000000000000000'), mint('17043000000000000000000'), mint('5'),
+    ], Object.assign({}, project));
+    expect(extra).toHaveLength(1);
+    expect(extra[0].action).toMatch(/receiving 17k ART after the 40% reserve$/);
   });
 
   it('computes the reserve percent only for a sane swap/mint pair', () => {

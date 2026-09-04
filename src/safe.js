@@ -12,7 +12,7 @@
 
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData, decodeFunctionData, decodeFunctionResult, keccak256, stringToHex } from 'viem';
 import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt } from './component-base.js';
-import { CHAINS, chainList, isTestnetChain } from './chain.js';
+import { CHAINS, chainList, chainNameFor, isTestnetChain } from './chain.js';
 import { contractGasWithinCap } from './gas.js';
 
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
@@ -126,7 +126,7 @@ async function signSafeTx(chainId, safe, fields, signer) {
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) {
     if (e && e.code === 4001) throw e;
-    throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to sign.');
+    throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to sign.');
   }
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   var signature = await wallet.signTypedData({
@@ -171,10 +171,10 @@ export async function proposeSafeTx(opts) {
   // signature and immediately before the service write so a Safe owner/threshold rotation while the wallet
   // prompt is open cannot post a signature authorized only by stale governance.
   var base = txBase(opts.chainId);
-  if (!base) throw new Error('No Safe Transaction Service configured for ' + ((CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || opts.chainId));
+  if (!base) throw new Error('No Safe Transaction Service configured for ' + chainNameFor(opts.chainId));
   // Caller may pick the nonce (e.g. to replace a queued tx); otherwise use the recommended next nonce.
   var nonce = (opts.nonce != null) ? Number(opts.nonce) : await getSafeNextNonce(opts.chainId, opts.safe);
-  if (!Number.isSafeInteger(nonce) || nonce < 0) throw new Error('Could not read a valid Safe nonce on ' + ((CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || opts.chainId) + '.');
+  if (!Number.isSafeInteger(nonce) || nonce < 0) throw new Error('Could not read a valid Safe nonce on ' + chainNameFor(opts.chainId) + '.');
   var fields = { to: opts.to, value: opts.value || 0, data: opts.data || '0x', operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO, refundReceiver: ZERO, nonce: nonce };
   var safeTxHash = safeTxHashOf(opts.chainId, opts.safe, fields);
   var signature = await signSafeTx(opts.chainId, opts.safe, fields, opts.signer);
@@ -418,7 +418,7 @@ export async function executeSafeTx(chainId, safe, tx, reverify) {
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
-  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to execute.'); }
+  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to execute.'); }
   // Safe requires signatures concatenated in ascending owner-address order.
   var confs = sortedUsableConfirmations(tx);
   if (!confs.length) throw new Error('No confirmations to execute with.');
@@ -1064,7 +1064,7 @@ export async function deploySafeSameAddress(chainId, creation, expectedSafe, aut
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
-  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to deploy.'); }
+  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to deploy.'); }
   var hash = await sendAndConfirm(wallet, chainId, { address: cs(creation.factory), abi: PROXY_FACTORY_ABI, functionName: 'createProxyWithNonce', args: [cs(creation.singleton), creation.initializer, creation.saltNonce] }, 'createProxyWithNonce', expectedSafe);
   // Verify the Safe landed at the expected address — but RETRY, because a flaky RPC (Base/OP Sepolia especially) can
   // return empty code for a just-deployed contract and produce a false "did not land". Only fail after several misses.
@@ -1146,7 +1146,7 @@ export async function approveSafeHashOnChain(chainId, safe, hash, reverify) {
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
-  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to approve.'); }
+  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to approve.'); }
   return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash', null, reverify);
 }
 

@@ -22,6 +22,7 @@ vi.mock('../src/component-base.js', () => ({
 
 vi.mock('../src/chain.js', () => ({
   CHAINS: { 1: { id: 1, name: 'Ethereum' } },
+  chainNameFor: id => (id === 1 ? 'Ethereum' : `chain ${id}`),
 }));
 
 import {

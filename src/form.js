@@ -4,9 +4,9 @@
 
 import { encodeFunctionData } from 'viem';
 import { renderInput } from './inputs.js';
-import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange } from './wallet.js';
+import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain } from './wallet.js';
 import { confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
-import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS } from './chain.js';
+import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS, chainNameFor } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
 import { renderError } from './errors.js';
@@ -323,19 +323,22 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
   var reviewedAccount = getAccount();
   if (!reviewedAccount) { outputArea.appendChild(renderError('Connect wallet to transact')); return; }
 
-  // Network mismatch check
+  // Switch the wallet to the selected chain before reviewing; only a refused switch stops the flow.
   wallet.getChainId().then(function(walletChainId) {
-    if (walletChainId !== chainId) {
-      outputArea.appendChild(renderError('Wallet is on chain ' + walletChainId + ', but you selected chain ' + chainId + '. Switch your wallet network.'));
-      return;
-    }
+    if (walletChainId === chainId) return true;
+    return switchChain(chainId).then(function() { wallet = getWalletClient(); return true; }, function() {
+      outputArea.appendChild(renderError('Switch your wallet to ' + chainNameFor(chainId) + ' to continue.'));
+      return false;
+    });
+  }).then(function(ready) {
+    if (!ready) return;
 
     var args = inputs.map(function(inp) { return inp.getValue(); });
     // Review the exact call before sending.
     var submittedHash = null;
     confirmTransactionModal({
       action: fn.name,
-      chain: (CHAINS[chainId] && CHAINS[chainId].name) || ('chain ' + chainId),
+      chain: chainNameFor(chainId),
       chainId: chainId,
       contract: contractName,
       address: contractAddress,

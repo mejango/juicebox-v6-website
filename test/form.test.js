@@ -26,6 +26,7 @@ vi.mock('../src/wallet.js', () => ({
   createPublicClientForChain: vi.fn(() => state.client),
   connect: vi.fn(() => Promise.resolve()),
   onWalletChange: vi.fn(listener => state.walletListeners.push(listener)),
+  switchChain: vi.fn(() => Promise.resolve()),
 }));
 
 const transactionReview = vi.hoisted(() => vi.fn());
@@ -48,6 +49,7 @@ vi.mock('../src/chain.js', () => ({
   }),
   getCustomRpc: () => '',
   setCustomRpc: chainState.setRpc,
+  chainNameFor: id => ({ 1: 'Ethereum', 10: 'Optimism', 11155111: 'Sepolia' })[id] || `chain ${id}`,
   CHAINS: {
     1: { name: 'Ethereum', rpcUrls: { default: { http: ['https://eth.invalid'] } } },
     10: { name: 'Optimism', rpcUrls: { default: { http: ['https://op.invalid'] } } },

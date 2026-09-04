@@ -3,7 +3,7 @@
 
 import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected, proposeSafeTransactions, waitForSafeInitialization } from './wallet.js';
 import { getViewAs, onViewAsChange, VIEW_AS_TX_ERROR } from './view-as.js';
-import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
+import { CHAINS, chainNameFor, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
 import { decodeFunctionData, encodeFunctionData, isAddress } from 'viem';
@@ -633,18 +633,19 @@ function walletExpectations(payload) {
 // Derive block-explorer address links from a confirm payload (direct: {chain,contract}; relayr: {chains:[{chain,contract}]}).
 function auditLinksFromPayload(payload) {
   var out = [];
-  function explorer(chainName, addr) {
+  function explorer(chainName, addr, chainId) {
     if (!addr) return null;
-    var id = null;
-    for (var k in CHAINS) { if (CHAINS[k] && CHAINS[k].name === chainName) { id = k; break; } }
+    // Payloads carry the id; the name match is only for older payloads without one.
+    var id = chainId && CHAINS[chainId] ? chainId : null;
+    if (!id) for (var k in CHAINS) { if (CHAINS[k] && CHAINS[k].name === chainName) { id = k; break; } }
     var be = id && CHAINS[id].blockExplorers && CHAINS[id].blockExplorers.default;
     if (!be || !be.url) return null;
     return be.url.replace(/\/$/, '') + '/address/' + addr;
   }
   if (payload && (Array.isArray(payload.chains) || Array.isArray(payload.transactions))) {
-    (payload.transactions || payload.chains).forEach(function (c) { var u = explorer(c.chain, c.contract || c.address || c.to); if (u) out.push({ label: c.chain + ' target', url: u }); });
+    (payload.transactions || payload.chains).forEach(function (c) { var u = explorer(c.chain, c.contract || c.address || c.to, c.chainId); if (u) out.push({ label: c.chain + ' target', url: u }); });
   } else if (payload) {
-    var u = explorer(payload.chain, payload.contract || payload.address || payload.to);
+    var u = explorer(payload.chain, payload.contract || payload.address || payload.to, payload.chainId);
     if (u) out.push({ label: 'Target contract', url: u });
   }
   return out;
@@ -841,7 +842,7 @@ export function buildTxLinkEntries(payload) {
     url.searchParams.set('method', 'eth_sendTransaction');
     url.searchParams.set('chainId', String(chainId));
     url.searchParams.set('params', JSON.stringify(params));
-    entries.push({ chainId: chainId, chain: tx.chain || (CHAINS[chainId] && CHAINS[chainId].name) || ('Chain ' + chainId), url: url.toString() });
+    entries.push({ chainId: chainId, chain: tx.chain || chainNameFor(chainId), url: url.toString() });
   }
   return entries;
 }
@@ -1352,7 +1353,7 @@ export function executeTransaction(opts) {
     var cname = opts.contractName || resolveContractName(opts.address, opts.chainId);
     var payload = {
       action: opts.label || opts.functionName,
-      chain: (CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || ('chain ' + opts.chainId),
+      chain: chainNameFor(opts.chainId),
       chainId: opts.chainId,
       contract: cname || opts.address,
       // Keep the raw target address visible even when we resolved a name (nothing is hidden).
@@ -1435,7 +1436,7 @@ export function executeTransaction(opts) {
 
   wallet.getChainId().then(function(walletChainId) {
     if (walletChainId !== opts.chainId) {
-      cbs.onStatus('Switching to ' + (CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : 'chain ' + opts.chainId) + '…', 'pending');
+      cbs.onStatus('Switching to ' + chainNameFor(opts.chainId) + '…', 'pending');
       return switchChain(opts.chainId);
     }
   }).then(function() {
@@ -1499,7 +1500,7 @@ export function executeTransaction(opts) {
     }
     var msg = err.shortMessage || err.message || 'Unknown error';
     var full = ((err.shortMessage || '') + ' ' + (err.message || '') + ' ' + (err.details || '') + ' ' + (err.cause && (err.cause.message || err.cause.shortMessage) || '')).toLowerCase();
-    var chainName = CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : ('chain ' + opts.chainId);
+    var chainName = chainNameFor(opts.chainId);
     var friendly = friendlyTransactionError(full);
     if (friendly) {
       cbs.onError(friendly);

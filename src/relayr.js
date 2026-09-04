@@ -14,7 +14,7 @@
 
 import { encodeFunctionData, isAddress, keccak256, stringToHex } from 'viem';
 import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt, confirmTransactionModal } from './component-base.js';
-import { CHAINS } from './chain.js';
+import { CHAINS, chainNameFor } from './chain.js';
 import { gasWithHeadroom } from './gas.js';
 import { decodeSafeExecRelayrTx, hasExactSafeExecutionSuccess, readSafeUintBounded } from './safe.js';
 
@@ -154,7 +154,7 @@ var FORWARDER_ABI = [
 export async function buildForwardedTx(chainId, from, to, data, gasHint, value) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var forwarder = getAddress('ERC2771Forwarder', chainId);
-  if (!forwarder) throw new Error('No ERC2771Forwarder on ' + (CHAINS[chainId] && CHAINS[chainId].name || chainId));
+  if (!forwarder) throw new Error('No ERC2771Forwarder on ' + chainNameFor(chainId));
   var pub = createPublicClientForChain(chainId);
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
@@ -170,7 +170,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
       wallet = getWalletClient(); // switchChain recreates the client on the new chain
     }
   } catch (e) {
-    throw new Error('Switch your wallet to ' + (CHAINS[chainId] && CHAINS[chainId].name || chainId) + ' to sign its request (' + ((e && e.message) || e) + ')');
+    throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to sign its request (' + ((e && e.message) || e) + ')');
   }
   if (!getAccount() || getAccount().toLowerCase() !== from.toLowerCase()) throw new Error('Connected account changed. Review the cross-chain request again.');
 
@@ -323,7 +323,7 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
         ['Native value', details.amount.toString() + ' wei'],
       ],
     },
-    chain: CHAINS[chainId].name || ('Chain ' + chainId), chainId: chainId,
+    chain: chainNameFor(chainId), chainId: chainId,
     contract: 'Relayr prepaid payment', address: details.target,
     function: 'pay for bundle',
     args: { bundleUuid: details.bundleUuid, paymentDeadline: details.deadline.toString(), selector: RELAYR_PAYMENT_SELECTOR },
