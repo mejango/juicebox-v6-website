@@ -81,6 +81,46 @@ describe('mergeSameTxActivityRows', () => {
     ], Object.assign({}, project));
     expect(extra).toHaveLength(1);
     expect(extra[0].action).toMatch(/receiving 17k ART after the 40% reserve$/);
+
+    // The indexer returns a tx's events in no particular order: pairing goes by
+    // amount rank, so a shuffled tx labels every swap the same way.
+    const shuffled = projectFeedRowsFromEvents([
+      mint('875000000000000000000'), swap('28406000000000000000000'),
+      mint('17043000000000000000000'), swap('1000000000000000000000'),
+    ], Object.assign({}, project));
+    expect(shuffled.map(r => r.action)).toEqual([
+      'bought 28.4k ART via the buyback pool, receiving 17k ART after the 40% reserve',
+      'bought 1k ART via the buyback pool, receiving 875 ART after the 12.5% reserve',
+    ]);
+  });
+
+  it('reads a fan-out (two pays in one tx) as the payer\'s total and who got what', () => {
+    function pay(beneficiary, amount) {
+      return { chainId: 8453, txHash: '0xcc', timestamp: 1, from: '0xpayer',
+        payEvent: { amount: amount, amountUsd: null, beneficiary: beneficiary, from: '0xpayer', newlyIssuedTokenCount: '0', txHash: '0xcc', timestamp: 1, memo: '' } };
+    }
+    function swap(amount) {
+      return { chainId: 8453, txHash: '0xcc', timestamp: 1, from: '0xpayer',
+        swapEvent: { terminalTokenAmount: '1', projectTokenAmount: amount, from: '0xpayer', timestamp: 1, txHash: '0xcc' } };
+    }
+    function mint(beneficiary, count) {
+      return { chainId: 8453, txHash: '0xcc', timestamp: 1, from: '0xpayer',
+        mintTokensEvent: { beneficiary: beneficiary, beneficiaryTokenCount: count, caller: '0xhook', from: '0xhook', txHash: '0xcc', timestamp: 1 } };
+    }
+    const ethProject = Object.assign({}, project, { _flowToken: { symbol: 'ETH', decimals: 18 } });
+    const rows = projectFeedRowsFromEvents([
+      pay('0xalice', '4000000000000000'), swap('100000000000000000000'), mint('0xalice', '62000000000000000000'),
+      pay('0xbob', '6000000000000000'), swap('200000000000000000000'), mint('0xbob', '124000000000000000000'),
+    ], ethProject);
+    const merged = mergeSameTxActivityRows(rows, ethProject);
+    expect(merged).toHaveLength(1);
+    // The row is the payment: the payer and the total, not the first payee and its share.
+    expect(merged[0].account).toBe('0xpayer');
+    expect(merged[0].baseAmount).toBe('0.01 ETH');
+    expect(merged[0].actionParts).toEqual([
+      { lead: '0xalice', text: ' got 62 ART after the 38% reserve' },
+      { lead: '0xbob', text: ' got 124 ART after the 38% reserve' },
+    ]);
   });
 
   it('computes the reserve percent only for a sane swap/mint pair', () => {

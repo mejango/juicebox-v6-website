@@ -13105,15 +13105,18 @@ function sameTxRank(type) { var i = SAME_TX_ORDER.indexOf(type); return i === -1
 // The sentence fragment a row contributes, mirroring renderActivityRow's action + tokenAmount layout.
 // A reserved-split receipt under its distribution names who got what: a string for a project
 // recipient, or { text, address } so the renderer can link the beneficiary.
-function activityRowPhrase(row, unit, distributed) {
+function activityRowPhrase(row, unit, distributed, fanOut) {
   if (distributed && row.type === 'reserved_split') {
     var amount = formatCompactTokenAmount(row.splitCount) + ' ' + unit;
     return row.splitProjectId ? amount + ' to project #' + row.splitProjectId : { text: amount + ' to ', address: row.account };
   }
+  // A fan-out (several pays in one tx) names who got what: the swap's payee, or an issuing pay's beneficiary.
+  if (fanOut && row.received) return { lead: row.type === 'swap' ? row.payee : row.account, text: ' got ' + row.received };
   return row.action + (row.tokenAmount ? ' ' + row.tokenAmount + ' ' + unit : '');
 }
 function phraseText(phrase) {
-  return typeof phrase === 'string' ? phrase : phrase.text + shortAddr6(phrase.address);
+  if (typeof phrase === 'string') return phrase;
+  return (phrase.lead ? shortAddr6(phrase.lead) : '') + phrase.text + (phrase.address ? shortAddr6(phrase.address) : '');
 }
 
 // Collapse rows that belong to one transaction (on one chain) into a single line item:
@@ -13144,13 +13147,17 @@ export function mergeSameTxActivityRows(rows, project) {
     // reserved distribution's phrase, once its receipts name who got what.
     var distributed = group.some(function (r) { return r.type === 'reserved'; });
     var hasReceipts = group.some(function (r) { return r.type === 'reserved_split'; });
+    // Several pays in one tx (a payer contract fanning out) read as one payment: the payer's
+    // total, then who got what. A swap without a paired remint has nobody to name, so it stays.
+    var pays = group.filter(function (r) { return r.type === 'pay'; });
+    var fanOut = pays.length > 1;
     var phraseRows = group.filter(function (r) {
       if (r.type === 'pay') return r.action.indexOf('paid into') !== 0;
       if (r.type === 'reserved') return !hasReceipts;
       return true;
     });
     if (!phraseRows.length) phraseRows = group;
-    var phrases = phraseRows.map(function (r) { return activityRowPhrase(r, unit, distributed); });
+    var phrases = phraseRows.map(function (r) { return activityRowPhrase(r, unit, distributed, fanOut); });
     var texts = phrases.map(phraseText);
     var action = texts.length === 1
       ? texts[0]
@@ -13161,10 +13168,20 @@ export function mergeSameTxActivityRows(rows, project) {
     group.forEach(function (r) { if (!memo && r.memo) memo = r.memo; });
     var amountSource = null;
     group.forEach(function (r) { if (!amountSource && r.baseAmount) amountSource = r; });
-    return Object.assign({}, group[0], {
+    var merged = Object.assign({}, group[0], {
       action: action, actionParts: phrases, tokenAmount: '', memo: memo,
       baseAmount: (amountSource || group[0]).baseAmount,
     });
+    if (fanOut && pays.every(function (r) { return r.rawAmount != null; })) {
+      var total = 0n, totalUsd = 0n, usdKnown = true;
+      pays.forEach(function (r) {
+        total += toBigInt(r.rawAmount);
+        if (r.rawAmountUsd == null) usdKnown = false; else totalUsd += toBigInt(r.rawAmountUsd);
+      });
+      merged.account = pays[0].from; merged.from = pays[0].from;
+      merged.baseAmount = activityFlowAmount(project, total, usdKnown ? totalUsd : null);
+    }
+    return merged;
   });
 }
 
@@ -13288,6 +13305,7 @@ export function renderActivityRow(row, project) {
       }
       if (lastIndex < text.length) bullet.appendChild(document.createTextNode(text.slice(lastIndex)));
       if (phrase.address) bullet.appendChild(addressNode(phrase.address));
+      if (phrase.lead) bullet.insertBefore(addressNode(phrase.lead), bullet.firstChild);
       bullets.appendChild(bullet);
     });
     main.appendChild(bullets);
@@ -13331,6 +13349,8 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
       account: pay.beneficiary || event.from || pay.from,
       from: pay.from || event.from,
       baseAmount: activityFlowAmount(project, pay.amount, pay.amountUsd),
+      rawAmount: pay.amount, rawAmountUsd: pay.amountUsd,
+      received: minted > 0n ? formatCompactTokenAmount(minted) + ' ' + payUnit : '',
       tokenAmount: '',
       action: minted > 0n
         ? 'bought ' + formatCompactTokenAmount(minted) + ' ' + payUnit + ' from issuance'
@@ -13545,13 +13565,18 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
     // A same-tx mint is the reserved-rate remint of this swap's output — the payer's
     // actual receipt. Fold it into the sentence instead of leaving a bare gross amount.
     // Mints and swaps pair up by position within the tx: the Nth swap's remint is the Nth mint.
-    var remints = project._remintByTx ? project._remintByTx[chainId + ':' + (sw.txHash || event.txHash)] : null;
+    var swapKey = chainId + ':' + (sw.txHash || event.txHash);
+    var remints = project._remintByTx ? project._remintByTx[swapKey] : null;
     var remint = remints ? remints[swapOrdinal || 0] : null;
+    var remintPayees = project._remintPayeeByTx ? project._remintPayeeByTx[swapKey] : null;
     var reservePct = remint ? reservePercentLabel(sw.projectTokenAmount, remint) : '';
     return { type: 'swap', direction: 'in', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
       account: sw.from || sw.caller || event.from, from: sw.from || event.from,
       baseAmount: activityFlowAmount(project, sw.terminalTokenAmount, null),
       tokenAmount: '',
+      // Who the paired remint went to, and what it was: a fan-out row phrases the swap as their receipt.
+      payee: remintPayees ? remintPayees[swapOrdinal || 0] || '' : '',
+      received: remint ? formatCompactTokenAmount(toBigInt(remint)) + ' ' + sym + (reservePct ? ' after the ' + reservePct + '% reserve' : '') : '',
       action: 'bought ' + (sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) + ' ' : '') + sym + ' via the buyback pool'
         + (reservePct ? ', receiving ' + formatCompactTokenAmount(toBigInt(remint)) + ' ' + sym + ' after the ' + reservePct + '% reserve' : ''), memo: '' };
   }
@@ -21525,24 +21550,38 @@ export function calculateFloorPrice(balance, tokenSupply, cashOutTax, balanceDec
 }
 
 // Non-bridge mint rows are dropped from the feed, but a mint alongside a buyback swap
-// is the reserved-rate remint — the payer's actual receipt. Map each tx's mint counts in
-// feed order so the Nth buy swap in a tx can pair with the Nth mint and say so.
+// is the reserved-rate remint — the payer's actual receipt. Map each tx's mint counts,
+// largest first, so the Nth-largest buy swap in a tx can pair with the Nth-largest mint and
+// say so. The indexer returns a tx's events in no particular order, so position can't pair
+// them; one reserve rate applies to every pay in a tx, so amount rank can.
+function descendingBigInt(a, b) { a = toBigInt(a); b = toBigInt(b); return a < b ? 1 : a > b ? -1 : 0; }
 export function projectFeedRowsFromEvents(events, project) {
-  var remintByTx = {};
+  var remintByTx = {}, remintPayeeByTx = {}, swapAmountsByTx = {};
   events.forEach(function (ev) {
+    if (ev.swapEvent && String(ev.swapEvent.direction || 'buy').toLowerCase() !== 'sell') {
+      var swapKey = ev.chainId + ':' + (ev.swapEvent.txHash || ev.txHash);
+      (swapAmountsByTx[swapKey] || (swapAmountsByTx[swapKey] = [])).push(ev.swapEvent.projectTokenAmount || '0');
+    }
     if (!ev.mintTokensEvent) return;
     var key = ev.chainId + ':' + (ev.mintTokensEvent.txHash || ev.txHash);
-    (remintByTx[key] || (remintByTx[key] = [])).push(ev.mintTokensEvent.beneficiaryTokenCount);
+    (remintByTx[key] || (remintByTx[key] = [])).push({ count: ev.mintTokensEvent.beneficiaryTokenCount, payee: ev.mintTokensEvent.beneficiary || '' });
   });
+  Object.keys(remintByTx).forEach(function (key) {
+    remintByTx[key].sort(function (a, b) { return descendingBigInt(a.count, b.count); });
+    remintPayeeByTx[key] = remintByTx[key].map(function (r) { return r.payee; });
+    remintByTx[key] = remintByTx[key].map(function (r) { return r.count; });
+  });
+  Object.keys(swapAmountsByTx).forEach(function (key) { swapAmountsByTx[key].sort(descendingBigInt); });
   project._remintByTx = remintByTx;
+  project._remintPayeeByTx = remintPayeeByTx;
 
-  var swapsSeenByTx = {};
   return events.map(function (event) {
     var swapOrdinal = 0;
     if (event.swapEvent) {
       var key = event.chainId + ':' + (event.swapEvent.txHash || event.txHash);
-      swapOrdinal = swapsSeenByTx[key] || 0;
-      swapsSeenByTx[key] = swapOrdinal + 1;
+      var amounts = swapAmountsByTx[key] || [];
+      var amount = toBigInt(event.swapEvent.projectTokenAmount || '0');
+      swapOrdinal = Math.max(0, amounts.findIndex(function (a) { return toBigInt(a) === amount; }));
     }
     return activityRowFromEvent(event, project, swapOrdinal);
   }).filter(isProjectFeedActivityRow);
